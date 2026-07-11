@@ -40,10 +40,20 @@
    (string->symbol name)))
 
 ;; a stelis-controlled output destination (explicit, no hidden copies)
-(define (scratch-out)
-  (define out (build-path (find-system-path 'temp-dir) "stelis-out"))
-  (make-directory* out)
-  out)
+(define (scratch-out-path) (build-path (find-system-path 'temp-dir) "stelis-out"))
+(define (scratch-out) (define out (scratch-out-path)) (make-directory* out) out)
+
+(define stelis-cache (build-path ".stelis" "cache"))
+
+;; Restrict a plan to the suffix beginning at --from, when given. Used by both
+;; --build (what runs) and --commands (what the dry run previews), so the preview
+;; always mirrors the execution scope.
+(define (plan-suffix ordered)
+  (cond
+    [(from-task)
+     (or (member (from-task) ordered)
+         (error 'stelis "--from ~a is not in the plan for ~a" (from-task) name))]
+    [else ordered]))
 
 (cond
   ;; --- execute a single task ---------------------------------------------
@@ -61,12 +71,7 @@
   ;; --- execute an ordered plan (partial success) -------------------------
   [(eq? (mode) 'build)
    (define-values (ordered pruned) (plan beeatlas-graph name))
-   (define to-run
-     (cond
-       [(from-task)
-        (or (member (from-task) ordered)
-            (error 'stelis "--from ~a is not in the plan for ~a" (from-task) name))]
-       [else ordered]))
+   (define to-run (plan-suffix ordered))
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            name (length to-run)
@@ -96,9 +101,14 @@
    (printf "Target: ~a\n\n" name)
    (cond
      [(eq? (mode) 'commands)
-      (printf "Dry run — ~a command(s), in build order (nothing executed):\n\n"
-              (length ordered))
-      (print-plan-commands beeatlas-graph ordered beeatlas-runtimes)]
+      (define to-run (plan-suffix ordered))
+      (printf "Dry run — ~a command(s)~a, in build order (nothing executed):\n"
+              (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
+      (printf "  ≡ cached · ≈ conditional (upstream reruns) · ▶ would run\n\n")
+      (print-plan-commands beeatlas-graph to-run beeatlas-runtimes
+                           #:resolve beeatlas-path
+                           #:export-dir (scratch-out-path)
+                           #:cache-dir stelis-cache)]
      [else
       (printf "Minimal upstream — ~a task(s), in build order:\n" (length ordered))
       (for ([t (in-list ordered)] [i (in-naturals 1)])

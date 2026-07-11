@@ -54,20 +54,54 @@
                          (error 'recipe->argv "unknown runtime: ~a" (recipe-runtime rec)))))
   (append (runtime-launch rt) (recipe-args rec)))
 
-;; print-plan-commands : graph (listof symbol) (hash symbol->runtime) -> void
-;; Dry run: print the exact ordered shell commands a plan would execute.
-;; Executes nothing.
-(define (print-plan-commands g ordered runtimes)
+;; print-plan-commands : graph (listof symbol) (hash symbol->runtime)
+;;   [#:resolve (symbol export-dir -> path/#f)] [#:export-dir path] [#:cache-dir path]
+;;   -> void
+;; Dry run: print the exact ordered shell commands a plan would execute. Executes
+;; nothing. When the cache args are supplied, annotate each task's predicted
+;; disposition:
+;;   ≡ cached      inputs unchanged AND no upstream reruns -> it will be skipped
+;;   ≈ conditional currently a cache hit, but an upstream WILL rerun, so its
+;;                 inputs may change: unknowable until that upstream actually runs
+;;   ▶ would run   a genuine miss (or not content-addressable, e.g. ingestion/dbt)
+;; Only the materialised frontier can be predicted exactly; the ≈ marks where
+;; foreknowledge runs out (see the input-addressed vs early-cutoff distinction).
+(define (print-plan-commands g ordered runtimes
+                             #:resolve [resolve #f]
+                             #:export-dir [export-dir #f]
+                             #:cache-dir [cache-dir #f])
+  (define caching? (and resolve export-dir cache-dir))
+  (define will-run (make-hash)) ; tasks predicted to run; seeds the frontier walk
+  (define (upstream-runs? t)
+    (for/or ([in (in-list (task-inputs t))])
+      (define p (producer-of g in))
+      (and p (hash-ref will-run p #f))))
   (for ([name (in-list ordered)] [i (in-naturals 1)])
-    (define rec (task-invoke (hash-ref (graph-tasks g) name)))
+    (define t (hash-ref (graph-tasks g) name))
+    (define rec (task-invoke t))
+    (define hit?
+      (and caching?
+           (let ([fp (input-fingerprint g name (lambda (a) (resolve a export-dir)))])
+             (and fp
+                  (cache-hit? cache-dir name fp
+                              (filter values (map (lambda (o) (resolve o export-dir))
+                                                  (task-outputs t))))))))
+    (define cached?      (and hit? (not (upstream-runs? t))))
+    (define conditional? (and hit? (upstream-runs? t)))
+    (unless cached? (hash-set! will-run name #t)) ; conditional + miss both may run
+    (define tag
+      (cond [(not caching?) ""]
+            [cached?        "  ≡ cached"]
+            [conditional?   "  ≈ conditional"]
+            [else           "  ▶ would run"]))
     (cond
       [rec
        (define rt (hash-ref runtimes (recipe-runtime rec)))
-       (printf "~a. ~a  [~a]\n     ~a\n"
-               (~i i) name (runtime-label rt)
+       (printf "~a. ~a  [~a]~a\n     ~a\n"
+               (~i i) name (runtime-label rt) tag
                (string-join (map shell-quote (recipe->argv rec runtimes)) " "))]
       [else
-       (printf "~a. ~a  [no recipe]\n" (~i i) name)])))
+       (printf "~a. ~a  [no recipe]~a\n" (~i i) name tag)])))
 
 ;; right-pad a small index for tidy columns
 (define (~i i) (let ([s (number->string i)]) (if (< i 10) (string-append " " s) s)))

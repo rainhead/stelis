@@ -84,3 +84,5 @@
             "generate-sqlite is cacheable (all inputs are files)")
 (check-false (input-fingerprint beeatlas-graph 'dbt-build stub-resolve)
              "dbt-build is not cacheable (duckdb-relation inputs don't resolve)")
+(check-false (input-fingerprint beeatlas-graph 'taxa-download stub-resolve)
+             "boundary tasks are never content-cached (ingestion re-runs)")

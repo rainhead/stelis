@@ -28,11 +28,18 @@
 
 ;; input-fingerprint : graph symbol (symbol -> (or/c path-string #f)) -> (or/c string #f)
 ;; A content hash of the task's recipe plus each input file's hash. Returns #f
-;; when any input is not a resolvable, existing file (e.g. duckdb relations,
-;; tokens) — such a task is NOT cacheable, because its input set can't be fully
-;; content-addressed in Horizon 0.
+;; (NOT cacheable) when:
+;;   - the task is a 'boundary (ingestion) node — its real input is the external
+;;     world, which isn't content-addressable; ingestion must re-run (or later use
+;;     a boundary stamp), never be content-skipped; or
+;;   - any input is not a resolvable, existing file (e.g. duckdb relations, tokens).
 (define (input-fingerprint g name resolve)
   (define t (hash-ref (graph-tasks g) name))
+  (cond
+    [(eq? (task-kind t) 'boundary) #f]
+    [else (input-fingerprint* g t resolve)]))
+
+(define (input-fingerprint* g t resolve)
   (define pairs
     (for/list ([in (in-list (task-inputs t))])
       (define p (resolve in))
