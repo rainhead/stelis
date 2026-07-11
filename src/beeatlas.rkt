@@ -14,6 +14,11 @@
 ;; every ingestion/resolution output, so most PRE-dbt steps are upstream of
 ;; occurrences.db. The pruning is the 11 POST-dbt export/render/gate steps.
 ;;
+;; Slice 2 (st-d44.2): each task's `invoke' slot holds its hermetic recipe,
+;; transcribed from run.py's imports. Two runtimes cover the pipeline: `uv'
+;; (beeatlas's uv project, Python 3.14, where dlt/exporters run) and `dbt'
+;; (data/dbt/run.sh, which uvx-pins Python 3.13). Recipes are dry-run only so far.
+;;
 ;; --- Provenance / drift detection -------------------------------------------
 ;; This graph was transcribed by hand from the beeatlas files below, at the
 ;; revisions shown. If the file-pinned SHAs no longer match, run.py's steps or
@@ -26,16 +31,33 @@
 ;;   data/run.py              : 938c6ffd  (2026-07-06)   ← the 32 STEPS + reasons
 ;;   data/dbt/models/sources.yml : eaac92a9  (2026-07-06)   ← dbt-build's inputs
 
-(require "model.rkt")
+(require racket/format
+         "model.rkt"
+         "exec.rkt")
 
-(provide beeatlas-graph)
+(provide beeatlas-graph
+         beeatlas-runtimes)
+
+;; --- Hermetic runtimes ------------------------------------------------------
+;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
+;; data/dbt/run.sh, which uvx-pins Python 3.13. Stelis delegates hermeticity to
+;; those existing pins — it just launches the right command per task.
+(define BEEATLAS "/Users/rainhead/dev/beeatlas")
+(define DATA (string-append BEEATLAS "/data"))
+
+(define beeatlas-runtimes
+  (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14")
+        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13")))
+
+;; py: a uv/3.14 recipe that calls `module.fn()' the way run.py imports it.
+(define (py module fn)
+  (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))))
 
 ;; --- Artifacts --------------------------------------------------------------
 ;; kinds: 'file  'db-relation (a schema/table in the shared beeatlas.duckdb)
 ;;        'external (loaded outside the nightly graph)  'token (a gate result)
 (define artifacts
   (list
-   ;; raw / ingestion
    (make-artifact 'taxa.csv.gz              'file)
    (make-artifact 'ecdysis_data             'db-relation)
    (make-artifact 'ecdysis_links            'db-relation)
@@ -50,18 +72,13 @@
    (make-artifact 'taxon_lineage_extended   'db-relation)
    (make-artifact 'host_plant_lineage       'db-relation)
    (make-artifact 'geographies_places       'db-relation)
-   ;; geographies boundaries are loaded MANUALLY (excluded from the nightly run,
-   ;; per run.py) — modelled as an external leaf dbt/places read but no graph
-   ;; task produces.
    (make-artifact 'geographies              'external)
-   ;; reconciliation + gate tokens
    (make-artifact 'anti-entropy-applied     'token)
    (make-artifact 'checklist-resolution-verified 'token)
    (make-artifact 'resolution-verified      'token)
    (make-artifact 'inactive-verified        'token)
    (make-artifact 'places-validated         'token)
    (make-artifact 'dedup-verified           'token)
-   ;; dbt outputs (parquet + geojson materializations)
    (make-artifact 'occurrences.parquet          'file)
    (make-artifact 'occurrence_places.parquet    'file)
    (make-artifact 'checklist.parquet            'file)
@@ -71,9 +88,7 @@
    (make-artifact 'counties.geojson             'file)
    (make-artifact 'ecoregions.geojson           'file)
    (make-artifact 'wilderness.geojson           'file)
-   ;; the target
    (make-artifact 'occurrences.db               'file)
-   ;; post-dbt outputs (siblings)
    (make-artifact 'dedup_candidates.csv         'file)
    (make-artifact 'region-topology-clean        'file)
    (make-artifact 'species.json                 'file)
@@ -87,45 +102,60 @@
    (make-artifact 'feeds                        'file)))
 
 ;; --- Tasks (the 32 run.py STEPS, in list order) -----------------------------
+;; `invoke' recipes transcribed from run.py's imports (module + function).
 (define tasks
   (list
    ;; --- ingestion boundary ---
-   (make-task 'taxa-download 'boundary #:outputs '(taxa.csv.gz))
-   (make-task 'ecdysis 'boundary #:outputs '(ecdysis_data))
-   ;; ecdysis-links loads occurrence_links, keyed off already-loaded ecdysis.
-   (make-task 'ecdysis-links 'boundary #:inputs '(ecdysis_data) #:outputs '(ecdysis_links))
-   (make-task 'inaturalist 'boundary #:outputs '(inat_observations))
-   (make-task 'waba 'boundary #:outputs '(waba_data))
-   ;; projects: iNat project membership; loaded against the observation set. COARSE input.
-   (make-task 'projects 'boundary #:inputs '(inat_observations) #:outputs '(inat_projects))
-   ;; anti-entropy: reconciles the loaded occurrence sets before dbt reads them.
-   ;; COARSE: modelled as a token dbt-build waits on.
+   (make-task 'taxa-download 'boundary #:outputs '(taxa.csv.gz)
+              #:invoke (py "taxa_pipeline" "download_taxa_csv"))
+   (make-task 'ecdysis 'boundary #:outputs '(ecdysis_data)
+              #:invoke (py "ecdysis_pipeline" "load_ecdysis"))
+   (make-task 'ecdysis-links 'boundary #:inputs '(ecdysis_data) #:outputs '(ecdysis_links)
+              #:invoke (py "ecdysis_pipeline" "load_links"))
+   (make-task 'inaturalist 'boundary #:outputs '(inat_observations)
+              #:invoke (py "inaturalist_pipeline" "load_observations"))
+   (make-task 'waba 'boundary #:outputs '(waba_data)
+              #:invoke (py "waba_pipeline" "load_observations"))
+   (make-task 'projects 'boundary #:inputs '(inat_observations) #:outputs '(inat_projects)
+              #:invoke (py "projects_pipeline" "load_projects"))
    (make-task 'anti-entropy 'transform
               #:inputs '(ecdysis_data inat_observations waba_data)
-              #:outputs '(anti-entropy-applied))
-   (make-task 'checklist 'boundary #:outputs '(checklist_raw))
+              #:outputs '(anti-entropy-applied)
+              #:invoke (py "anti_entropy_pipeline" "run_anti_entropy"))
+   (make-task 'checklist 'boundary #:outputs '(checklist_raw)
+              #:invoke (py "checklist_pipeline" "load_checklist"))
    (make-task 'resolve-checklist-names 'transform
-              #:inputs '(checklist_raw) #:outputs '(checklist_resolved))
+              #:inputs '(checklist_raw) #:outputs '(checklist_resolved)
+              #:invoke (py "resolve_checklist_names" "resolve_checklist_names"))
    (make-task 'checklist-resolution-gate 'gate
-              #:inputs '(checklist_resolved) #:outputs '(checklist-resolution-verified))
-   (make-task 'inat-obs 'boundary #:outputs '(inat_obs_data))
+              #:inputs '(checklist_resolved) #:outputs '(checklist-resolution-verified)
+              #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate"))
+   (make-task 'inat-obs 'boundary #:outputs '(inat_obs_data)
+              #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
    (make-task 'resolve-taxon-ids 'transform
-              #:inputs '(inat_observations taxa.csv.gz) #:outputs '(canonical_to_taxon_id))
+              #:inputs '(inat_observations taxa.csv.gz) #:outputs '(canonical_to_taxon_id)
+              #:invoke (py "resolve_taxon_ids" "resolve_taxon_ids"))
    (make-task 'resolution-gate 'gate
-              #:inputs '(canonical_to_taxon_id) #:outputs '(resolution-verified))
+              #:inputs '(canonical_to_taxon_id) #:outputs '(resolution-verified)
+              #:invoke (py "resolve_taxon_ids" "check_resolution_gate"))
    (make-task 'inactive-remap 'transform
-              #:inputs '(canonical_to_taxon_id) #:outputs '(inactive_remaps))
+              #:inputs '(canonical_to_taxon_id) #:outputs '(inactive_remaps)
+              #:invoke (py "resolve_taxon_ids" "generate_inactive_remaps"))
    (make-task 'inactive-gate 'gate
-              #:inputs '(inactive_remaps) #:outputs '(inactive-verified))
+              #:inputs '(inactive_remaps) #:outputs '(inactive-verified)
+              #:invoke (py "resolve_taxon_ids" "check_inactive_gate"))
    (make-task 'taxon-lineage-extended 'transform
-              #:inputs '(taxa.csv.gz) #:outputs '(taxon_lineage_extended))
-   ;; host-plant-lineage: plant taxonomy. COARSE input.
+              #:inputs '(taxa.csv.gz) #:outputs '(taxon_lineage_extended)
+              #:invoke (py "taxa_pipeline" "load_taxon_lineage_extended"))
    (make-task 'host-plant-lineage 'transform
-              #:inputs '(taxa.csv.gz) #:outputs '(host_plant_lineage))
+              #:inputs '(taxa.csv.gz) #:outputs '(host_plant_lineage)
+              #:invoke (py "host_plant_lineage" "load_host_plant_lineage"))
    (make-task 'places-validation 'gate
-              #:inputs '(geographies) #:outputs '(places-validated))
+              #:inputs '(geographies) #:outputs '(places-validated)
+              #:invoke (py "places_validation" "validate_places_step"))
    (make-task 'places-load 'transform
-              #:inputs '(places-validated geographies) #:outputs '(geographies_places))
+              #:inputs '(places-validated geographies) #:outputs '(geographies_places)
+              #:invoke (py "places_load" "load_places_step"))
 
    ;; --- the transform hinge: one opaque task, many outputs ---
    (make-task 'dbt-build 'transform
@@ -138,38 +168,50 @@
               #:outputs '(occurrences.parquet occurrence_places.parquet
                           checklist.parquet species.parquet species_traits.parquet
                           higher_taxa.parquet counties.geojson ecoregions.geojson
-                          wilderness.geojson))
+                          wilderness.geojson)
+              #:invoke (recipe 'dbt (list "build")))
 
-   ;; --- the target producer ---
+   ;; --- the target producer (has a __main__; run as a script) ---
    (make-task 'generate-sqlite 'transform
-              #:inputs '(occurrences.parquet taxa.csv.gz) #:outputs '(occurrences.db))
+              #:inputs '(occurrences.parquet taxa.csv.gz) #:outputs '(occurrences.db)
+              #:invoke (recipe 'uv (list "sqlite_export.py")))
 
    ;; --- post-dbt siblings (NOT upstream of occurrences.db) ---
    (make-task 'dedup-candidates 'transform
-              #:inputs '(checklist.parquet) #:outputs '(dedup_candidates.csv))
+              #:inputs '(checklist.parquet) #:outputs '(dedup_candidates.csv)
+              #:invoke (py "checklist_dedup" "write_dedup_candidates"))
    (make-task 'dedup-gate 'gate
-              #:inputs '(dedup_candidates.csv) #:outputs '(dedup-verified))
+              #:inputs '(dedup_candidates.csv) #:outputs '(dedup-verified)
+              #:invoke (py "checklist_dedup" "check_dedup_gate"))
    (make-task 'topology-postprocess 'transform
               #:inputs '(counties.geojson ecoregions.geojson wilderness.geojson)
-              #:outputs '(region-topology-clean))
+              #:outputs '(region-topology-clean)
+              #:invoke (py "topology_postprocess" "main"))
    (make-task 'species-export 'transform
               #:inputs '(species.parquet species_traits.parquet higher_taxa.parquet)
-              #:outputs '(species.json))
+              #:outputs '(species.json)
+              #:invoke (py "species_export" "main"))
    (make-task 'species-maps 'transform
-              #:inputs '(species.json) #:outputs '(species-maps))
+              #:inputs '(species.json) #:outputs '(species-maps)
+              #:invoke (py "species_maps" "main"))
    (make-task 'places-export 'transform
               #:inputs '(occurrence_places.parquet geographies_places)
-              #:outputs '(places.geojson places.json))
+              #:outputs '(places.geojson places.json)
+              #:invoke (py "places_export" "export_places_step"))
    (make-task 'collectors-export 'transform
-              #:inputs '(occurrences.parquet) #:outputs '(collectors.json))
+              #:inputs '(occurrences.parquet) #:outputs '(collectors.json)
+              #:invoke (py "collectors_export" "export_collectors_step"))
    (make-task 'collectors-events-export 'transform
-              #:inputs '(collectors.json) #:outputs '(collector_event_pages.json))
-   ;; notes-harvest: read-only harvest keyed off collectors.json's login set.
+              #:inputs '(collectors.json) #:outputs '(collector_event_pages.json)
+              #:invoke (py "collectors_events_export" "export_collectors_events_step"))
    (make-task 'notes-harvest 'transform
-              #:inputs '(collectors.json) #:outputs '(notes.json))
+              #:inputs '(collectors.json) #:outputs '(notes.json)
+              #:invoke (py "notes_harvest" "main"))
    (make-task 'places-maps 'transform
-              #:inputs '(places.geojson) #:outputs '(place-maps))
+              #:inputs '(places.geojson) #:outputs '(place-maps)
+              #:invoke (py "places_maps" "main"))
    (make-task 'feeds 'transform
-              #:inputs '(occurrences.parquet species.json) #:outputs '(feeds))))
+              #:inputs '(occurrences.parquet species.json) #:outputs '(feeds)
+              #:invoke (py "feeds" "main"))))
 
 (define beeatlas-graph (build-graph tasks artifacts))
