@@ -7,10 +7,12 @@
          racket/set
          racket/list
          racket/format
+         racket/runtime-path
          "model.rkt"
          "beeatlas.rkt"
          "plan-datalog.rkt"
-         "exec.rkt")
+         "exec.rkt"
+         "cache.rkt")
 
 (define-values (ordered pruned) (plan beeatlas-graph 'occurrences.db))
 (define required (list->set ordered))
@@ -70,3 +72,15 @@
 (check-equal? (blockers-of beeatlas-graph 'generate-sqlite (hash 'species-export 'failed))
               '()
               "an unrelated task's failure does not block generate-sqlite")
+
+;; 7. Caching (st-d44.3): a task is cacheable only when ALL its inputs resolve to
+;;    existing files. generate-sqlite's inputs are files; dbt-build's are duckdb
+;;    relations (unresolvable) -> not cacheable.
+(define-runtime-path model-rkt "model.rkt") ; a file that exists, resolved by source location
+(define an-existing-file (path->string model-rkt))
+(define (stub-resolve a)
+  (case a [(occurrences.parquet taxa.csv.gz) an-existing-file] [else #f]))
+(check-true (string? (input-fingerprint beeatlas-graph 'generate-sqlite stub-resolve))
+            "generate-sqlite is cacheable (all inputs are files)")
+(check-false (input-fingerprint beeatlas-graph 'dbt-build stub-resolve)
+             "dbt-build is not cacheable (duckdb-relation inputs don't resolve)")

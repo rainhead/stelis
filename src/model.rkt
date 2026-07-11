@@ -26,8 +26,10 @@
 ;; An artifact node: a logical dataset.
 ;;   name        : symbol
 ;;   kind        : 'file | 'db-relation | 'external | 'token
-;;   fingerprint : reserved for slice 4 (skip-if-current); #f until then
-(struct artifact (name kind fingerprint) #:transparent)
+;;   fingerprint : content/version fingerprint; #f until computed (see cache.rkt)
+;;   provenance  : 'derived (safe to destroy and rebuild) | 'authoritative
+;;                 (forward-only; never rebuilt from scratch — migrations only)
+(struct artifact (name kind fingerprint provenance) #:transparent)
 
 ;; A task node.
 ;;   name    : symbol  (matches the run.py step name)
@@ -39,8 +41,10 @@
 
 ;; Keyword smart-constructors so the reserved slots default to #f and the
 ;; authored graph reads cleanly.
-(define (make-artifact name kind #:fingerprint [fingerprint #f])
-  (artifact name kind fingerprint))
+(define (make-artifact name kind
+                       #:fingerprint [fingerprint #f]
+                       #:provenance [provenance 'derived])
+  (artifact name kind fingerprint provenance))
 
 (define (make-task name kind
                    #:inputs [inputs '()]

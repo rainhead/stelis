@@ -36,7 +36,8 @@
          "exec.rkt")
 
 (provide beeatlas-graph
-         beeatlas-runtimes)
+         beeatlas-runtimes
+         beeatlas-path)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
@@ -48,6 +49,20 @@
 (define beeatlas-runtimes
   (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14")
         'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13")))
+
+;; Where beeatlas's file artifacts physically live — the resolver caching uses to
+;; content-hash inputs and to place/verify outputs. #f for artifacts with no known
+;; single file (duckdb relations, tokens, externals): those aren't content-hashed
+;; in Horizon 0. Outputs land under the build's export-dir (explicit destination).
+(define SANDBOX (string-append DATA "/dbt/target/sandbox"))
+(define (beeatlas-path artifact export-dir)
+  (case artifact
+    [(occurrences.parquet occurrence_places.parquet checklist.parquet
+      species.parquet species_traits.parquet higher_taxa.parquet)
+     (build-path SANDBOX (~a artifact))]
+    [(taxa.csv.gz)   (build-path DATA "raw" "taxa.csv.gz")]
+    [(occurrences.db) (build-path export-dir "occurrences.db")]
+    [else #f]))
 
 ;; py: a uv/3.14 recipe that calls `module.fn()' the way run.py imports it.
 (define (py module fn)
@@ -97,7 +112,11 @@
    (make-artifact 'places.json                  'file)
    (make-artifact 'collectors.json              'file)
    (make-artifact 'collector_event_pages.json   'file)
-   (make-artifact 'notes.json                   'file)
+   ;; notes is beeatlas's one authoritative artifact (data/artifacts.toml) —
+   ;; forward-only, never rebuilt from scratch. It's a pruned sibling here, so the
+   ;; escape hatch isn't exercised on the occurrences.db path, but the model now
+   ;; expresses it (addresses the derived-vs-authoritative commitment).
+   (make-artifact 'notes.json                   'file #:provenance 'authoritative)
    (make-artifact 'place-maps                   'file)
    (make-artifact 'feeds                        'file)))
 

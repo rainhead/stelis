@@ -73,10 +73,13 @@
            (if (from-task) (format ", from ~a" (from-task)) "")
            out)
    (define status (run-plan beeatlas-graph to-run beeatlas-runtimes
-                            #:env (list (cons "EXPORT_DIR" (path->string out)))))
+                            #:env (list (cons "EXPORT_DIR" (path->string out)))
+                            #:resolve beeatlas-path
+                            #:export-dir out
+                            #:cache-dir (build-path ".stelis" "cache")))
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
-   (printf "\n— ~a ok · ~a failed · ~a skipped —\n"
-           (tally 'ok) (tally 'failed) (tally 'skipped))
+   (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
+           (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))
    (define db (build-path out "occurrences.db"))
    (when (file-exists? db) (printf "  ~a (~a bytes)\n" db (file-size db)))
    (exit (if (for/or ([v (in-hash-values status)]) (memq v '(failed skipped))) 1 0))]

@@ -14,7 +14,8 @@
 (require racket/list
          racket/string
          racket/system
-         "model.rkt")
+         "model.rkt"
+         "cache.rkt")
 
 (provide (struct-out runtime)
          (struct-out recipe)
@@ -106,7 +107,7 @@
               [p (in-value (producer-of g in))]
               #:when (and p
                           (hash-has-key? status p)
-                          (not (eq? (hash-ref status p) 'ok))))
+                          (memq (hash-ref status p) '(failed skipped)))) ; 'ok/'cached ok
     p))
 
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
@@ -114,19 +115,38 @@
 ;; Run tasks in the given (topological) order. A task whose in-plan producers all
 ;; succeeded runs; otherwise it is skipped (partial success). Returns each task's
 ;; final status: 'ok | 'failed | 'skipped.
-(define (run-plan g ordered runtimes #:env [extra-env '()])
+;; With #:resolve (symbol export-dir -> path/#f), #:export-dir, and #:cache-dir
+;; all supplied, a task whose input fingerprint matches its cache sidecar and
+;; whose outputs still exist is SKIPPED as 'cached (skip-if-current). Tasks whose
+;; inputs aren't fully content-addressable (fingerprint #f) always run.
+(define (run-plan g ordered runtimes
+                  #:env [extra-env '()]
+                  #:resolve [resolve #f]
+                  #:export-dir [export-dir #f]
+                  #:cache-dir [cache-dir #f])
+  (define caching? (and resolve export-dir cache-dir))
   (define status (make-hash))
   (for ([name (in-list ordered)])
+    (define t (hash-ref (graph-tasks g) name))
     (define blockers (blockers-of g name status))
+    (define input-fp
+      (and caching? (input-fingerprint g name (lambda (a) (resolve a export-dir)))))
+    (define out-paths
+      (if caching? (filter values (map (lambda (o) (resolve o export-dir)) (task-outputs t))) '()))
     (cond
       [(pair? blockers)
        (printf "\n⊘ ~a — skipped (blocked by ~a)\n"
                name (string-join (map symbol->string blockers) ", "))
        (hash-set! status name 'skipped)]
+      [(and input-fp (cache-hit? cache-dir name input-fp out-paths))
+       (printf "\n≡ ~a — cached (inputs unchanged)\n" name)
+       (hash-set! status name 'cached)]
       [else
-       (define rt (hash-ref runtimes (recipe-runtime (task-invoke (hash-ref (graph-tasks g) name)))))
+       (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
        (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
        (define code (run-task g name runtimes #:env extra-env))
-       (hash-set! status name (if (zero? code) 'ok 'failed))
-       (printf "~a ~a — exit ~a\n" (if (zero? code) "✓" "✗") name code)]))
+       (define ok? (zero? code))
+       (hash-set! status name (if ok? 'ok 'failed))
+       (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
+       (when (and ok? input-fp) (cache-store! cache-dir name input-fp out-paths))]))
   status)
