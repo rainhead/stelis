@@ -24,8 +24,28 @@ Stelis is the build system. `~/dev/beeatlas` and `~/dev/salishsea-io` are
   UnserializableField`, on every machine). Per-task hermetic runtimes are the
   point, not a workaround.
 - Secrets inject hermetically and must **never** reach logs.
-- (Stub — fill in as Horizon 0 lands: how to build, how to run, how to test,
-  project layout.)
+
+## Build, run, test
+
+Toolchain: **Racket v9.2 CS** (on `PATH` at `/Applications/Racket v9.2`). Core is
+`#lang racket/base` under [`src/`](src/); the Datalog planner needs the `datalog`
+package (`raco pkg install datalog`). No build step — Racket compiles on demand.
+
+- **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
+  `--commands <target>` (dry-run: print the exact hermetic command per task) ·
+  `--run <task>` (execute one task in its hermetic runtime).
+- **Test:** `raco test src/plan-test.rkt`.
+
+Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner ·
+[`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
+rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
+recipes, and the two runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
+subprocess executor · [`main.rkt`](src/main.rkt) CLI ·
+[`plan-test.rkt`](src/plan-test.rkt) tests · [`docs/adr/`](docs/adr/) decisions.
+
+Execution shells into `~/dev/beeatlas` via the runtimes declared in `beeatlas.rkt`:
+**uv** (Python 3.14, `data/`) for loaders/exporters and **uvx** (Python 3.13,
+`data/dbt/run.sh`) for dbt.
 
 ## Standing guardrails (most-violated commitments)
 

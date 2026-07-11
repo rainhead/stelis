@@ -34,7 +34,7 @@
 ;;   kind    : 'transform | 'gate | 'boundary
 ;;   inputs  : (listof symbol)  artifact names it consumes
 ;;   outputs : (listof symbol)  artifact names it produces
-;;   invoke  : reserved for slice 2 (execution); #f until then
+;;   invoke  : execution recipe (see exec.rkt), or #f for a task without one
 (struct task (name kind inputs outputs invoke) #:transparent)
 
 ;; Keyword smart-constructors so the reserved slots default to #f and the

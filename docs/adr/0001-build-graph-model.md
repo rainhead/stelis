@@ -9,7 +9,7 @@ it isn't relitigated (per `CLAUDE.md`).
 
 ## Context
 
-beeatlas's build is `data/run.py`: a 33-step hand-ordered list of Python
+beeatlas's build is `data/run.py`: a 32-step hand-ordered list of Python
 callables (`STEPS`). The list encodes *order*, but the dependency *edges* live
 only in prose comments ("runs AFTER collectors-export because…"). Nothing can
 auto-derive the real graph — a human must read those comments and write the edges
@@ -18,7 +18,7 @@ down. That transcription is the value Stelis adds and `run.py` lacks.
 Grounding facts (verified in beeatlas):
 - `occurrences.db`'s only inputs are `dbt/target/sandbox/occurrences.parquet`
   (from `dbt-build`) and `raw/taxa.csv.gz` (from `taxa-download`). Its true
-  upstream is a **strict subset** of the 33 steps; ~15 siblings
+  upstream is a **strict subset** of the 32 steps; 11 siblings
   (`species-maps`, `places-maps`, `collectors-export`, `feeds`, …) are not
   upstream of it at all.
 - Steps are **not 1:1 with artifacts**: `dbt-build` produces six parquets;
@@ -94,13 +94,13 @@ Two committed steps:
   metadata language about the build" commitment; the two implementations become a
   consistency test.
 
-**Scope authored:** the full 33-node set (so pruning is demonstrable), with
+**Scope authored:** the full 32-node set (so pruning is demonstrable), with
 **precise** edges for the `occurrences.db` upstream and **coarse-but-honest**
 edges for siblings (they exist and stay off the target's paths — no fabricated
 upstream links).
 
 **Validation:** for the `occurrences.db` subgraph the computed order must respect
-`run.py`'s hand-order, and the plan must drop exactly the expected ~15 siblings.
+`run.py`'s hand-order, and the plan must drop exactly the expected 11 siblings.
 
 **Reserved-but-empty slots** (so we don't retrofit): each task node will carry a
 "how to invoke" field (slice 2, execution); each artifact its version fingerprint

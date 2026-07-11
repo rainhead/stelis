@@ -8,8 +8,8 @@
 ;; dual-interpreter split (uv/3.14 vs uvx/3.13) is explicit metadata rather than
 ;; buried in a command string.
 ;;
-;; 2a is dry-run only: resolve recipes to commands and PRINT them. Nothing here
-;; runs a subprocess yet — that is 2b.
+;; 2a resolves recipes to commands and PRINTs them (a dry run); 2b (`run-task',
+;; below) executes a recipe as a subprocess.
 
 (require racket/list
          racket/string

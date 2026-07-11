@@ -35,7 +35,12 @@ orchestrates.
 
 3. **Recipes are transcribed from `run.py`'s imports** (module + function), the
    same `from M import F; F()` calls run.py makes — so the recipe is faithful to
-   how beeatlas actually runs each step.
+   how beeatlas actually runs each step. *Exception:* `dbt-build`'s recipe is
+   `run.sh build` only; `run.py`'s `_run_dbt_build` also copies six parquets to
+   `EXPORT_DIR`. That copy is a downstream artifact-*placement* concern, not part
+   of the transform, and is not needed for `occurrences.db` (`generate-sqlite`
+   reads `occurrences.parquet` from the dbt sandbox directly). Deferred to
+   st-d44.4 (explicit output destinations).
 
 4. **Slice 2a is dry-run only.** Resolve recipes to commands and print them
    (shell-quoted, copy-paste runnable); execute nothing. Actual subprocess

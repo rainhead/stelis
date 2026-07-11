@@ -110,6 +110,11 @@
               #:invoke (py "taxa_pipeline" "download_taxa_csv"))
    (make-task 'ecdysis 'boundary #:outputs '(ecdysis_data)
               #:invoke (py "ecdysis_pipeline" "load_ecdysis"))
+   ;; ecdysis-links augments the ecdysis_data schema in place with the
+   ;; occurrence_links table (load_ecdysis and load_links write the same dlt
+   ;; dataset). Modelled as a distinct db-relation because dbt reads it through a
+   ;; dedicated staging model (stg_ecdysis__occurrence_links); kept separate per
+   ;; the 2026-07-11 review rather than collapsed into ecdysis_data.
    (make-task 'ecdysis-links 'boundary #:inputs '(ecdysis_data) #:outputs '(ecdysis_links)
               #:invoke (py "ecdysis_pipeline" "load_links"))
    (make-task 'inaturalist 'boundary #:outputs '(inat_observations)
@@ -169,6 +174,11 @@
                           checklist.parquet species.parquet species_traits.parquet
                           higher_taxa.parquet counties.geojson ecoregions.geojson
                           wilderness.geojson)
+              ;; Recipe is `run.sh build' only. run.py's _run_dbt_build ALSO copies
+              ;; six parquets to EXPORT_DIR; omitted deliberately — a downstream
+              ;; artifact-placement concern not needed for occurrences.db, since
+              ;; generate-sqlite reads occurrences.parquet from the dbt sandbox
+              ;; directly. Revisit under st-d44.4 (explicit output destinations).
               #:invoke (recipe 'dbt (list "build")))
 
    ;; --- the target producer (has a __main__; run as a script) ---
