@@ -15,10 +15,11 @@
          racket/string
          "model.rkt"
          "beeatlas.rkt"
-         "exec.rkt")
+         "exec.rkt"
+         "determinism.rkt")
 
-(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'run | 'build
-(define from-task (make-parameter #f))    ; with --build: bound to a plan suffix
+(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'run | 'build | 'verify
+(define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 
 (define name
   (command-line
@@ -30,6 +31,8 @@
               (mode 'run)]
    [("--build") "execute the plan for TARGET in dependency order (partial success)"
                 (mode 'build)]
+   [("--verify") "build TARGET twice and compare hashes (determinism harness)"
+                 (mode 'verify)]
    #:once-each
    [("--from") ft "with --build: run only the plan suffix beginning at task FT"
                (from-task (string->symbol ft))]
@@ -77,6 +80,12 @@
    (define db (build-path out "occurrences.db"))
    (when (file-exists? db) (printf "  ~a (~a bytes)\n" db (file-size db)))
    (exit (if (for/or ([v (in-hash-values status)]) (memq v '(failed skipped))) 1 0))]
+
+  ;; --- determinism: build twice, compare hashes --------------------------
+  [(eq? (mode) 'verify)
+   (exit (if (verify-determinism beeatlas-graph name beeatlas-runtimes
+                                 #:from (from-task))
+             0 1))]
 
   ;; --- plan / dry-run for a target artifact ------------------------------
   [else
