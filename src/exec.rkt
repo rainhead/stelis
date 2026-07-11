@@ -81,7 +81,11 @@
 ;; environment is never mutated — the subprocess is the only thing that sees them.
 ;; (This is where secret injection will hook in later; for now it carries things
 ;; like EXPORT_DIR to steer output to an explicit destination.)
-(define (run-task g name runtimes #:env [extra-env '()])
+;; With #:label, the child's stdout/stderr are captured and each line re-emitted
+;; prefixed with the label (streaming per-task observability, st-d44.5) — so in a
+;; multi-task build you can tell which task produced which line. Without a label,
+;; the child inherits our stdio directly (simplest; used by single --run).
+(define (run-task g name runtimes #:env [extra-env '()] #:label [label #f])
   (define rec (task-invoke (hash-ref (graph-tasks g) name)))
   (unless rec (error 'run-task "task ~a has no recipe" name))
   (define argv (recipe->argv rec runtimes))
@@ -92,7 +96,33 @@
                   (environment-variables-copy (current-environment-variables))])
     (for ([kv (in-list extra-env)])
       (putenv (car kv) (cdr kv)))
-    (apply system*/exit-code exe (cdr argv))))
+    (if label
+        (run/streaming exe (cdr argv) label)
+        (apply system*/exit-code exe (cdr argv)))))
+
+;; run/streaming : path (listof string) symbol -> exact-integer
+;; Run the command, prefixing each captured output line with `label'. stdout and
+;; stderr are pumped by separate threads (so a chatty stream can't deadlock the
+;; other), each line flushed as it arrives for real-time streaming.
+(define (run/streaming exe args label)
+  (define-values (sp out in err) (apply subprocess #f #f #f exe args))
+  (close-output-port in) ; these tasks read no stdin
+  (define prefix (format "  ~a │ " label))
+  (define (pump port sink)
+    (thread
+     (lambda ()
+       (let loop ()
+         (define line (read-line port 'any)) ; 'any: also split dbt's \r progress
+         (unless (eof-object? line)
+           (fprintf sink "~a~a\n" prefix line)
+           (flush-output sink)
+           (loop))))))
+  (define t-out (pump out (current-output-port)))
+  (define t-err (pump err (current-error-port)))
+  (subprocess-wait sp)
+  (thread-wait t-out)
+  (thread-wait t-err)
+  (subprocess-status sp))
 
 ;; --- Ordered plan execution with partial success ----------------------------
 
@@ -144,7 +174,7 @@
       [else
        (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
        (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
-       (define code (run-task g name runtimes #:env extra-env))
+       (define code (run-task g name runtimes #:env extra-env #:label name))
        (define ok? (zero? code))
        (hash-set! status name (if ok? 'ok 'failed))
        (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
