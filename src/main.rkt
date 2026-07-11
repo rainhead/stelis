@@ -36,8 +36,9 @@
    (define code (run-task beeatlas-graph name beeatlas-runtimes
                           #:env (list (cons "EXPORT_DIR" (path->string out)))))
    (printf "\n~a ~a — exit ~a\n" (if (zero? code) "✓" "✗") name code)
+   ;; generate-sqlite is the only task that writes into EXPORT_DIR; report it.
    (define db (build-path out "occurrences.db"))
-   (when (file-exists? db)
+   (when (and (eq? name 'generate-sqlite) (file-exists? db))
      (printf "  wrote ~a (~a bytes)\n" db (file-size db)))
    (exit code)]
 
