@@ -4,41 +4,55 @@
 ;;
 ;;   racket src/main.rkt occurrences.db              ; print the plan (task list)
 ;;   racket src/main.rkt --commands occurrences.db   ; dry-run: print exact commands
+;;   racket src/main.rkt --run generate-sqlite       ; execute one TASK (into scratch)
 
 (require racket/cmdline
          racket/set
          racket/list
+         racket/file
          "model.rkt"
          "beeatlas.rkt"
          "exec.rkt")
 
-(define show-commands? (make-parameter #f))
+(define mode (make-parameter 'plan)) ; 'plan | 'commands | 'run
 
-(define target
+(define name
   (command-line
    #:program "stelis"
-   #:once-each
-   [("--commands") "print the exact hermetic command per task (dry run; runs nothing)"
-                   (show-commands? #t)]
-   #:args (target-name)
-   (string->symbol target-name)))
-
-(define-values (ordered pruned) (plan beeatlas-graph target))
-
-(printf "Target: ~a\n\n" target)
+   #:once-any
+   [("--commands") "dry-run: print the exact hermetic command per task (runs nothing)"
+                   (mode 'commands)]
+   [("--run") "execute the named TASK as a subprocess (output steered to a scratch dir)"
+              (mode 'run)]
+   #:args (name)
+   (string->symbol name)))
 
 (cond
-  [(show-commands?)
-   (printf "Dry run — ~a command(s), in build order (nothing executed):\n\n"
-           (length ordered))
-   (print-plan-commands beeatlas-graph ordered beeatlas-runtimes)]
-  [else
-   (printf "Minimal upstream — ~a task(s), in build order:\n" (length ordered))
-   (for ([name (in-list ordered)] [i (in-naturals 1)])
-     (define t (hash-ref (graph-tasks beeatlas-graph) name))
-     (printf "  ~a. ~a  [~a]\n" i name (task-kind t)))])
+  ;; --- execute a single task ---------------------------------------------
+  [(eq? (mode) 'run)
+   (define out (build-path (find-system-path 'temp-dir) "stelis-out"))
+   (make-directory* out)
+   (printf "Running ~a  (EXPORT_DIR=~a)\n\n" name out)
+   (define code (run-task beeatlas-graph name beeatlas-runtimes
+                          #:env (list (cons "EXPORT_DIR" (path->string out)))))
+   (printf "\n~a ~a — exit ~a\n" (if (zero? code) "✓" "✗") name code)
+   (define db (build-path out "occurrences.db"))
+   (when (file-exists? db)
+     (printf "  wrote ~a (~a bytes)\n" db (file-size db)))
+   (exit code)]
 
-(printf "\nPruned — ~a task(s) not upstream of ~a:\n  ~a\n"
-        (set-count pruned)
-        target
-        (sort (set->list pruned) symbol<?))
+  ;; --- plan / dry-run for a target artifact ------------------------------
+  [else
+   (define-values (ordered pruned) (plan beeatlas-graph name))
+   (printf "Target: ~a\n\n" name)
+   (cond
+     [(eq? (mode) 'commands)
+      (printf "Dry run — ~a command(s), in build order (nothing executed):\n\n"
+              (length ordered))
+      (print-plan-commands beeatlas-graph ordered beeatlas-runtimes)]
+     [else
+      (printf "Minimal upstream — ~a task(s), in build order:\n" (length ordered))
+      (for ([t (in-list ordered)] [i (in-naturals 1)])
+        (printf "  ~a. ~a  [~a]\n" i t (task-kind (hash-ref (graph-tasks beeatlas-graph) t))))])
+   (printf "\nPruned — ~a task(s) not upstream of ~a:\n  ~a\n"
+           (set-count pruned) name (sort (set->list pruned) symbol<?))])

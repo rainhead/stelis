@@ -13,13 +13,15 @@
 
 (require racket/list
          racket/string
+         racket/system
          "model.rkt")
 
 (provide (struct-out runtime)
          (struct-out recipe)
          recipe->argv
          shell-quote
-         print-plan-commands)
+         print-plan-commands
+         run-task)
 
 ;; shell-quote : string -> string
 ;; POSIX single-quote an argv element so the printed dry-run command is
@@ -66,3 +68,25 @@
 
 ;; right-pad a small index for tidy columns
 (define (~i i) (let ([s (number->string i)]) (if (< i 10) (string-append " " s) s)))
+
+;; run-task : graph symbol (hash symbol->runtime)
+;;            #:env (listof (cons string string)) -> exact-integer
+;; Execute a single task's recipe as a subprocess, inheriting stdio (basic
+;; streaming; a proper streaming layer is st-d44.5). Returns the exit code.
+;;
+;; Extra env vars are injected into a COPY of the environment, so Stelis's own
+;; environment is never mutated — the subprocess is the only thing that sees them.
+;; (This is where secret injection will hook in later; for now it carries things
+;; like EXPORT_DIR to steer output to an explicit destination.)
+(define (run-task g name runtimes #:env [extra-env '()])
+  (define rec (task-invoke (hash-ref (graph-tasks g) name)))
+  (unless rec (error 'run-task "task ~a has no recipe" name))
+  (define argv (recipe->argv rec runtimes))
+  (define exe (or (find-executable-path (car argv))
+                  (error 'run-task "executable not found on PATH: ~a" (car argv))))
+  (flush-output) ; our buffered banner must land before the child's direct fd writes
+  (parameterize ([current-environment-variables
+                  (environment-variables-copy (current-environment-variables))])
+    (for ([kv (in-list extra-env)])
+      (putenv (car kv) (cdr kv)))
+    (apply system*/exit-code exe (cdr argv))))
