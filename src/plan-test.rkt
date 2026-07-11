@@ -9,7 +9,8 @@
          racket/format
          "model.rkt"
          "beeatlas.rkt"
-         "plan-datalog.rkt")
+         "plan-datalog.rkt"
+         "exec.rkt")
 
 (define-values (ordered pruned) (plan beeatlas-graph 'occurrences.db))
 (define required (list->set ordered))
@@ -57,3 +58,15 @@
   (check-equal? (datalog-required-tasks beeatlas-graph target)
                 (required-tasks beeatlas-graph target)
                 (~a "datalog closure = plain-racket recursion for " target)))
+
+;; 6. Slice 2/st-d44.4 partial-success core: a failed producer blocks its
+;;    dependents, an ok producer does not, and unrelated failures don't block.
+(check-equal? (blockers-of beeatlas-graph 'generate-sqlite (hash 'dbt-build 'failed))
+              '(dbt-build)
+              "generate-sqlite is blocked when its producer dbt-build failed")
+(check-equal? (blockers-of beeatlas-graph 'generate-sqlite (hash 'dbt-build 'ok))
+              '()
+              "generate-sqlite runs when dbt-build succeeded")
+(check-equal? (blockers-of beeatlas-graph 'generate-sqlite (hash 'species-export 'failed))
+              '()
+              "an unrelated task's failure does not block generate-sqlite")

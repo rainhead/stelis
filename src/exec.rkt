@@ -21,7 +21,9 @@
          recipe->argv
          shell-quote
          print-plan-commands
-         run-task)
+         run-task
+         blockers-of
+         run-plan)
 
 ;; shell-quote : string -> string
 ;; POSIX single-quote an argv element so the printed dry-run command is
@@ -90,3 +92,41 @@
     (for ([kv (in-list extra-env)])
       (putenv (car kv) (cdr kv)))
     (apply system*/exit-code exe (cdr argv))))
+
+;; --- Ordered plan execution with partial success ----------------------------
+
+;; blockers-of : graph symbol (hash symbol->symbol) -> (listof symbol)
+;; The in-plan producers of `name's inputs that already finished with a non-'ok
+;; status. Empty => the task may run. Pure — this is the partial-success core:
+;; a failure blocks only its dependents, never independent tasks. Producers not
+;; present in `status' are assumed already satisfied (e.g. skipped by --from).
+(define (blockers-of g name status)
+  (define t (hash-ref (graph-tasks g) name))
+  (for*/list ([in (in-list (task-inputs t))]
+              [p (in-value (producer-of g in))]
+              #:when (and p
+                          (hash-has-key? status p)
+                          (not (eq? (hash-ref status p) 'ok))))
+    p))
+
+;; run-plan : graph (listof symbol) (hash symbol->runtime)
+;;            #:env (listof (cons string string)) -> (hash symbol->symbol)
+;; Run tasks in the given (topological) order. A task whose in-plan producers all
+;; succeeded runs; otherwise it is skipped (partial success). Returns each task's
+;; final status: 'ok | 'failed | 'skipped.
+(define (run-plan g ordered runtimes #:env [extra-env '()])
+  (define status (make-hash))
+  (for ([name (in-list ordered)])
+    (define blockers (blockers-of g name status))
+    (cond
+      [(pair? blockers)
+       (printf "\n⊘ ~a — skipped (blocked by ~a)\n"
+               name (string-join (map symbol->string blockers) ", "))
+       (hash-set! status name 'skipped)]
+      [else
+       (define rt (hash-ref runtimes (recipe-runtime (task-invoke (hash-ref (graph-tasks g) name)))))
+       (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
+       (define code (run-task g name runtimes #:env extra-env))
+       (hash-set! status name (if (zero? code) 'ok 'failed))
+       (printf "~a ~a — exit ~a\n" (if (zero? code) "✓" "✗") name code)]))
+  status)
