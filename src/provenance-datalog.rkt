@@ -33,29 +33,24 @@
          datalog-stale?
          datalog-direct-blames
          datalog-blames
-         datalog-own-reason)
+         datalog-own-reason
+         print-why-tree)
 
 ;; explanations->theory : graph (listof explanation?) -> theory
-;; Facts: must-run(T,R) / cached(T) from each task's own decision;
-;; changed-input(T,A) naming each changed input; depends(T,U) for in-plan
-;; producer edges. Plus the staleness rules above.
+;; Facts: must-run(T,R) from each task's own 'run decision, and depends(T,U)
+;; for in-plan producer edges — the minimum the staleness rules consume.
+;; (Finer-grained facts — cached(T), changed-input(T,A) — return when a rule
+;; actually needs them; prose details stay on the decision records.)
 (define (explanations->theory g exps)
   (define thy (make-theory))
   (define in-plan (for/set ([e (in-list exps)]) (explanation-task e)))
   (for ([e (in-list exps)])
     (define name (explanation-task e))
     (define d (explanation-decision e))
-    (case (decision-verdict d)
-      [(run)
-       (assert-must-run! thy name (decision-reason d))
-       (when (eq? 'input-changed (decision-reason d))
-         (for ([a (in-list (decision-details d))])
-           (assert-changed-input! thy name a)))]
-      [(skip) (assert-cached! thy name)])
-    (define t (hash-ref (graph-tasks g) name))
-    (for* ([in (in-list (task-inputs t))]
-           [p (in-value (producer-of g in))]
-           #:when (and p (set-member? in-plan p)))
+    (when (eq? 'run (decision-verdict d))
+      (assert-must-run! thy name (decision-reason d)))
+    (for ([p (in-list (producers-of-inputs
+                       g name (lambda (p) (set-member? in-plan p))))])
       (assert-depends! thy name p)))
   (datalog thy
            (! (:- (stale T)            (must-run T R)))
@@ -89,9 +84,37 @@
   (define subst (datalog thy (? (must-run #,t R))))
   (and (pair? subst) (dict-ref (car subst) 'R)))
 
+;; --- Rendering ------------------------------------------------------------------
+
+;; print-why-tree : theory symbol (symbol -> decision?) -> void
+;; The transitive chain as a tree over the stale-because edges; a node reached
+;; twice (diamonds) is elided after its first showing. The theory supplies the
+;; structure; the decision records supply the prose.
+(define (print-why-tree thy root dec-of)
+  (define shown (mutable-set))
+  (let loop ([t root] [depth 0])
+    (define first-time? (not (set-member? shown t)))
+    (set-add! shown t)
+    (define blames
+      (if first-time?
+          (sort (set->list (datalog-direct-blames thy t)) symbol<?)
+          '()))
+    (define d (dec-of t))
+    (printf "~a~a~a — ~a\n"
+            (make-string (* 2 depth) #\space)
+            (if (zero? depth) "" "⤷ ")
+            t
+            (cond
+              [(not first-time?) "(shown above)"]
+              ;; own inputs are fine; the staleness is inherited — say so
+              ;; instead of the misleading bare "cached"
+              [(and (eq? 'skip (decision-verdict d)) (pair? blames))
+               "inputs unchanged, but stale through upstreams ↓"]
+              [else (decision->string d)]))
+    (for ([u (in-list blames)])
+      (loop u (add1 depth)))))
+
 ;; --- Fact assertion helpers (runtime symbols spliced as constants) -------------
 
-(define (assert-must-run! thy t r)      (datalog thy (! (must-run #,t #,r)))      (void))
-(define (assert-cached! thy t)          (datalog thy (! (cached #,t)))            (void))
-(define (assert-changed-input! thy t a) (datalog thy (! (changed-input #,t #,a))) (void))
-(define (assert-depends! thy t u)       (datalog thy (! (depends #,t #,u)))       (void))
+(define (assert-must-run! thy t r) (datalog thy (! (must-run #,t #,r))) (void))
+(define (assert-depends! thy t u)  (datalog thy (! (depends #,t #,u)))  (void))

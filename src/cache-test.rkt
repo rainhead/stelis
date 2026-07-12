@@ -52,6 +52,7 @@
 (define out-path  (build-path tmp "out.db"))
 (define (resolve a)
   (case a [(raw) raw-path] [(out) out-path] [else #f]))
+(define env (build-env (lambda (a _export-dir) (resolve a)) tmp cache-dir))
 
 (define (graph-with-invoke invoke)
   (build-graph
@@ -66,13 +67,13 @@
 (display-to-file "a,b\n1,2\n" raw-path)
 (display-to-file "db-bytes" out-path)
 
-(check-equal? (task-decision g 'ingest resolve cache-dir '())
+(check-equal? (task-decision g 'ingest env)
               (decision 'run 'boundary '())
               "boundary tasks are never content-skipped")
-(check-equal? (task-decision g 'needs-token resolve cache-dir '())
+(check-equal? (task-decision g 'needs-token env)
               (decision 'run 'inputs-unresolvable '(token))
               "an unresolvable input is named")
-(check-equal? (task-decision g 'xform resolve cache-dir (list out-path))
+(check-equal? (task-decision g 'xform env)
               (decision 'run 'no-cache-entry '())
               "first sight of a task -> run")
 
@@ -80,7 +81,7 @@
 (define snap-1 (input-snapshot g 'xform resolve))
 (check-pred snapshot? snap-1 "xform's inputs all resolve to files")
 (cache-store! cache-dir 'xform snap-1 (list out-path))
-(check-equal? (task-decision g 'xform resolve cache-dir (list out-path))
+(check-equal? (task-decision g 'xform env)
               (decision 'skip 'cached '())
               "stored + unchanged + outputs present -> cached")
 (check-true (cache-hit? cache-dir 'xform snap-1 (list out-path))
@@ -88,28 +89,27 @@
 
 ;; change the input's content -> the changed input is named
 (display-to-file "a,b\n9,9\n" raw-path #:exists 'replace)
-(check-equal? (task-decision g 'xform resolve cache-dir (list out-path))
+(check-equal? (task-decision g 'xform env)
               (decision 'run 'input-changed '(raw))
               "a content change to raw is attributed to raw")
 
 ;; restore the input, lose the output
 (display-to-file "a,b\n1,2\n" raw-path #:exists 'replace)
 (delete-file out-path)
-(check-equal? (task-decision g 'xform resolve cache-dir (list out-path))
+(check-equal? (task-decision g 'xform env)
               (decision 'run 'output-missing (list out-path))
               "inputs unchanged but the output is gone")
 (display-to-file "db-bytes" out-path)
 
 ;; a different recipe against the same stored entry
-(check-equal? (task-decision (graph-with-invoke "v2") 'xform resolve cache-dir
-                             (list out-path))
+(check-equal? (task-decision (graph-with-invoke "v2") 'xform env)
               (decision 'run 'recipe-changed '())
               "editing the recipe invalidates the entry")
 
 ;; an old-format (v1) entry is a miss, never an error
 (call-with-output-file (build-path cache-dir "xform.rktd") #:exists 'replace
   (lambda (o) (write (hash 'version 1 'input-fp "deadbeef" 'outputs '()) o)))
-(check-equal? (task-decision g 'xform resolve cache-dir (list out-path))
+(check-equal? (task-decision g 'xform env)
               (decision 'run 'no-cache-entry '())
               "other-version entry reads as no entry")
 

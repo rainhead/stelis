@@ -92,13 +92,10 @@
 (define-runtime-path here "provenance-test.rkt")
 (let*-values ([(ordered pruned) (plan beeatlas-graph 'occurrences.db)])
   (define an-existing-file (path->string here))
-  (define (resolve a)
-    (case a [(occurrences.parquet taxa.csv.gz) an-existing-file] [else #f]))
-  (define exps
-    (walk-explanations
-     beeatlas-graph ordered
-     (lambda (name)
-       (define t (hash-ref (graph-tasks beeatlas-graph) name))
-       (task-decision beeatlas-graph name resolve "/nonexistent-cache-dir"
-                      (filter values (map resolve (task-outputs t)))))))
+  (define env
+    (build-env (lambda (a _export-dir)
+                 (case a [(occurrences.parquet taxa.csv.gz) an-existing-file] [else #f]))
+               #f
+               "/nonexistent-cache-dir"))
+  (define exps (plan-explanations beeatlas-graph ordered env))
   (void (cross-check beeatlas-graph exps "beeatlas occurrences.db plan")))

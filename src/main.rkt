@@ -7,6 +7,7 @@
 ;;   racket src/main.rkt --explain occurrences.db          ; why would each task run/skip?
 ;;   racket src/main.rkt --why occurrences.db              ; why is it stale? (transitive;
 ;;   racket src/main.rkt --why dbt-build                   ;  a task or an artifact)
+;;   racket src/main.rkt --explain --last                  ; what did the last build do?
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
@@ -46,12 +47,20 @@
    [("--verify") "build TARGET twice and compare hashes (determinism harness)"
                  (mode 'verify)]
    #:once-each
-   [("--from") ft "with --build: run only the plan suffix beginning at task FT"
+   [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
    [("--last") "with --explain: report what the last real --build decided and did"
                (last? #t)]
-   #:args (name)
-   (string->symbol name)))
+   #:args names
+   (cond
+     [(null? names) #f]
+     [(null? (cdr names)) (string->symbol (car names))]
+     [else (error 'stelis "expects at most one <name>, given: ~a"
+                  (string-join names " "))])))
+
+;; every mode needs the positional name except reading back the trace
+(unless (or name (and (eq? (mode) 'explain) (last?)))
+  (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
 
 ;; a stelis-controlled output destination (explicit, no hidden copies)
 (define (scratch-out-path) (build-path (find-system-path 'temp-dir) "stelis-out"))
@@ -59,6 +68,9 @@
 
 (define stelis-state (build-path ".stelis"))
 (define stelis-cache (build-path stelis-state "cache"))
+
+;; the one build environment every cache-aware mode shares
+(define benv (build-env beeatlas-path (scratch-out-path) stelis-cache))
 
 ;; Restrict a plan to the suffix beginning at --from, when given. Used by both
 ;; --build (what runs) and --commands (what the dry run previews), so the preview
@@ -73,7 +85,7 @@
 (cond
   ;; --- what did the last real build decide and do? -----------------------
   ;; Reads the persisted trace; nothing is re-fingerprinted (the world may
-  ;; have moved on since). The recorded target wins over the positional one.
+  ;; have moved on since). Needs no positional name — the trace knows its target.
   [(and (eq? (mode) 'explain) (last?))
    (define tr (trace-load stelis-state))
    (cond
@@ -86,8 +98,6 @@
       (printf "Last build — target ~a, ~a task(s):\n" (car tr) (length records))
       (printf "  ✓ ran · ≡ cached · ✗ failed · ⊘ skipped\n\n")
       (for ([r (in-list records)] [i (in-naturals 1)])
-        (define glyph (case (trace-record-outcome r)
-                        [(ok) "✓"] [(cached) "≡"] [(failed) "✗"] [(skipped) "⊘"]))
         (define why
           (cond
             [(eq? 'skipped (trace-record-outcome r))
@@ -96,7 +106,8 @@
             [(trace-record-decision r) (decision->string (trace-record-decision r))]
             [else "(caching was off)"]))
         (printf "~a~a. ~a ~a\n     ~a\n"
-                (if (< i 10) " " "") i glyph (trace-record-task r) why))])]
+                (if (< i 10) " " "") i
+                (outcome-glyph (trace-record-outcome r)) (trace-record-task r) why))])]
 
   ;; --- execute a single task ---------------------------------------------
   [(eq? (mode) 'run)
@@ -122,11 +133,8 @@
    (define-values (status records)
      (run-plan beeatlas-graph to-run beeatlas-runtimes
                #:env (list (cons "EXPORT_DIR" (path->string out)))
-               #:resolve beeatlas-path
-               #:export-dir out
-               #:cache-dir stelis-cache))
-   (trace-store! stelis-state name
-                 (map (lambda (r) (apply trace-record r)) records))
+               #:context benv))
+   (trace-store! stelis-state name records)
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))
@@ -143,63 +151,40 @@
   ;; --- why is NAME stale? (a task or an artifact) -------------------------
   ;; The subject scopes its own plan: an artifact's plan is its minimal
   ;; upstream, and the question is asked of its producer task; a task's plan
-  ;; is scoped through its first output (the task's own upstream cone).
+  ;; is the union of its outputs' upstream cones (so a multi-output task is
+  ;; covered whole, not through an arbitrary first output).
   [(eq? (mode) 'why)
-   (define-values (wt target)
+   (define-values (subject-task targets)
      (cond
        [(hash-ref (graph-tasks beeatlas-graph) name #f)
         => (lambda (t)
              (when (null? (task-outputs t))
                (error 'stelis "--why ~a: task has no outputs to scope a plan by" name))
-             (values name (car (task-outputs t))))]
+             (values name (task-outputs t)))]
        [(producer-of beeatlas-graph name)
-        => (lambda (p) (values p name))]
+        => (lambda (p) (values p (list name)))]
        [(hash-ref (graph-artifacts beeatlas-graph) name #f)
         (error 'stelis "--why ~a: an external input — no producing task, nothing to rebuild"
                name)]
        [else
         (error 'stelis "--why ~a: no task or artifact by that name in the graph" name)]))
-   (define-values (ordered _pruned) (plan beeatlas-graph target))
-   (define to-run (plan-suffix ordered))
-   (unless (memq wt to-run)
-     (error 'stelis "--why ~a: task ~a is not in the --from ~a suffix" name wt (from-task)))
-   (define exps (plan-explanations beeatlas-graph to-run
-                                   #:resolve beeatlas-path
-                                   #:export-dir (scratch-out-path)
-                                   #:cache-dir stelis-cache))
+   (define required
+     (for/fold ([s (set)]) ([a (in-list targets)])
+       (set-union s (required-tasks beeatlas-graph a))))
+   (define to-run (plan-suffix (topo-sort beeatlas-graph required)))
+   (unless (memq subject-task to-run)
+     (error 'stelis "--why ~a: task ~a is not in the --from ~a suffix"
+            name subject-task (from-task)))
+   (define exps (plan-explanations beeatlas-graph to-run benv))
    (define thy (explanations->theory beeatlas-graph exps))
    (define dec-of (for/hash ([e (in-list exps)])
                     (values (explanation-task e) (explanation-decision e))))
-   (unless (eq? wt name)
-     (printf "~a is produced by ~a — asking about that task.\n\n" name wt))
-   (cond
-     [(not (datalog-stale? thy wt))
-      (printf "~a is NOT stale — ~a\n" wt (decision->string (hash-ref dec-of wt)))]
-     [else
-      ;; the transitive chain, as a tree over the stale-because edges; a
-      ;; node reached twice (diamonds) is elided after its first showing
-      (define shown (mutable-set))
-      (let loop ([t wt] [depth 0])
-        (define first-time? (not (set-member? shown t)))
-        (set-add! shown t)
-        (define blames
-          (if first-time?
-              (sort (set->list (datalog-direct-blames thy t)) symbol<?)
-              '()))
-        (define d (hash-ref dec-of t))
-        (printf "~a~a~a — ~a\n"
-                (make-string (* 2 depth) #\space)
-                (if (zero? depth) "" "⤷ ")
-                t
-                (cond
-                  [(not first-time?) "(shown above)"]
-                  ;; own inputs are fine; the staleness is inherited — say so
-                  ;; instead of the misleading bare "cached"
-                  [(and (eq? 'skip (decision-verdict d)) (pair? blames))
-                   "inputs unchanged, but stale through upstreams ↓"]
-                  [else (decision->string d)]))
-        (for ([u (in-list blames)])
-          (loop u (add1 depth))))])]
+   (unless (eq? subject-task name)
+     (printf "~a is produced by ~a — asking about that task.\n\n" name subject-task))
+   (if (datalog-stale? thy subject-task)
+       (print-why-tree thy subject-task (lambda (t) (hash-ref dec-of t)))
+       (printf "~a is NOT stale — ~a\n"
+               subject-task (decision->string (hash-ref dec-of subject-task))))]
 
   ;; --- plan / dry-run for a target artifact ------------------------------
   [else
@@ -211,20 +196,13 @@
       (printf "Explain — ~a task(s)~a, in build order:\n"
               (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
       (printf "  ≡ skips · ≈ conditional (upstream reruns) · ▶ runs\n\n")
-      (print-explanations
-       (plan-explanations beeatlas-graph to-run
-                          #:resolve beeatlas-path
-                          #:export-dir (scratch-out-path)
-                          #:cache-dir stelis-cache))]
+      (print-explanations (plan-explanations beeatlas-graph to-run benv))]
      [(eq? (mode) 'commands)
       (define to-run (plan-suffix ordered))
       (printf "Dry run — ~a command(s)~a, in build order (nothing executed):\n"
               (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
       (printf "  ≡ cached · ≈ conditional (upstream reruns) · ▶ would run\n\n")
-      (print-plan-commands beeatlas-graph to-run beeatlas-runtimes
-                           #:resolve beeatlas-path
-                           #:export-dir (scratch-out-path)
-                           #:cache-dir stelis-cache)]
+      (print-plan-commands beeatlas-graph to-run beeatlas-runtimes #:context benv)]
      [else
       (printf "Minimal upstream — ~a task(s), in build order:\n" (length ordered))
       (for ([t (in-list ordered)] [i (in-naturals 1)])

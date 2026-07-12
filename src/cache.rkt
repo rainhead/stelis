@@ -21,9 +21,14 @@
 
 (provide (struct-out decision)
          (struct-out snapshot)
+         (struct-out build-env)
+         env-resolve
+         env-output-paths
          input-snapshot
+         read-versioned
          read-cache-entry
          decide
+         decision+snapshot
          task-decision
          cache-hit?
          cache-store!)
@@ -57,6 +62,24 @@
 ;;   input-hashes : immutable hash, artifact name -> content hash
 (struct snapshot (recipe-hash input-hashes) #:transparent)
 
+;; --- The build environment ------------------------------------------------------
+
+;; How artifacts resolve to paths and where build state lives — the trio every
+;; cache-aware entry point needs, bundled so it travels as one value.
+;;   resolve    : (symbol export-dir -> (or/c path-string #f))
+;;   export-dir : path-string — the explicit output destination
+;;   cache-dir  : path-string — the derived, disposable sidecar dir
+(struct build-env (resolve export-dir cache-dir) #:transparent)
+
+;; env-resolve : build-env? symbol -> (or/c path-string #f)
+(define (env-resolve env a)
+  ((build-env-resolve env) a (build-env-export-dir env)))
+
+;; env-output-paths : build-env? task? -> (listof path-string)
+;; The task's resolvable output paths (unresolvable outputs drop out).
+(define (env-output-paths env t)
+  (filter values (map (lambda (o) (env-resolve env o)) (task-outputs t))))
+
 ;; input-snapshot : graph symbol (symbol -> (or/c path-string #f))
 ;;                  -> (or/c snapshot? decision?)
 ;; Hash the task's recipe and each input file. Returns a 'run decision instead
@@ -84,14 +107,18 @@
 (define (cache-file cache-dir name)
   (build-path cache-dir (format "~a.rktd" name)))
 
-;; read-cache-entry : path-string symbol -> (or/c hash? #f)
-;; #f for a missing, unparseable, or other-version entry — all just misses.
-(define (read-cache-entry cache-dir name)
-  (define f (cache-file cache-dir name))
+;; read-versioned : path-string exact-integer -> (or/c hash? #f)
+;; The shared shape for versioned state files (cache sidecars, the build
+;; trace): #f for missing, unparseable, or other-version — never an error.
+(define (read-versioned f version)
   (and (file-exists? f)
        (let ([e (with-handlers ([exn:fail? (lambda (_) #f)])
                   (call-with-input-file f read))])
-         (and (hash? e) (equal? (hash-ref e 'version #f) CACHE-VERSION) e))))
+         (and (hash? e) (equal? (hash-ref e 'version #f) version) e))))
+
+;; read-cache-entry : path-string symbol -> (or/c hash? #f)
+(define (read-cache-entry cache-dir name)
+  (read-versioned (cache-file cache-dir name) CACHE-VERSION))
 
 ;; cache-store! : path-string symbol snapshot? (listof path-string) -> void
 (define (cache-store! cache-dir name snap output-paths)
@@ -136,14 +163,24 @@
           name)
         symbol<?))
 
-;; task-decision : graph symbol (symbol -> (or/c path-string #f))
-;;                 path-string (listof path-string) -> decision?
-;; The full question, IO included: would `name' run right now, and why?
-(define (task-decision g name resolve cache-dir output-paths)
-  (define snap (input-snapshot g name resolve))
+;; decision+snapshot : graph symbol build-env?
+;;                     -> (values decision? (or/c snapshot? #f))
+;; The full question, IO included: would `name' run right now, and why? Also
+;; returns the snapshot (when one exists) so an executor that goes on to run
+;; the task can store it without re-hashing.
+(define (decision+snapshot g name env)
+  (define t (hash-ref (graph-tasks g) name))
+  (define snap (input-snapshot g name (lambda (a) (env-resolve env a))))
   (if (decision? snap)
-      snap
-      (decide snap (read-cache-entry cache-dir name) (missing output-paths))))
+      (values snap #f)
+      (values (decide snap (read-cache-entry (build-env-cache-dir env) name)
+                      (missing (env-output-paths env t)))
+              snap)))
+
+;; task-decision : graph symbol build-env? -> decision?
+(define (task-decision g name env)
+  (define-values (d _snap) (decision+snapshot g name env))
+  d)
 
 ;; cache-hit? : path-string symbol snapshot? (listof path-string) -> boolean
 ;; Thin wrapper over `decide' for callers that only need the verdict.

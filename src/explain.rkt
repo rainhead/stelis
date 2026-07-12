@@ -9,7 +9,7 @@
 ;; The upstream names are kept, giving the one-hop provenance chain ("stale
 ;; because dbt-build reruns"); the transitive chain is slice 3's Datalog query.
 
-(require racket/list
+(require racket/format
          racket/string
          "model.rkt"
          "cache.rkt")
@@ -39,34 +39,17 @@
 (define (walk-explanations g ordered decision-of)
   (define will-run (make-hash))
   (for/list ([name (in-list ordered)])
-    (define t (hash-ref (graph-tasks g) name))
     (define d (decision-of name))
-    (define ups
-      (remove-duplicates
-       (for*/list ([in (in-list (task-inputs t))]
-                   [p (in-value (producer-of g in))]
-                   #:when (and p (hash-ref will-run p #f)))
-         p)))
+    (define ups (producers-of-inputs g name (lambda (p) (hash-ref will-run p #f))))
     (unless (and (eq? 'skip (decision-verdict d)) (null? ups))
       (hash-set! will-run name #t))
     (explanation name d ups)))
 
-;; plan-explanations : graph (listof symbol)
-;;   #:resolve (symbol export-dir -> path/#f) #:export-dir path #:cache-dir path
-;;   -> (listof explanation?)
+;; plan-explanations : graph (listof symbol) build-env? -> (listof explanation?)
 ;; The IO wrapper: decisions come from the cache layer against the real
-;; filesystem. Same keyword shape as print-plan-commands.
-(define (plan-explanations g ordered
-                           #:resolve resolve
-                           #:export-dir export-dir
-                           #:cache-dir cache-dir)
-  (define (rsv a) (resolve a export-dir))
-  (walk-explanations
-   g ordered
-   (lambda (name)
-     (define t (hash-ref (graph-tasks g) name))
-     (task-decision g name rsv cache-dir
-                    (filter values (map rsv (task-outputs t)))))))
+;; filesystem, via the shared build environment.
+(define (plan-explanations g ordered env)
+  (walk-explanations g ordered (lambda (name) (task-decision g name env))))
 
 ;; --- Rendering ----------------------------------------------------------------
 
@@ -78,7 +61,7 @@
 
 ;; decision->string : decision? -> string — the reason in prose, details named.
 (define (decision->string d)
-  (define (names) (string-join (map ~display (decision-details d)) ", "))
+  (define (names) (string-join (map ~a (decision-details d)) ", "))
   (case (decision-reason d)
     [(boundary)            "boundary — ingestion; never content-skipped"]
     [(inputs-unresolvable) (format "inputs not content-addressable: ~a" (names))]
@@ -97,8 +80,6 @@
               base
               (string-join (map symbol->string (explanation-upstreams e)) ", "))
       base))
-
-(define (~display v) (format "~a" v))
 
 ;; print-explanations : (listof explanation?) -> void
 (define (print-explanations exps)

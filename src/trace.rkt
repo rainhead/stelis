@@ -16,23 +16,40 @@
          "cache.rkt")
 
 (provide (struct-out trace-record)
+         outcome-glyph
          trace-store!
          trace-load)
 
-(define TRACE-VERSION 1)
+;; v2: records carry the input snapshot (recipe hash + per-input hashes), so a
+;; trace consumer can verify or re-derive a decision, not just read it.
+(define TRACE-VERSION 2)
 
 ;; One task's actual fate in a build.
 ;;   task     : symbol
 ;;   decision : (or/c decision? #f) — the pre-run decision; #f when caching was off
+;;   snapshot : (or/c snapshot? #f) — the fingerprints behind it; #f when the
+;;              task wasn't content-addressable (or caching was off)
 ;;   outcome  : 'ok | 'cached | 'failed | 'skipped
 ;;   blockers : (listof symbol) — for 'skipped: the failed/skipped producers
-(struct trace-record (task decision outcome blockers) #:transparent)
+(struct trace-record (task decision snapshot outcome blockers) #:transparent)
 
-;; decisions serialize as plain lists — transparent structs don't `read' back
+;; outcome-glyph : symbol -> string — the one legend for actual outcomes.
+(define (outcome-glyph o)
+  (case o [(ok) "✓"] [(cached) "≡"] [(failed) "✗"] [(skipped) "⊘"]))
+
+;; decisions and snapshots serialize as plain lists — transparent structs
+;; don't `read' back
 (define (decision->datum d)
   (and d (list (decision-verdict d) (decision-reason d) (decision-details d))))
 (define (datum->decision v)
   (and (list? v) (= 3 (length v)) (decision (car v) (cadr v) (caddr v))))
+
+(define (snapshot->datum s)
+  (and s (list (snapshot-recipe-hash s)
+               (sort (hash->list (snapshot-input-hashes s)) symbol<? #:key car))))
+(define (datum->snapshot v)
+  (and (list? v) (= 2 (length v))
+       (snapshot (car v) (make-immutable-hash (cadr v)))))
 
 (define (trace-file state-dir) (build-path state-dir "last-build.rktd"))
 
@@ -46,6 +63,7 @@
                    'records (for/list ([r (in-list records)])
                               (list (trace-record-task r)
                                     (decision->datum (trace-record-decision r))
+                                    (snapshot->datum (trace-record-snapshot r))
                                     (trace-record-outcome r)
                                     (trace-record-blockers r))))
              o))))
@@ -54,15 +72,14 @@
 ;; The recorded target and its records in build order; #f when there is no
 ;; usable trace (missing, unparseable, or other-version — all alike).
 (define (trace-load state-dir)
-  (define f (trace-file state-dir))
-  (and (file-exists? f)
-       (let ([e (with-handlers ([exn:fail? (lambda (_) #f)])
-                  (call-with-input-file f read))])
-         (and (hash? e)
-              (equal? (hash-ref e 'version #f) TRACE-VERSION)
-              (list? (hash-ref e 'records #f))
-              (with-handlers ([exn:fail? (lambda (_) #f)])
-                (cons (hash-ref e 'target)
-                      (for/list ([r (in-list (hash-ref e 'records))])
-                        (trace-record (car r) (datum->decision (cadr r))
-                                      (caddr r) (cadddr r)))))))))
+  (define e (read-versioned (trace-file state-dir) TRACE-VERSION))
+  (and e
+       (list? (hash-ref e 'records #f))
+       (with-handlers ([exn:fail? (lambda (_) #f)])
+         (cons (hash-ref e 'target)
+               (for/list ([r (in-list (hash-ref e 'records))])
+                 (trace-record (car r)
+                               (datum->decision (cadr r))
+                               (datum->snapshot (caddr r))
+                               (cadddr r)
+                               (car (cddddr r))))))))

@@ -17,6 +17,7 @@
          make-task
          build-graph
          producer-of
+         producers-of-inputs
          required-tasks
          topo-sort
          plan)
@@ -82,6 +83,17 @@
 ;; The task that produces artifact `a', or #f if it is an external leaf.
 (define (producer-of g a)
   (hash-ref (graph-producer-index g) a #f))
+
+;; producers-of-inputs : graph symbol (symbol -> any/c) -> (listof symbol)
+;; The distinct producers of `name's inputs that satisfy `keep?', in input
+;; order. The shared shape behind "which upstreams block me / make me stale /
+;; are in this plan" — the caller supplies the filter.
+(define (producers-of-inputs g name keep?)
+  (remove-duplicates
+   (for*/list ([in (in-list (task-inputs (hash-ref (graph-tasks g) name)))]
+               [p (in-value (producer-of g in))]
+               #:when (and p (keep? p)))
+     p)))
 
 ;; --- Plan: minimal upstream + topological order -----------------------------
 

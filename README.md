@@ -33,13 +33,13 @@ racket src/main.rkt --commands occurrences.db   # dry run: the exact command per
 racket src/main.rkt --explain occurrences.db    # why would each task run or be skipped?
 racket src/main.rkt --why occurrences.db        # why is it stale? (a task or artifact; transitive chain)
 racket src/main.rkt --build occurrences.db      # execute the plan (partial success)
-racket src/main.rkt --explain --last occurrences.db  # what did the last build actually do?
+racket src/main.rkt --explain --last            # what did the last build actually do?
 racket src/main.rkt --run generate-sqlite       # execute a single task
 racket src/main.rkt --verify occurrences.db     # determinism: build twice, compare hashes
 ```
 
-`--from <task>` restricts `--build`, `--commands`, `--explain`, and `--verify`
-to the plan suffix starting at that task — useful for exercising the derived
+`--from <task>` restricts `--build`, `--commands`, `--explain`, `--why`, and
+`--verify` to the plan suffix starting at that task — useful for exercising the derived
 tail without re-running ingestion:
 
 ```sh

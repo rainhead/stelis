@@ -15,7 +15,8 @@
          racket/string
          racket/system
          "model.rkt"
-         "cache.rkt")
+         "cache.rkt"
+         "trace.rkt")
 
 (provide (struct-out runtime)
          (struct-out recipe)
@@ -55,10 +56,9 @@
   (append (runtime-launch rt) (recipe-args rec)))
 
 ;; print-plan-commands : graph (listof symbol) (hash symbol->runtime)
-;;   [#:resolve (symbol export-dir -> path/#f)] [#:export-dir path] [#:cache-dir path]
-;;   -> void
+;;   [#:context (or/c build-env? #f)] -> void
 ;; Dry run: print the exact ordered shell commands a plan would execute. Executes
-;; nothing. When the cache args are supplied, annotate each task's predicted
+;; nothing. When a build-env is supplied, annotate each task's predicted
 ;; disposition:
 ;;   ≡ cached      inputs unchanged AND no upstream reruns -> it will be skipped
 ;;   ≈ conditional currently a cache hit, but an upstream WILL rerun, so its
@@ -66,31 +66,20 @@
 ;;   ▶ would run   a genuine miss (or not content-addressable, e.g. ingestion/dbt)
 ;; Only the materialised frontier can be predicted exactly; the ≈ marks where
 ;; foreknowledge runs out (see the input-addressed vs early-cutoff distinction).
-(define (print-plan-commands g ordered runtimes
-                             #:resolve [resolve #f]
-                             #:export-dir [export-dir #f]
-                             #:cache-dir [cache-dir #f])
-  (define caching? (and resolve export-dir cache-dir))
+(define (print-plan-commands g ordered runtimes #:context [env #f])
   (define will-run (make-hash)) ; tasks predicted to run; seeds the frontier walk
-  (define (upstream-runs? t)
-    (for/or ([in (in-list (task-inputs t))])
-      (define p (producer-of g in))
-      (and p (hash-ref will-run p #f))))
+  (define (upstream-runs? name)
+    (pair? (producers-of-inputs g name (lambda (p) (hash-ref will-run p #f)))))
   (for ([name (in-list ordered)] [i (in-naturals 1)])
     (define t (hash-ref (graph-tasks g) name))
     (define rec (task-invoke t))
     (define hit?
-      (and caching?
-           (let ([snap (input-snapshot g name (lambda (a) (resolve a export-dir)))])
-             (and (snapshot? snap)   ; a decision here means "must run" — no hit
-                  (cache-hit? cache-dir name snap
-                              (filter values (map (lambda (o) (resolve o export-dir))
-                                                  (task-outputs t))))))))
-    (define cached?      (and hit? (not (upstream-runs? t))))
-    (define conditional? (and hit? (upstream-runs? t)))
+      (and env (eq? 'skip (decision-verdict (task-decision g name env)))))
+    (define cached?      (and hit? (not (upstream-runs? name))))
+    (define conditional? (and hit? (upstream-runs? name)))
     (unless cached? (hash-set! will-run name #t)) ; conditional + miss both may run
     (define tag
-      (cond [(not caching?) ""]
+      (cond [(not env)      ""]
             [cached?        "  ≡ cached"]
             [conditional?   "  ≈ conditional"]
             [else           "  ▶ would run"]))
@@ -166,46 +155,33 @@
 ;; a failure blocks only its dependents, never independent tasks. Producers not
 ;; present in `status' are assumed already satisfied (e.g. skipped by --from).
 (define (blockers-of g name status)
-  (define t (hash-ref (graph-tasks g) name))
-  (for*/list ([in (in-list (task-inputs t))]
-              [p (in-value (producer-of g in))]
-              #:when (and p
-                          (hash-has-key? status p)
-                          (memq (hash-ref status p) '(failed skipped)))) ; 'ok/'cached ok
-    p))
+  (producers-of-inputs
+   g name
+   (lambda (p) (and (hash-has-key? status p)
+                    (memq (hash-ref status p) '(failed skipped)))))) ; 'ok/'cached fine
 
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
-;;            #:env (listof (cons string string))
-;;            -> (values (hash symbol->symbol) (listof trace-record-args))
+;;            #:env (listof (cons string string)) #:context (or/c build-env? #f)
+;;            -> (values (hash symbol->symbol) (listof trace-record?))
 ;; Run tasks in the given (topological) order. A task whose in-plan producers all
 ;; succeeded runs; otherwise it is skipped (partial success). Returns each task's
-;; final status ('ok | 'failed | 'skipped), plus per-task records — (list name
-;; decision outcome blockers) in build order — for the build trace (st-yg7.4).
-;; With #:resolve (symbol export-dir -> path/#f), #:export-dir, and #:cache-dir
-;; all supplied, a task whose decision verdict is 'skip (inputs unchanged,
-;; outputs present) is SKIPPED as 'cached. Tasks whose inputs aren't fully
-;; content-addressable always run — their decision says why.
+;; final status ('ok | 'failed | 'skipped), plus a trace-record per task in
+;; build order, for the build trace (st-yg7.4).
+;; With a #:context build-env, a task whose decision verdict is 'skip (inputs
+;; unchanged, outputs present) is SKIPPED as 'cached. Tasks whose inputs aren't
+;; fully content-addressable always run — their decision says why.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
-                  #:resolve [resolve #f]
-                  #:export-dir [export-dir #f]
-                  #:cache-dir [cache-dir #f])
-  (define caching? (and resolve export-dir cache-dir))
+                  #:context [env #f])
   (define status (make-hash))
   (define records '())
   (for ([name (in-list ordered)])
     (define t (hash-ref (graph-tasks g) name))
     (define blockers (blockers-of g name status))
-    (define snap+ (and caching? (input-snapshot g name (lambda (a) (resolve a export-dir)))))
-    (define snap (and (snapshot? snap+) snap+)) ; a decision means not content-cacheable
-    (define out-paths
-      (if caching? (filter values (map (lambda (o) (resolve o export-dir)) (task-outputs t))) '()))
-    (define dec ; the pre-run decision, recorded even for blocked tasks
-      (cond
-        [(not caching?) #f]
-        [(decision? snap+) snap+]
-        [else (decide snap (read-cache-entry cache-dir name)
-                      (for/list ([p (in-list out-paths)] #:unless (file-exists? p)) p))]))
+    ;; the pre-run decision (recorded even for blocked tasks) and, when the
+    ;; task is content-addressable, the snapshot to store after a clean run
+    (define-values (dec snap)
+      (if env (decision+snapshot g name env) (values #f #f)))
     (define outcome
       (cond
         [(pair? blockers)
@@ -221,8 +197,9 @@
          (define code (run-task g name runtimes #:env extra-env #:label name))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
-         (when (and ok? snap) (cache-store! cache-dir name snap out-paths))
+         (when (and ok? snap)
+           (cache-store! (build-env-cache-dir env) name snap (env-output-paths env t)))
          (if ok? 'ok 'failed)]))
     (hash-set! status name outcome)
-    (set! records (cons (list name dec outcome blockers) records)))
+    (set! records (cons (trace-record name dec snap outcome blockers) records)))
   (values status (reverse records)))

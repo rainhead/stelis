@@ -17,14 +17,15 @@
 ;; --- round trip and degradation ----------------------------------------------
 
 (define some-records
-  (list (trace-record 'ingest (decision 'run 'boundary '()) 'ok '())
-        (trace-record 'xform  (decision 'run 'input-changed '(raw)) 'failed '())
-        (trace-record 'load   (decision 'skip 'cached '()) 'skipped '(xform))
-        (trace-record 'no-cache #f 'ok '())))
+  (list (trace-record 'ingest (decision 'run 'boundary '()) #f 'ok '())
+        (trace-record 'xform  (decision 'run 'input-changed '(raw))
+                      (snapshot "r1" (hash 'raw "abc123")) 'failed '())
+        (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform))
+        (trace-record 'no-cache #f #f 'ok '())))
 
 (trace-store! tmp 'occurrences.db some-records)
 (check-equal? (trace-load tmp) (cons 'occurrences.db some-records)
-              "records round-trip, decisions and #f alike")
+              "records round-trip: decisions, snapshots, and #f alike")
 
 (display-to-file "not a hash" (build-path tmp "last-build.rktd") #:exists 'replace)
 (check-false (trace-load tmp) "an unparseable trace loads as no-trace")
@@ -49,35 +50,42 @@
 
 (define raw-path (build-path tmp "raw.csv"))
 (define out-path (build-path tmp "out.db"))
-(define cache-dir (build-path tmp "cache"))
 (display-to-file "a,b\n" raw-path)
 (display-to-file "bytes" out-path)
-(define (resolve a export-dir) (case a [(raw) raw-path] [(out) out-path] [else #f]))
+(define benv
+  (build-env (lambda (a export-dir)
+               (case a [(raw) raw-path] [(out) out-path] [else #f]))
+             tmp
+             (build-path tmp "cache")))
 
 (define-values (status1 records1)
-  (run-plan g '(ingest noop) runtimes
-            #:resolve resolve #:export-dir tmp #:cache-dir cache-dir))
+  (run-plan g '(ingest noop) runtimes #:context benv))
 (check-equal? status1 (make-hash '((ingest . ok) (noop . ok)))
               "first build: both tasks run and succeed")
-(check-equal? (map (lambda (r) (apply trace-record r)) records1)
-              (list (trace-record 'ingest (decision 'run 'boundary '()) 'ok '())
-                    (trace-record 'noop (decision 'run 'no-cache-entry '()) 'ok '()))
+(check-equal? (map trace-record-decision records1)
+              (list (decision 'run 'boundary '()) (decision 'run 'no-cache-entry '()))
               "first build's records: the boundary and a first-sight miss")
+(check-false (trace-record-snapshot (car records1))
+              "a boundary task has no snapshot to record")
+(check-pred snapshot? (trace-record-snapshot (cadr records1))
+            "a content-addressable task's fingerprints ride in its record")
 
 (define-values (status2 records2)
-  (run-plan g '(ingest noop) runtimes
-            #:resolve resolve #:export-dir tmp #:cache-dir cache-dir))
+  (run-plan g '(ingest noop) runtimes #:context benv))
 (check-equal? (hash-ref status2 'noop) 'cached
               "second build: unchanged inputs skip as cached")
-(check-equal? (cadr (assq 'noop (map (lambda (r) (cons (car r) (cdr r))) records2)))
+(check-equal? (trace-record-decision (cadr records2))
               (decision 'skip 'cached '())
               "and the record says why")
 
-;; the records persist and reload as stored
-(trace-store! tmp 'out (map (lambda (r) (apply trace-record r)) records2))
+;; the records persist and reload as stored — snapshots included
+(trace-store! tmp 'out records2)
 (let ([tr (trace-load tmp)])
   (check-equal? (car tr) 'out "the trace names its target")
   (check-equal? (map trace-record-outcome (cdr tr)) '(ok cached)
-                "outcomes survive the round trip"))
+                "outcomes survive the round trip")
+  (check-equal? (trace-record-snapshot (cadr (cdr tr)))
+                (trace-record-snapshot (cadr records2))
+                "fingerprints survive the round trip"))
 
 (delete-directory/files tmp)
