@@ -5,7 +5,8 @@
 ;;   racket src/main.rkt occurrences.db                    ; print the plan
 ;;   racket src/main.rkt --commands occurrences.db         ; dry-run: print commands
 ;;   racket src/main.rkt --explain occurrences.db          ; why would each task run/skip?
-;;   racket src/main.rkt --why dbt-build occurrences.db    ; why is TASK stale? (transitive)
+;;   racket src/main.rkt --why occurrences.db              ; why is it stale? (transitive;
+;;   racket src/main.rkt --why dbt-build                   ;  a task or an artifact)
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
@@ -25,7 +26,6 @@
 
 (define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
-(define why-task (make-parameter #f))     ; with --why: the task being asked about
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 
 (define name
@@ -36,8 +36,8 @@
                    (mode 'commands)]
    [("--explain") "print why each task in TARGET's plan would run or be skipped"
                   (mode 'explain)]
-   [("--why") wt "why is task WT stale (or fresh)? the full transitive chain, via Datalog"
-              (mode 'why) (why-task (string->symbol wt))]
+   [("--why") "why is NAME (a task or artifact) stale? the transitive chain, via Datalog"
+              (mode 'why)]
    [("--run") "execute the named TASK as a subprocess (output to a scratch dir)"
               (mode 'run)]
    [("--build") "execute the plan for TARGET in dependency order (partial success)"
@@ -139,44 +139,65 @@
                                  #:from (from-task))
              0 1))]
 
+  ;; --- why is NAME stale? (a task or an artifact) -------------------------
+  ;; The subject scopes its own plan: an artifact's plan is its minimal
+  ;; upstream, and the question is asked of its producer task; a task's plan
+  ;; is scoped through its first output (the task's own upstream cone).
+  [(eq? (mode) 'why)
+   (define-values (wt target)
+     (cond
+       [(hash-ref (graph-tasks beeatlas-graph) name #f)
+        => (lambda (t)
+             (when (null? (task-outputs t))
+               (error 'stelis "--why ~a: task has no outputs to scope a plan by" name))
+             (values name (car (task-outputs t))))]
+       [(producer-of beeatlas-graph name)
+        => (lambda (p) (values p name))]
+       [(hash-ref (graph-artifacts beeatlas-graph) name #f)
+        (error 'stelis "--why ~a: an external input — no producing task, nothing to rebuild"
+               name)]
+       [else
+        (error 'stelis "--why ~a: no task or artifact by that name in the graph" name)]))
+   (define-values (ordered _pruned) (plan beeatlas-graph target))
+   (define to-run (plan-suffix ordered))
+   (unless (memq wt to-run)
+     (error 'stelis "--why ~a: task ~a is not in the --from ~a suffix" name wt (from-task)))
+   (define exps (plan-explanations beeatlas-graph to-run
+                                   #:resolve beeatlas-path
+                                   #:export-dir (scratch-out-path)
+                                   #:cache-dir stelis-cache))
+   (define thy (explanations->theory beeatlas-graph exps))
+   (define dec-of (for/hash ([e (in-list exps)])
+                    (values (explanation-task e) (explanation-decision e))))
+   (unless (eq? wt name)
+     (printf "~a is produced by ~a — asking about that task.\n\n" name wt))
+   (cond
+     [(not (datalog-stale? thy wt))
+      (printf "~a is NOT stale — ~a\n" wt (decision->string (hash-ref dec-of wt)))]
+     [else
+      ;; the transitive chain, as a tree over the stale-because edges; a
+      ;; node reached twice (diamonds) is elided after its first showing
+      (define shown (mutable-set))
+      (let loop ([t wt] [depth 0])
+        (define first-time? (not (set-member? shown t)))
+        (set-add! shown t)
+        (printf "~a~a~a — ~a\n"
+                (make-string (* 2 depth) #\space)
+                (if (zero? depth) "" "⤷ ")
+                t
+                (if first-time?
+                    (decision->string (hash-ref dec-of t))
+                    "(shown above)"))
+        (when first-time?
+          (for ([u (in-list (sort (set->list (datalog-direct-blames thy t))
+                                  symbol<?))])
+            (loop u (add1 depth)))))])]
+
   ;; --- plan / dry-run for a target artifact ------------------------------
   [else
    (define-values (ordered pruned) (plan beeatlas-graph name))
    (printf "Target: ~a\n\n" name)
    (cond
-     [(eq? (mode) 'why)
-      (define to-run (plan-suffix ordered))
-      (define wt (why-task))
-      (unless (memq wt to-run)
-        (error 'stelis "--why ~a is not in the plan for ~a" wt name))
-      (define exps (plan-explanations beeatlas-graph to-run
-                                      #:resolve beeatlas-path
-                                      #:export-dir (scratch-out-path)
-                                      #:cache-dir stelis-cache))
-      (define thy (explanations->theory beeatlas-graph exps))
-      (define dec-of (for/hash ([e (in-list exps)])
-                       (values (explanation-task e) (explanation-decision e))))
-      (cond
-        [(not (datalog-stale? thy wt))
-         (printf "~a is NOT stale — ~a\n" wt (decision->string (hash-ref dec-of wt)))]
-        [else
-         ;; the transitive chain, as a tree over the stale-because edges; a
-         ;; node reached twice (diamonds) is elided after its first showing
-         (define shown (mutable-set))
-         (let loop ([t wt] [depth 0])
-           (define first-time? (not (set-member? shown t)))
-           (set-add! shown t)
-           (printf "~a~a~a — ~a\n"
-                   (make-string (* 2 depth) #\space)
-                   (if (zero? depth) "" "⤷ ")
-                   t
-                   (if first-time?
-                       (decision->string (hash-ref dec-of t))
-                       "(shown above)"))
-           (when first-time?
-             (for ([u (in-list (sort (set->list (datalog-direct-blames thy t))
-                                     symbol<?))])
-               (loop u (add1 depth)))))])]
      [(eq? (mode) 'explain)
       (define to-run (plan-suffix ordered))
       (printf "Explain — ~a task(s)~a, in build order:\n"
@@ -200,6 +221,5 @@
       (printf "Minimal upstream — ~a task(s), in build order:\n" (length ordered))
       (for ([t (in-list ordered)] [i (in-naturals 1)])
         (printf "  ~a. ~a  [~a]\n" i t (task-kind (hash-ref (graph-tasks beeatlas-graph) t))))])
-   (unless (eq? (mode) 'why)   ; --why answers one question; the footer is noise
-     (printf "\nPruned — ~a task(s) not upstream of ~a:\n  ~a\n"
-             (set-count pruned) name (sort (set->list pruned) symbol<?)))])
+   (printf "\nPruned — ~a task(s) not upstream of ~a:\n  ~a\n"
+           (set-count pruned) name (sort (set->list pruned) symbol<?))])

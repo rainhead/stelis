@@ -35,7 +35,7 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
   `--explain <target>` (why would each task run or skip?; `--last` for what the
   last `--build` actually did) ·
-  `--why <task> <target>` (the transitive why-stale chain, via Datalog) ·
+  `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog) ·
   `--run <task>` (execute one task in its hermetic runtime).
 - **Test:** `raco test src/*-test.rkt`.
 
