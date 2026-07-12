@@ -17,6 +17,7 @@
          racket/file
          racket/set
          racket/format
+         racket/string
          "model.rkt")
 
 (provide (struct-out decision)
@@ -26,6 +27,7 @@
          make-build-env
          env-resolve
          env-output-paths
+         check-file-outputs-resolvable
          input-snapshot
          output-snapshot
          compare-outputs
@@ -105,6 +107,29 @@
 ;; The task's resolvable output paths (unresolvable outputs drop out).
 (define (env-output-paths env t)
   (filter values (map (lambda (o) (env-resolve env o)) (task-outputs t))))
+
+;; check-file-outputs-resolvable : graph (listof symbol) build-env? -> void
+;; Guard (st-6qc): every 'file output produced by a task in `tasks' must resolve to
+;; a path under `env'. A #f path for a 'file output is a modeling gap — it silently
+;; drops out of env-output-paths, so the artifact is never checked for presence nor
+;; hashed for cutoff, and the task can "succeed"/cache without its output verified.
+;; Tokens, db-relations, and externals have no single file and are exempt. Raise
+;; (naming task → artifact) instead of letting the gap pass quietly.
+(define (check-file-outputs-resolvable g tasks env)
+  (define offenders
+    (for*/list ([name (in-list tasks)]
+                [t (in-value (hash-ref (graph-tasks g) name))]
+                [o (in-list (task-outputs t))]
+                #:when (let ([a (hash-ref (graph-artifacts g) o #f)])
+                         (and a (eq? (artifact-kind a) 'file)
+                              (not (env-resolve env o)))))
+      (format "  ~a → ~a" name o)))
+  (unless (null? offenders)
+    (error 'stelis
+           (string-append
+            "unresolvable file output(s) — the path resolver returns #f, so they "
+            "would be built but never verified. Add them to the resolver:\n"
+            (string-join offenders "\n")))))
 
 ;; input-snapshot : graph symbol (symbol -> (or/c path-string #f))
 ;;                  [(or/c (symbol -> (or/c string #f)) #f)]

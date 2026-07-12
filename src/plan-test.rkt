@@ -150,3 +150,19 @@
 (check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'places-export))
               '(places.geojson places.json place_details.json)
               "one places_export invocation produces all three outputs")
+
+;; 11. Fail-loud guard (st-6qc). A 'file output that resolves to #f drops silently
+;;     out of env-output-paths (never verified, never hashed); the guard turns that
+;;     into a hard error. A built+verified target's whole plan resolves; an
+;;     unwired terminal (feeds — no beeatlas-path entry yet) raises, naming it.
+(define guard-env (make-build-env beeatlas-path (build-path "/tmp/guard-out")
+                                  (build-path "/tmp/guard-cache")))
+(let-values ([(pl-ordered _p) (plan beeatlas-graph 'places.json)])
+  (check-not-exn
+   (lambda () (check-file-outputs-resolvable beeatlas-graph pl-ordered guard-env))
+   "places.json's plan has no unresolvable file outputs"))
+(let-values ([(feeds-ordered _p) (plan beeatlas-graph 'feeds)])
+  (check-exn
+   #rx"unresolvable file output"
+   (lambda () (check-file-outputs-resolvable beeatlas-graph feeds-ordered guard-env))
+   "an unwired terminal (feeds) is rejected loudly, not skipped"))

@@ -139,6 +139,8 @@
   [(eq? (mode) 'build)
    (define-values (ordered pruned) (plan beeatlas-graph name))
    (define to-run (plan-suffix ordered))
+   ;; st-6qc: refuse to build a plan whose 'file outputs can't be verified.
+   (check-file-outputs-resolvable beeatlas-graph to-run benv)
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            name (length to-run)
@@ -158,6 +160,10 @@
 
   ;; --- determinism: build twice, compare hashes --------------------------
   [(eq? (mode) 'verify)
+   ;; st-6qc: same guard as --build — the plan verify will run must have
+   ;; verifiable file outputs.
+   (let-values ([(ordered _pruned) (plan beeatlas-graph name)])
+     (check-file-outputs-resolvable beeatlas-graph (plan-suffix ordered) benv))
    (exit (if (verify-determinism beeatlas-graph name beeatlas-runtimes
                                  #:from (from-task))
              0 1))]
