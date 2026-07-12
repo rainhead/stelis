@@ -17,16 +17,17 @@
 (define-values (ordered pruned) (plan beeatlas-graph 'occurrences.db))
 (define required (list->set ordered))
 
-;; 1. The whole point: occurrences.db prunes exactly the 11 post-dbt steps.
+;; 1. The whole point: occurrences.db prunes the post-dbt tail (the 11 export/
+;;    render/gate steps + place-marts, which serves those exports, not the db).
 (check-equal? (list->set pruned)
               (set 'dedup-candidates 'dedup-gate 'topology-postprocess
                    'species-export 'species-maps 'places-export
                    'collectors-export 'collectors-events-export 'notes-harvest
-                   'places-maps 'feeds)
+                   'places-maps 'feeds 'place-marts)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
 (check-equal? (length ordered) 21 "21 tasks upstream of occurrences.db")
-(check-equal? (+ (length ordered) (set-count pruned)) 32 "32 tasks total")
+(check-equal? (+ (length ordered) (set-count pruned)) 33 "33 tasks total")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download
@@ -56,7 +57,7 @@
 ;;    SAME required-task set as the plain-Racket recursion, for every target —
 ;;    including intermediates, siblings, and an external leaf (empty set).
 (for ([target (in-list '(occurrences.db occurrences.parquet species.json
-                         feeds collectors.json geographies))])
+                         feeds collectors.json places.json geographies))])
   (check-equal? (datalog-required-tasks beeatlas-graph target)
                 (required-tasks beeatlas-graph target)
                 (~a "datalog closure = plain-racket recursion for " target)))
@@ -106,3 +107,46 @@
 (check-not-false (memq 'occurrences.parquet
                        (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'species-export)))
                  "species-export consumes occurrences.parquet (seasonality accumulation)")
+
+;; 9. place-marts + collectors.json (st-4cm slice 2). collectors.json's cone runs
+;;    dbt-build -> place-marts -> species-export -> collectors-export, in that
+;;    order; collectors-export reads the EXPORT_DIR copies (@export), not the
+;;    sandbox originals. place-marts' inputs must all resolve (else it can never
+;;    cache — the geojson resolution gap that this slice fixed).
+(let-values ([(co-ordered _co-pruned) (plan beeatlas-graph 'collectors.json)])
+  (define pos (for/hash ([n (in-list co-ordered)] [i (in-naturals)]) (values n i)))
+  (for ([t '(dbt-build place-marts species-export collectors-export)])
+    (check-not-false (memq t co-ordered) (~a t " is in collectors.json's plan")))
+  (check-true (< (hash-ref pos 'place-marts) (hash-ref pos 'collectors-export))
+              "place-marts runs before collectors-export")
+  (check-true (< (hash-ref pos 'dbt-build) (hash-ref pos 'place-marts))
+              "dbt-build runs before place-marts"))
+(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-export))
+              '(occurrences.parquet@export species.parquet@export)
+              "collectors-export reads the EXPORT_DIR copies, not the sandbox originals")
+(let ([stub (lambda (a) an-existing-file)]) ; everything resolves
+  (check-true (snapshot? (input-snapshot beeatlas-graph 'place-marts stub))
+              "place-marts is cacheable once all its mart inputs resolve"))
+
+;; 10. places.json (st-4cm slice 3). places_export reads its parquets from
+;;     EXPORT_DIR (@export copies), not the sandbox — the same Pitfall-5 shape as
+;;     collectors-export. Its plan pulls place-marts (which produces the @export
+;;     copies it reads) and runs after dbt-build; one invocation writes three
+;;     outputs, so place_details.json must have places-export as its producer.
+(let-values ([(pl-ordered _pl-pruned) (plan beeatlas-graph 'places.json)])
+  (define pos (for/hash ([n (in-list pl-ordered)] [i (in-naturals)]) (values n i)))
+  (for ([t '(dbt-build place-marts species-export places-export)])
+    (check-not-false (memq t pl-ordered) (~a t " is in places.json's plan")))
+  (check-true (< (hash-ref pos 'place-marts) (hash-ref pos 'places-export))
+              "place-marts runs before places-export")
+  (check-true (< (hash-ref pos 'species-export) (hash-ref pos 'places-export))
+              "species-export (its @export species.parquet) runs before places-export")
+  (check-false (memq 'generate-sqlite pl-ordered)
+               "places.json does NOT pull in the occurrences.db producer"))
+(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'places-export))
+              '(occurrence_places.parquet@export occurrences.parquet@export
+                species.parquet@export geographies_places)
+              "places-export reads the EXPORT_DIR copies, not the sandbox originals")
+(check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'places-export))
+              '(places.geojson places.json place_details.json)
+              "one places_export invocation produces all three outputs")

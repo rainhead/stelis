@@ -32,6 +32,7 @@
 ;;   data/dbt/models/sources.yml : eaac92a9  (2026-07-06)   ← dbt-build's inputs
 
 (require racket/format
+         racket/string
          "model.rkt"
          "exec.rkt"
          "relation-digest.rkt")
@@ -52,7 +53,23 @@
 
 (define beeatlas-runtimes
   (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14")
-        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13")))
+        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13")
+        ;; `sh': a bare shell for file PLACEMENT (not transformation) — used by
+        ;; place-marts to copy derived dbt outputs to their export destination.
+        ;; No interpreter pin needed; cp is content-preserving.
+        'sh  (runtime 'sh  (list "bash" "-c") "sh")))
+
+;; The dbt mart artifacts run.py's _run_dbt_build copies from the sandbox into
+;; EXPORT_DIR so the post-dbt exports find them at the expected paths. (species.
+;; parquet is deliberately NOT here — species_export writes its own enriched copy.)
+(define mart-files
+  '("occurrences.parquet" "occurrence_places.parquet" "counties.geojson"
+    "ecoregions.geojson" "wilderness.geojson" "checklist.parquet"))
+
+;; name of the EXPORT_DIR-placed copy of a mart file (distinct from the sandbox
+;; artifact so the graph has one producer per artifact: dbt-build makes the
+;; sandbox copy, place-marts makes the @export copy).
+(define (export-name file) (string->symbol (string-append file "@export")))
 
 ;; Where beeatlas's file artifacts physically live — the resolver caching uses to
 ;; content-hash inputs and to place/verify outputs. #f for artifacts with no known
@@ -60,15 +77,29 @@
 ;; in Horizon 0. Outputs land under the build's export-dir (explicit destination).
 (define SANDBOX (string-append DATA "/dbt/target/sandbox"))
 (define (beeatlas-path artifact export-dir)
+  (define s (~a artifact))
+  (cond
+    ;; @export artifacts are the EXPORT_DIR-placed copies (place-marts, st-4cm):
+    ;; strip the suffix to get the on-disk filename under export-dir.
+    [(regexp-match #rx"^(.+)@export$" s)
+     => (lambda (m) (build-path export-dir (cadr m)))]
+    [else (beeatlas-path/case artifact export-dir)]))
+(define (beeatlas-path/case artifact export-dir)
   (case artifact
     [(occurrences.parquet occurrence_places.parquet checklist.parquet
-      species.parquet species_traits.parquet higher_taxa.parquet)
+      species.parquet species_traits.parquet higher_taxa.parquet
+      counties.geojson ecoregions.geojson wilderness.geojson)
      (build-path SANDBOX (~a artifact))]
     [(taxa.csv.gz)   (build-path DATA "raw" "taxa.csv.gz")]
     ;; terminal export targets land in EXPORT_DIR (species_export writes
-    ;; ASSETS_DIR := EXPORT_DIR). species.json is the first post-dbt target built
-    ;; and verified through Stelis beyond occurrences.db (st-4cm slice, st-h4m).
-    [(occurrences.db species.json) (build-path export-dir (~a artifact))]
+    ;; ASSETS_DIR := EXPORT_DIR). species.json was the first post-dbt target built
+    ;; and verified through Stelis beyond occurrences.db (st-h4m); collectors.json
+    ;; is the second, via place-marts (st-4cm slice 2); places.json (with its
+    ;; siblings places.geojson + place_details.json, all written by one
+    ;; places_export invocation) is the third (st-4cm slice 3).
+    [(occurrences.db species.json collectors.json
+      places.json places.geojson place_details.json)
+     (build-path export-dir (~a artifact))]
     [else #f]))
 
 ;; --- db-relation content-addressing (st-d5d) --------------------------------
@@ -122,6 +153,14 @@
 (define (py module fn)
   (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))))
 
+;; place-marts copies each dbt mart from the sandbox to $EXPORT_DIR (injected by
+;; the executor). `set -e' so a missing mart fails the task rather than a partial
+;; placement. This is exactly run.py's _run_dbt_build copy loop, split out as its
+;; own node (the copy is placement, not the dbt transform).
+(define place-marts-script
+  (string-append "set -e; for f in " (string-join mart-files " ")
+                 "; do cp \"" SANDBOX "/$f\" \"$EXPORT_DIR/$f\"; done"))
+
 ;; --- Artifacts --------------------------------------------------------------
 ;; kinds: 'file  'db-relation (a schema/table in the shared beeatlas.duckdb)
 ;;        'external (loaded outside the nightly graph)  'token (a gate result)
@@ -164,6 +203,10 @@
    (make-artifact 'species-maps                 'file)
    (make-artifact 'places.geojson               'file)
    (make-artifact 'places.json                  'file)
+   ;; heavy per-place feed (species + collection timing) written by the same
+   ;; places_export invocation as places.json; a build_time_fetch sibling (like
+   ;; collectors.json), modelled so the node's third output has a producer (st-4cm).
+   (make-artifact 'place_details.json           'file)
    (make-artifact 'collectors.json              'file)
    (make-artifact 'collector_event_pages.json   'file)
    ;; notes is beeatlas's one authoritative artifact (data/artifacts.toml) —
@@ -172,7 +215,13 @@
    ;; expresses it (addresses the derived-vs-authoritative commitment).
    (make-artifact 'notes.json                   'file #:provenance 'authoritative)
    (make-artifact 'place-maps                   'file)
-   (make-artifact 'feeds                        'file)))
+   (make-artifact 'feeds                        'file)
+   ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
+   ;; enriched species.parquet species-export writes there. Distinct artifacts
+   ;; from the sandbox originals so each has exactly one producer.
+   (make-artifact 'species.parquet@export       'file)))
+(define mart-export-artifacts
+  (for/list ([f (in-list mart-files)]) (make-artifact (export-name f) 'file)))
 
 ;; --- Tasks (the 32 run.py STEPS, in list order) -----------------------------
 ;; `invoke' recipes transcribed from run.py's imports (module + function).
@@ -247,17 +296,27 @@
                           checklist.parquet species.parquet species_traits.parquet
                           higher_taxa.parquet counties.geojson ecoregions.geojson
                           wilderness.geojson)
-              ;; Recipe is `run.sh build' only. run.py's _run_dbt_build ALSO copies
-              ;; six parquets to EXPORT_DIR; omitted deliberately — a downstream
-              ;; artifact-placement concern not needed for occurrences.db, since
-              ;; generate-sqlite reads occurrences.parquet from the dbt sandbox
-              ;; directly. Revisit under st-d44.4 (explicit output destinations).
+              ;; Recipe is `run.sh build' only — it writes the marts to the dbt
+              ;; sandbox. run.py's _run_dbt_build ALSO copies six of them to
+              ;; EXPORT_DIR; that placement is now its own `place-marts' node
+              ;; (st-4cm), so it is a modeled, cache-skippable edge rather than a
+              ;; side effect of the dbt step. occurrences.db is unaffected —
+              ;; generate-sqlite reads occurrences.parquet from the sandbox directly.
               #:invoke (recipe 'dbt (list "build")))
 
    ;; --- the target producer (has a __main__; run as a script) ---
    (make-task 'generate-sqlite 'transform
               #:inputs '(occurrences.parquet taxa.csv.gz) #:outputs '(occurrences.db)
               #:invoke (recipe 'uv (list "sqlite_export.py")))
+
+   ;; --- mart placement: dbt outputs -> EXPORT_DIR, where post-dbt exports read
+   ;; them (st-4cm). run.py folds this copy into dbt-build; here it is an explicit
+   ;; node so the placement is a modeled, cache-skippable edge. Not on the
+   ;; occurrences.db path (generate-sqlite reads the sandbox directly).
+   (make-task 'place-marts 'transform
+              #:inputs (map string->symbol mart-files)
+              #:outputs (map export-name mart-files)
+              #:invoke (recipe 'sh (list place-marts-script)))
 
    ;; --- post-dbt siblings (NOT upstream of occurrences.db) ---
    (make-task 'dedup-candidates 'transform
@@ -279,17 +338,34 @@
    (make-task 'species-export 'transform
               #:inputs '(species.parquet occurrences.parquet
                          species_traits.parquet higher_taxa.parquet)
-              #:outputs '(species.json)
+              ;; also writes EXPORT_DIR/species.parquet (23-col, enriched with slug);
+              ;; collectors/places read THAT, not the dbt mart — hence @export.
+              #:outputs '(species.json species.parquet@export)
               #:invoke (py "species_export" "main"))
    (make-task 'species-maps 'transform
               #:inputs '(species.json) #:outputs '(species-maps)
               #:invoke (py "species_maps" "main"))
+   ;; places_export reads its parquets from EXPORT_DIR (ASSETS_DIR), not the dbt
+   ;; sandbox — the occurrence_places bridge, the occurrences mart (specimen/sample
+   ;; counts), and species-export's enriched species.parquet are all @export copies,
+   ;; the same Pitfall-5 fix collectors-export needed (st-4cm slice 2). geographies_
+   ;; places is the DuckDB relation read for places.geojson. The modeled edge had
+   ;; only the sandbox occurrence_places.parquet + geographies_places; the other
+   ;; two @export inputs surfaced when places.json was built+verified (slice 3).
+   ;; One invocation writes all three outputs; place_details.json is the heavy
+   ;; per-place feed sibling.
    (make-task 'places-export 'transform
-              #:inputs '(occurrence_places.parquet geographies_places)
-              #:outputs '(places.geojson places.json)
+              #:inputs '(occurrence_places.parquet@export occurrences.parquet@export
+                         species.parquet@export geographies_places)
+              #:outputs '(places.geojson places.json place_details.json)
               #:invoke (py "places_export" "export_places_step"))
+   ;; collectors_export reads EXPORT_DIR/occurrences.parquet (place-marts copy)
+   ;; and EXPORT_DIR/species.parquet (species-export's enriched copy) — both
+   ;; @export, not the sandbox originals; the sandbox occurrences.parquet edge
+   ;; here was wrong until collectors.json exercised it (st-4cm slice 2).
    (make-task 'collectors-export 'transform
-              #:inputs '(occurrences.parquet) #:outputs '(collectors.json)
+              #:inputs '(occurrences.parquet@export species.parquet@export)
+              #:outputs '(collectors.json)
               #:invoke (py "collectors_export" "export_collectors_step"))
    (make-task 'collectors-events-export 'transform
               #:inputs '(collectors.json) #:outputs '(collector_event_pages.json)
@@ -304,4 +380,4 @@
               #:inputs '(occurrences.parquet species.json) #:outputs '(feeds)
               #:invoke (py "feeds" "main"))))
 
-(define beeatlas-graph (build-graph tasks artifacts))
+(define beeatlas-graph (build-graph tasks (append artifacts mart-export-artifacts)))
