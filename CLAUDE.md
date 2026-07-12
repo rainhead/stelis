@@ -34,6 +34,7 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
   `--explain <target>` (why would each task run or skip?) ·
+  `--why <task> <target>` (the transitive why-stale chain, via Datalog) ·
   `--run <task>` (execute one task in its hermetic runtime).
 - **Test:** `raco test src/*-test.rkt`.
 
@@ -42,6 +43,8 @@ Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planne
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the two runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions ·
+[`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
+[`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
 

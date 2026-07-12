@@ -18,6 +18,7 @@
          walk-explanations
          plan-explanations
          explanation-glyph
+         decision->string
          explanation->string
          print-explanations)
 
@@ -75,20 +76,22 @@
         [(pair? (explanation-upstreams e))                      "≈"]
         [else                                                   "≡"]))
 
+;; decision->string : decision? -> string — the reason in prose, details named.
+(define (decision->string d)
+  (define (names) (string-join (map ~display (decision-details d)) ", "))
+  (case (decision-reason d)
+    [(boundary)            "boundary — ingestion; never content-skipped"]
+    [(inputs-unresolvable) (format "inputs not content-addressable: ~a" (names))]
+    [(no-cache-entry)      "no cache entry — never built here"]
+    [(recipe-changed)      "recipe changed"]
+    [(input-changed)       (format "inputs changed: ~a" (names))]
+    [(output-missing)      (format "outputs missing: ~a" (names))]
+    [(cached)              "cached — inputs unchanged, outputs present"]
+    [else                  (format "~a" (decision-reason d))]))
+
 (define (explanation->string e)
   (define d (explanation-decision e))
-  (define details (decision-details d))
-  (define (names) (string-join (map ~display details) ", "))
-  (define base
-    (case (decision-reason d)
-      [(boundary)            "boundary — ingestion; never content-skipped"]
-      [(inputs-unresolvable) (format "inputs not content-addressable: ~a" (names))]
-      [(no-cache-entry)      "no cache entry — never built here"]
-      [(recipe-changed)      "recipe changed"]
-      [(input-changed)       (format "inputs changed: ~a" (names))]
-      [(output-missing)      (format "outputs missing: ~a" (names))]
-      [(cached)              "cached — inputs unchanged, outputs present"]
-      [else                  (format "~a" (decision-reason d))]))
+  (define base (decision->string d))
   (if (and (eq? 'skip (decision-verdict d)) (pair? (explanation-upstreams e)))
       (format "~a, BUT conditional: upstream ~a runs first and may change its inputs"
               base
