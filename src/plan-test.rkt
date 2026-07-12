@@ -80,9 +80,11 @@
 (define an-existing-file (path->string model-rkt))
 (define (stub-resolve a)
   (case a [(occurrences.parquet taxa.csv.gz) an-existing-file] [else #f]))
-(check-true (string? (input-fingerprint beeatlas-graph 'generate-sqlite stub-resolve))
+(check-true (snapshot? (input-snapshot beeatlas-graph 'generate-sqlite stub-resolve))
             "generate-sqlite is cacheable (all inputs are files)")
-(check-false (input-fingerprint beeatlas-graph 'dbt-build stub-resolve)
-             "dbt-build is not cacheable (duckdb-relation inputs don't resolve)")
-(check-false (input-fingerprint beeatlas-graph 'taxa-download stub-resolve)
-             "boundary tasks are never content-cached (ingestion re-runs)")
+(let ([d (input-snapshot beeatlas-graph 'dbt-build stub-resolve)])
+  (check-equal? (decision-reason d) 'inputs-unresolvable
+                "dbt-build is not cacheable (duckdb-relation inputs don't resolve)"))
+(let ([d (input-snapshot beeatlas-graph 'taxa-download stub-resolve)])
+  (check-equal? (decision-reason d) 'boundary
+                "boundary tasks are never content-cached (ingestion re-runs)"))

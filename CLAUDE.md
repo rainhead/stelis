@@ -34,14 +34,15 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
   `--run <task>` (execute one task in its hermetic runtime).
-- **Test:** `raco test src/plan-test.rkt`.
+- **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner ·
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the two runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
-subprocess executor · [`main.rkt`](src/main.rkt) CLI ·
-[`plan-test.rkt`](src/plan-test.rkt) tests · [`docs/adr/`](docs/adr/) decisions.
+subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions ·
+[`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
+[`docs/adr/`](docs/adr/) decisions.
 
 Execution shells into `~/dev/beeatlas` via the runtimes declared in `beeatlas.rkt`:
 **uv** (Python 3.14, `data/`) for loaders/exporters and **uvx** (Python 3.13,

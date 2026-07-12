@@ -81,9 +81,9 @@
     (define rec (task-invoke t))
     (define hit?
       (and caching?
-           (let ([fp (input-fingerprint g name (lambda (a) (resolve a export-dir)))])
-             (and fp
-                  (cache-hit? cache-dir name fp
+           (let ([snap (input-snapshot g name (lambda (a) (resolve a export-dir)))])
+             (and (snapshot? snap)   ; a decision here means "must run" — no hit
+                  (cache-hit? cache-dir name snap
                               (filter values (map (lambda (o) (resolve o export-dir))
                                                   (task-outputs t))))))))
     (define cached?      (and hit? (not (upstream-runs? t))))
@@ -193,8 +193,10 @@
   (for ([name (in-list ordered)])
     (define t (hash-ref (graph-tasks g) name))
     (define blockers (blockers-of g name status))
-    (define input-fp
-      (and caching? (input-fingerprint g name (lambda (a) (resolve a export-dir)))))
+    (define snap
+      (and caching?
+           (let ([s (input-snapshot g name (lambda (a) (resolve a export-dir)))])
+             (and (snapshot? s) s)))) ; a decision means not content-cacheable
     (define out-paths
       (if caching? (filter values (map (lambda (o) (resolve o export-dir)) (task-outputs t))) '()))
     (cond
@@ -202,7 +204,7 @@
        (printf "\n⊘ ~a — skipped (blocked by ~a)\n"
                name (string-join (map symbol->string blockers) ", "))
        (hash-set! status name 'skipped)]
-      [(and input-fp (cache-hit? cache-dir name input-fp out-paths))
+      [(and snap (cache-hit? cache-dir name snap out-paths))
        (printf "\n≡ ~a — cached (inputs unchanged)\n" name)
        (hash-set! status name 'cached)]
       [else
@@ -212,5 +214,5 @@
        (define ok? (zero? code))
        (hash-set! status name (if ok? 'ok 'failed))
        (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
-       (when (and ok? input-fp) (cache-store! cache-dir name input-fp out-paths))]))
+       (when (and ok? snap) (cache-store! cache-dir name snap out-paths))]))
   status)
