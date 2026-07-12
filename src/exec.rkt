@@ -175,14 +175,16 @@
     p))
 
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
-;;            #:env (listof (cons string string)) -> (hash symbol->symbol)
+;;            #:env (listof (cons string string))
+;;            -> (values (hash symbol->symbol) (listof trace-record-args))
 ;; Run tasks in the given (topological) order. A task whose in-plan producers all
 ;; succeeded runs; otherwise it is skipped (partial success). Returns each task's
-;; final status: 'ok | 'failed | 'skipped.
+;; final status ('ok | 'failed | 'skipped), plus per-task records — (list name
+;; decision outcome blockers) in build order — for the build trace (st-yg7.4).
 ;; With #:resolve (symbol export-dir -> path/#f), #:export-dir, and #:cache-dir
-;; all supplied, a task whose input fingerprint matches its cache sidecar and
-;; whose outputs still exist is SKIPPED as 'cached (skip-if-current). Tasks whose
-;; inputs aren't fully content-addressable (fingerprint #f) always run.
+;; all supplied, a task whose decision verdict is 'skip (inputs unchanged,
+;; outputs present) is SKIPPED as 'cached. Tasks whose inputs aren't fully
+;; content-addressable always run — their decision says why.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
                   #:resolve [resolve #f]
@@ -190,29 +192,37 @@
                   #:cache-dir [cache-dir #f])
   (define caching? (and resolve export-dir cache-dir))
   (define status (make-hash))
+  (define records '())
   (for ([name (in-list ordered)])
     (define t (hash-ref (graph-tasks g) name))
     (define blockers (blockers-of g name status))
-    (define snap
-      (and caching?
-           (let ([s (input-snapshot g name (lambda (a) (resolve a export-dir)))])
-             (and (snapshot? s) s)))) ; a decision means not content-cacheable
+    (define snap+ (and caching? (input-snapshot g name (lambda (a) (resolve a export-dir)))))
+    (define snap (and (snapshot? snap+) snap+)) ; a decision means not content-cacheable
     (define out-paths
       (if caching? (filter values (map (lambda (o) (resolve o export-dir)) (task-outputs t))) '()))
-    (cond
-      [(pair? blockers)
-       (printf "\n⊘ ~a — skipped (blocked by ~a)\n"
-               name (string-join (map symbol->string blockers) ", "))
-       (hash-set! status name 'skipped)]
-      [(and snap (cache-hit? cache-dir name snap out-paths))
-       (printf "\n≡ ~a — cached (inputs unchanged)\n" name)
-       (hash-set! status name 'cached)]
-      [else
-       (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
-       (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
-       (define code (run-task g name runtimes #:env extra-env #:label name))
-       (define ok? (zero? code))
-       (hash-set! status name (if ok? 'ok 'failed))
-       (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
-       (when (and ok? snap) (cache-store! cache-dir name snap out-paths))]))
-  status)
+    (define dec ; the pre-run decision, recorded even for blocked tasks
+      (cond
+        [(not caching?) #f]
+        [(decision? snap+) snap+]
+        [else (decide snap (read-cache-entry cache-dir name)
+                      (for/list ([p (in-list out-paths)] #:unless (file-exists? p)) p))]))
+    (define outcome
+      (cond
+        [(pair? blockers)
+         (printf "\n⊘ ~a — skipped (blocked by ~a)\n"
+                 name (string-join (map symbol->string blockers) ", "))
+         'skipped]
+        [(and dec (eq? 'skip (decision-verdict dec)))
+         (printf "\n≡ ~a — cached (inputs unchanged)\n" name)
+         'cached]
+        [else
+         (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
+         (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
+         (define code (run-task g name runtimes #:env extra-env #:label name))
+         (define ok? (zero? code))
+         (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
+         (when (and ok? snap) (cache-store! cache-dir name snap out-paths))
+         (if ok? 'ok 'failed)]))
+    (hash-set! status name outcome)
+    (set! records (cons (list name dec outcome blockers) records)))
+  (values status (reverse records)))

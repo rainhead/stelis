@@ -20,11 +20,13 @@
          "exec.rkt"
          "explain.rkt"
          "provenance-datalog.rkt"
+         "trace.rkt"
          "determinism.rkt")
 
 (define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define why-task (make-parameter #f))     ; with --why: the task being asked about
+(define last? (make-parameter #f))        ; with --explain: read the last-build trace
 
 (define name
   (command-line
@@ -45,6 +47,8 @@
    #:once-each
    [("--from") ft "with --build: run only the plan suffix beginning at task FT"
                (from-task (string->symbol ft))]
+   [("--last") "with --explain: report what the last real --build decided and did"
+               (last? #t)]
    #:args (name)
    (string->symbol name)))
 
@@ -52,7 +56,8 @@
 (define (scratch-out-path) (build-path (find-system-path 'temp-dir) "stelis-out"))
 (define (scratch-out) (define out (scratch-out-path)) (make-directory* out) out)
 
-(define stelis-cache (build-path ".stelis" "cache"))
+(define stelis-state (build-path ".stelis"))
+(define stelis-cache (build-path stelis-state "cache"))
 
 ;; Restrict a plan to the suffix beginning at --from, when given. Used by both
 ;; --build (what runs) and --commands (what the dry run previews), so the preview
@@ -65,6 +70,33 @@
     [else ordered]))
 
 (cond
+  ;; --- what did the last real build decide and do? -----------------------
+  ;; Reads the persisted trace; nothing is re-fingerprinted (the world may
+  ;; have moved on since). The recorded target wins over the positional one.
+  [(and (eq? (mode) 'explain) (last?))
+   (define tr (trace-load stelis-state))
+   (cond
+     [(not tr)
+      (printf "No usable build trace under ~a/ — run --build first.\n"
+              (path->string stelis-state))
+      (exit 1)]
+     [else
+      (define records (cdr tr))
+      (printf "Last build — target ~a, ~a task(s):\n" (car tr) (length records))
+      (printf "  ✓ ran · ≡ cached · ✗ failed · ⊘ skipped\n\n")
+      (for ([r (in-list records)] [i (in-naturals 1)])
+        (define glyph (case (trace-record-outcome r)
+                        [(ok) "✓"] [(cached) "≡"] [(failed) "✗"] [(skipped) "⊘"]))
+        (define why
+          (cond
+            [(eq? 'skipped (trace-record-outcome r))
+             (format "blocked by ~a"
+                     (string-join (map symbol->string (trace-record-blockers r)) ", "))]
+            [(trace-record-decision r) (decision->string (trace-record-decision r))]
+            [else "(caching was off)"]))
+        (printf "~a~a. ~a ~a\n     ~a\n"
+                (if (< i 10) " " "") i glyph (trace-record-task r) why))])]
+
   ;; --- execute a single task ---------------------------------------------
   [(eq? (mode) 'run)
    (define out (scratch-out))
@@ -86,11 +118,14 @@
            name (length to-run)
            (if (from-task) (format ", from ~a" (from-task)) "")
            out)
-   (define status (run-plan beeatlas-graph to-run beeatlas-runtimes
-                            #:env (list (cons "EXPORT_DIR" (path->string out)))
-                            #:resolve beeatlas-path
-                            #:export-dir out
-                            #:cache-dir (build-path ".stelis" "cache")))
+   (define-values (status records)
+     (run-plan beeatlas-graph to-run beeatlas-runtimes
+               #:env (list (cons "EXPORT_DIR" (path->string out)))
+               #:resolve beeatlas-path
+               #:export-dir out
+               #:cache-dir stelis-cache))
+   (trace-store! stelis-state name
+                 (map (lambda (r) (apply trace-record r)) records))
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))
