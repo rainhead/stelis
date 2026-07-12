@@ -98,7 +98,9 @@
     ;; siblings places.geojson + place_details.json, all written by one
     ;; places_export invocation) is the third (st-4cm slice 3).
     [(occurrences.db species.json collectors.json
-      places.json places.geojson place_details.json)
+      places.json places.geojson place_details.json
+      ;; species-export's four sibling feeds (st-qp7 — see its outputs)
+      seasonality.json photos.json species_hosts.json higher_taxa.json)
      (build-path export-dir (~a artifact))]
     [else #f]))
 
@@ -200,6 +202,13 @@
    (make-artifact 'dedup_candidates.csv         'file)
    (make-artifact 'region-topology-clean        'file)
    (make-artifact 'species.json                 'file)
+   ;; species_export writes SIX files in one invocation; species.json is the
+   ;; headline target but these four are equally real outputs (the edge-verify
+   ;; harness, st-qp7, surfaced them as undeclared writes on the slice-1 edge).
+   (make-artifact 'seasonality.json             'file)
+   (make-artifact 'photos.json                  'file)
+   (make-artifact 'species_hosts.json           'file)
+   (make-artifact 'higher_taxa.json             'file)
    (make-artifact 'species-maps                 'file)
    (make-artifact 'places.geojson               'file)
    (make-artifact 'places.json                  'file)
@@ -338,9 +347,13 @@
    (make-task 'species-export 'transform
               #:inputs '(species.parquet occurrences.parquet
                          species_traits.parquet higher_taxa.parquet)
-              ;; also writes EXPORT_DIR/species.parquet (23-col, enriched with slug);
-              ;; collectors/places read THAT, not the dbt mart — hence @export.
-              #:outputs '(species.json species.parquet@export)
+              ;; One invocation writes SIX files to EXPORT_DIR: species.json, the
+              ;; enriched species.parquet (23-col with slug; collectors/places read
+              ;; THAT, not the dbt mart — hence @export), and four sibling feeds.
+              ;; The slice-1 edge declared only the first two; edge-verify (st-qp7)
+              ;; caught the other four as undeclared writes.
+              #:outputs '(species.json species.parquet@export
+                          seasonality.json photos.json species_hosts.json higher_taxa.json)
               #:invoke (py "species_export" "main"))
    (make-task 'species-maps 'transform
               #:inputs '(species.json) #:outputs '(species-maps)
