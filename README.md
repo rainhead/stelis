@@ -58,6 +58,14 @@ so downstream tasks cache-skip naturally. A real build records the comparison,
 and `--explain --last` names the cutoff point ("reran; outputs identical").
 See [ADR 0003](docs/adr/0003-early-cutoff.md).
 
+Inputs are content-addressed by kind: a file by its bytes, a **db-relation** by
+an order-independent DuckDB digest of its rows (dlt bookkeeping columns
+excluded), so a loader that re-lands identical content lets its downstream
+transforms cache-skip — cutoff reaches the pre-dbt graph, not just the file
+edges around `dbt-build`. See [`relation-digest.rkt`](src/relation-digest.rkt).
+Only inputs with no content to hash — gate tokens, externals — stay
+non-addressable and force a conservative rerun.
+
 Outputs land in an explicit export directory (a scratch dir under the system
 temp dir, printed at build time). Build state — the input-addressed cache and
 the last-build trace — lives in `.stelis/`, which is derived and disposable:

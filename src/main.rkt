@@ -69,8 +69,11 @@
 (define stelis-state (build-path ".stelis"))
 (define stelis-cache (build-path stelis-state "cache"))
 
-;; the one build environment every cache-aware mode shares
-(define benv (build-env beeatlas-path (scratch-out-path) stelis-cache))
+;; the one build environment every cache-aware mode shares. resolve-relation
+;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
+;; reaches the pre-dbt graph and not only the file edges around dbt-build.
+(define benv (make-build-env beeatlas-path (scratch-out-path) stelis-cache
+                             #:resolve-relation beeatlas-resolve-relation))
 
 ;; Restrict a plan to the suffix beginning at --from, when given. Used by both
 ;; --build (what runs) and --commands (what the dry run previews), so the preview

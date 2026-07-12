@@ -33,11 +33,15 @@
 
 (require racket/format
          "model.rkt"
-         "exec.rkt")
+         "exec.rkt"
+         "relation-digest.rkt")
 
 (provide beeatlas-graph
          beeatlas-runtimes
-         beeatlas-path)
+         beeatlas-path
+         beeatlas-db
+         beeatlas-relation-tables
+         beeatlas-resolve-relation)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
@@ -63,6 +67,53 @@
     [(taxa.csv.gz)   (build-path DATA "raw" "taxa.csv.gz")]
     [(occurrences.db) (build-path export-dir "occurrences.db")]
     [else #f]))
+
+;; --- db-relation content-addressing (st-d5d) --------------------------------
+;; Each db-relation artifact is a LOGICAL dataset; content-addressing needs the
+;; PHYSICAL schema.table(s) it lives in, so a re-ingest of identical content can
+;; be recognised and early cutoff (st-8ig) reaches the pre-dbt graph. The mapping
+;; was transcribed from the beeatlas loaders (which dlt dataset / which INSERTs)
+;; and dbt's sources.yml (which tables dbt actually reads), at the SHAs pinned in
+;; the provenance header above.
+;;
+;; Precision policy (as in the edge comments above): three logical artifacts —
+;; canonical_to_taxon_id, checklist_resolved, inactive_remaps — all materialise
+;; as rows in the SINGLE table inaturalist_data.canonical_to_taxon_id (resolve_
+;; taxon_ids, resolve_checklist_names, and generate_inactive_remaps each INSERT
+;; there). They therefore share one digest and co-vary. That is coarse but SAFE:
+;; any change to the table changes all three hashes, so a stale input can never
+;; read as unchanged — the failure is at worst an over-rebuild, never a false skip.
+(define beeatlas-db (build-path DATA "beeatlas.duckdb"))
+
+;; beeatlas-relation-tables : symbol -> (or/c (listof string) #f)
+;; The qualified physical tables a db-relation artifact occupies, or #f for an
+;; artifact with no known relation (kept conservative: it stays unresolvable).
+(define (beeatlas-relation-tables artifact)
+  (case artifact
+    [(ecdysis_data)   '("ecdysis_data.occurrences" "ecdysis_data.identifications")]
+    [(ecdysis_links)  '("ecdysis_data.occurrence_links")]
+    [(inat_observations) '("inaturalist_data.observations"
+                           "inaturalist_data.observations__ofvs")]
+    [(inat_projects)  '("inaturalist_data.observations__observation_projects")]
+    [(waba_data)      '("inaturalist_waba_data.observations"
+                        "inaturalist_waba_data.observations__ofvs")]
+    [(inat_obs_data)  '("inat_obs_data.observations")]
+    [(checklist_raw)  '("checklist_data.species" "checklist_data.species_counties"
+                        "checklist_data.checklist_records"
+                        "checklist_data.checklist_records_full")]
+    [(canonical_to_taxon_id checklist_resolved inactive_remaps)
+     '("inaturalist_data.canonical_to_taxon_id")] ; shared table — see note above
+    [(taxon_lineage_extended) '("inaturalist_data.taxon_lineage_extended")]
+    [(host_plant_lineage)     '("inaturalist_data.host_plant_lineage")]
+    [(geographies_places)     '("geographies.places")]
+    [else #f]))
+
+;; beeatlas-resolve-relation : symbol -> (or/c string #f)
+;; A db-relation's content hash (via DuckDB), or #f when it has no mapping or
+;; can't be read — the build-env resolve-relation slot for beeatlas.
+(define (beeatlas-resolve-relation artifact)
+  (define tables (beeatlas-relation-tables artifact))
+  (and tables (relation-digest beeatlas-db tables)))
 
 ;; py: a uv/3.14 recipe that calls `module.fn()' the way run.py imports it.
 (define (py module fn)

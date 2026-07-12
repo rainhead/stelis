@@ -55,10 +55,10 @@
 (display-to-file "a,b\n" raw-path)
 (display-to-file "bytes" out-path)
 (define benv
-  (build-env (lambda (a export-dir)
-               (case a [(raw) raw-path] [(out) out-path] [else #f]))
-             tmp
-             (build-path tmp "cache")))
+  (make-build-env (lambda (a export-dir)
+                    (case a [(raw) raw-path] [(out) out-path] [else #f]))
+                  tmp
+                  (build-path tmp "cache")))
 
 (define-values (status1 records1)
   (run-plan g '(ingest noop) runtimes #:context benv))

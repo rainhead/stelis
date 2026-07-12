@@ -23,6 +23,7 @@
          (struct-out snapshot)
          (struct-out output-delta)
          (struct-out build-env)
+         make-build-env
          env-resolve
          env-output-paths
          input-snapshot
@@ -75,12 +76,26 @@
 
 ;; --- The build environment ------------------------------------------------------
 
-;; How artifacts resolve to paths and where build state lives — the trio every
+;; How artifacts resolve to content and where build state lives — the trio every
 ;; cache-aware entry point needs, bundled so it travels as one value.
-;;   resolve    : (symbol export-dir -> (or/c path-string #f))
-;;   export-dir : path-string — the explicit output destination
-;;   cache-dir  : path-string — the derived, disposable sidecar dir
-(struct build-env (resolve export-dir cache-dir) #:transparent)
+;;   resolve          : (symbol export-dir -> (or/c path-string #f))
+;;                      where a FILE artifact lives (also used to place/verify
+;;                      outputs). db-relations/tokens/externals have no path -> #f.
+;;   export-dir       : path-string — the explicit output destination
+;;   cache-dir        : path-string — the derived, disposable sidecar dir
+;;   resolve-relation : (symbol -> (or/c string #f)) — a db-relation's content
+;;                      hash, or #f when it can't be read (st-d5d). #f (the whole
+;;                      slot) means "no relation resolver": relations then read as
+;;                      inputs-unresolvable, exactly the pre-st-d5d behaviour.
+(struct build-env (resolve export-dir cache-dir resolve-relation) #:transparent)
+
+;; make-build-env : (symbol export-dir -> path?) path-string path-string
+;;                  [#:resolve-relation (or/c (symbol -> (or/c string #f)) #f)]
+;;                  -> build-env?
+;; Keyword constructor so callers that don't content-address relations (tests,
+;; the file-only paths) needn't mention the slot.
+(define (make-build-env resolve export-dir cache-dir #:resolve-relation [resolve-relation #f])
+  (build-env resolve export-dir cache-dir resolve-relation))
 
 ;; env-resolve : build-env? symbol -> (or/c path-string #f)
 (define (env-resolve env a)
@@ -92,26 +107,41 @@
   (filter values (map (lambda (o) (env-resolve env o)) (task-outputs t))))
 
 ;; input-snapshot : graph symbol (symbol -> (or/c path-string #f))
+;;                  [(or/c (symbol -> (or/c string #f)) #f)]
 ;;                  -> (or/c snapshot? decision?)
-;; Hash the task's recipe and each input file. Returns a 'run decision instead
-;; of a snapshot when the task can never be content-skipped: 'boundary tasks
-;; (ingestion must re-run, or later use a boundary stamp), and tasks with an
-;; input that is not a resolvable, existing file ('inputs-unresolvable).
-(define (input-snapshot g name resolve)
+;; Hash the task's recipe and each input's content. Each input is hashed by its
+;; artifact KIND: a file by its bytes; a db-relation by `resolve-relation' (its
+;; DuckDB digest, st-d5d); anything else (tokens, externals) has no content hash.
+;; Returns a 'run decision instead of a snapshot when the task can never be
+;; content-skipped: 'boundary tasks (ingestion must re-run), and tasks with an
+;; input that isn't content-addressable here ('inputs-unresolvable). With
+;; resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
+(define (input-snapshot g name resolve [resolve-relation #f])
   (define t (hash-ref (graph-tasks g) name))
   (cond
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
     [else
      (define pairs
        (for/list ([in (in-list (task-inputs t))])
-         (define p (resolve in))
-         (cons in (and p (file-exists? p) (file-sha1 p)))))
+         (cons in (input-hash g in resolve resolve-relation))))
      (define unresolvable
        (sort (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv)) symbol<?))
      (if (pair? unresolvable)
          (decision 'run 'inputs-unresolvable unresolvable)
          (snapshot (string-sha1 (~s (task-invoke t)))
                    (make-immutable-hash pairs)))]))
+
+;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)
+;;              -> (or/c string #f)
+;; One input's content hash, by artifact kind, or #f if not content-addressable.
+(define (input-hash g in resolve resolve-relation)
+  (define a (hash-ref (graph-artifacts g) in #f))
+  (cond
+    [(and a (eq? (artifact-kind a) 'db-relation))
+     (and resolve-relation (resolve-relation in))]
+    [else
+     (define p (resolve in))
+     (and p (file-exists? p) (file-sha1 p))]))
 
 ;; output-snapshot : graph symbol build-env? -> (listof (cons symbol string))
 ;; Content hashes of the task's cutoff-eligible outputs, taken after a run: the
@@ -221,7 +251,8 @@
 ;; the task can store it without re-hashing.
 (define (decision+snapshot g name env)
   (define t (hash-ref (graph-tasks g) name))
-  (define snap (input-snapshot g name (lambda (a) (env-resolve env a))))
+  (define snap (input-snapshot g name (lambda (a) (env-resolve env a))
+                               (build-env-resolve-relation env)))
   (if (decision? snap)
       (values snap #f)
       (values (decide snap (read-cache-entry (build-env-cache-dir env) name)

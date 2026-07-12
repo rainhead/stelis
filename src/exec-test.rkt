@@ -35,10 +35,10 @@
          (make-artifact 'out 'file))))
 
 (define benv
-  (build-env (lambda (a export-dir)
-               (case a [(raw) raw-path] [(mid) mid-path] [(out) out-path] [else #f]))
-             tmp
-             (build-path tmp "cache")))
+  (make-build-env (lambda (a export-dir)
+                    (case a [(raw) raw-path] [(mid) mid-path] [(out) out-path] [else #f]))
+                  tmp
+                  (build-path tmp "cache")))
 
 ;; run-plan narrates to stdout; the tests only want the returned facts
 (define (build!)

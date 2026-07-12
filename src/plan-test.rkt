@@ -73,9 +73,12 @@
               '()
               "an unrelated task's failure does not block generate-sqlite")
 
-;; 7. Caching (st-d44.3): a task is cacheable only when ALL its inputs resolve to
-;;    existing files. generate-sqlite's inputs are files; dbt-build's are duckdb
-;;    relations (unresolvable) -> not cacheable.
+;; 7. Caching (st-d44.3): a task is cacheable only when ALL its inputs are
+;;    content-addressable. generate-sqlite's inputs are files. dbt-build's
+;;    db-relations become addressable once a resolve-relation is supplied
+;;    (st-d5d), but its GATE-TOKEN inputs never are, so it stays unresolvable
+;;    regardless — asserted here with no relation resolver (relations fall
+;;    through to unresolvable too), which is enough to keep it uncacheable.
 (define-runtime-path model-rkt "model.rkt") ; a file that exists, resolved by source location
 (define an-existing-file (path->string model-rkt))
 (define (stub-resolve a)
@@ -84,7 +87,7 @@
             "generate-sqlite is cacheable (all inputs are files)")
 (let ([d (input-snapshot beeatlas-graph 'dbt-build stub-resolve)])
   (check-equal? (decision-reason d) 'inputs-unresolvable
-                "dbt-build is not cacheable (duckdb-relation inputs don't resolve)"))
+                "dbt-build is not cacheable (gate-token inputs are never content-addressable)"))
 (let ([d (input-snapshot beeatlas-graph 'taxa-download stub-resolve)])
   (check-equal? (decision-reason d) 'boundary
                 "boundary tasks are never content-cached (ingestion re-runs)"))

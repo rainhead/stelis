@@ -70,7 +70,7 @@
 (define out-path  (build-path tmp "out.db"))
 (define (resolve a)
   (case a [(raw) raw-path] [(out) out-path] [else #f]))
-(define env (build-env (lambda (a _export-dir) (resolve a)) tmp cache-dir))
+(define env (make-build-env (lambda (a _export-dir) (resolve a)) tmp cache-dir))
 
 (define (graph-with-invoke invoke)
   (build-graph
