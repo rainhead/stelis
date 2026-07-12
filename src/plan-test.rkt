@@ -91,3 +91,18 @@
 (let ([d (input-snapshot beeatlas-graph 'taxa-download stub-resolve)])
   (check-equal? (decision-reason d) 'boundary
                 "boundary tasks are never content-cached (ingestion re-runs)"))
+
+;; 8. species.json — a second built+verified target beyond occurrences.db
+;;    (st-4cm slice, st-h4m). It plans as its own cone, and species-export reads
+;;    occurrences.parquet (a hard requirement that was missing from the edge until
+;;    this target exercised it — regression guard for that fidelity fix).
+(let-values ([(sp-ordered _sp-pruned) (plan beeatlas-graph 'species.json)])
+  (check-not-false (memq 'species-export sp-ordered)
+                   "species.json's plan runs species-export")
+  (check-not-false (memq 'dbt-build sp-ordered)
+                   "species.json depends on the dbt hinge")
+  (check-false (memq 'generate-sqlite sp-ordered)
+               "species.json does NOT pull in the occurrences.db producer"))
+(check-not-false (memq 'occurrences.parquet
+                       (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'species-export)))
+                 "species-export consumes occurrences.parquet (seasonality accumulation)")

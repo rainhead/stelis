@@ -65,7 +65,10 @@
       species.parquet species_traits.parquet higher_taxa.parquet)
      (build-path SANDBOX (~a artifact))]
     [(taxa.csv.gz)   (build-path DATA "raw" "taxa.csv.gz")]
-    [(occurrences.db) (build-path export-dir "occurrences.db")]
+    ;; terminal export targets land in EXPORT_DIR (species_export writes
+    ;; ASSETS_DIR := EXPORT_DIR). species.json is the first post-dbt target built
+    ;; and verified through Stelis beyond occurrences.db (st-4cm slice, st-h4m).
+    [(occurrences.db species.json) (build-path export-dir (~a artifact))]
     [else #f]))
 
 ;; --- db-relation content-addressing (st-d5d) --------------------------------
@@ -267,8 +270,15 @@
               #:inputs '(counties.geojson ecoregions.geojson wilderness.geojson)
               #:outputs '(region-topology-clean)
               #:invoke (py "topology_postprocess" "main"))
+   ;; species_export.main reads FOUR dbt-mart parquets from the sandbox and
+   ;; writes species.json (among others) to EXPORT_DIR. occurrences.parquet is a
+   ;; hard requirement (per-occurrence seasonality accumulation), not optional —
+   ;; it was missing from this edge until the species.json target exercised it
+   ;; (st-4cm). species_traits.parquet is read too but degrades gracefully
+   ;; (warn + null-fill) so it stays an honest input without being load-bearing.
    (make-task 'species-export 'transform
-              #:inputs '(species.parquet species_traits.parquet higher_taxa.parquet)
+              #:inputs '(species.parquet occurrences.parquet
+                         species_traits.parquet higher_taxa.parquet)
               #:outputs '(species.json)
               #:invoke (py "species_export" "main"))
    (make-task 'species-maps 'transform

@@ -9,8 +9,12 @@ making predictable mistakes.
 - Read `DESIGN.md` and `ROADMAP.md` before starting work.
 - Treat `DESIGN.md`'s **settled commitments as decided** — don't relitigate them;
   raise a flag if one seems wrong, don't quietly work around it.
-- Treat `ROADMAP.md`'s **horizons as the scope guard.** We are in **Horizon 0**.
-  If a request would build a Horizon 1+ feature, say so before building it.
+- Treat `ROADMAP.md`'s **horizons as the scope guard.** We are in **Horizon 1**:
+  Horizon 0's exit condition (run.py retired for `occurrences.db`, reproducibly)
+  is met, and H1 items have shipped — provenance, early cutoff, and the start of
+  broader target coverage. If a request would build a **Horizon 2+** feature
+  (streaming/CRUD ingestion, delta propagation, compile-to-TS emission, anything
+  needing change-over-time or non-linear time), say so before building it.
 
 ## What this is (one line)
 
@@ -61,8 +65,9 @@ Execution shells into `~/dev/beeatlas` via the runtimes declared in `beeatlas.rk
 These are in `DESIGN.md`; repeated here because they're the ones easiest to break
 in code:
 
-- **Transformations stay external in Horizon 0.** Orchestrate dlt / dbt /
-  exporters; do **not** reimplement their logic in Racket.
+- **Transformations stay external (through Horizon 1).** Orchestrate dlt / dbt /
+  exporters; do **not** reimplement their logic in Racket. (Delta propagation
+  that touches this is Horizon 2.)
 - **Derived vs. authoritative.** Derived outputs are safe to destroy and rebuild;
   authoritative state is forward-only — **never rebuild it from scratch**
   (migrations only).
