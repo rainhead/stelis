@@ -59,49 +59,61 @@
         ;; No interpreter pin needed; cp is content-preserving.
         'sh  (runtime 'sh  (list "bash" "-c") "sh")))
 
-;; The dbt mart artifacts run.py's _run_dbt_build copies from the sandbox into
-;; EXPORT_DIR so the post-dbt exports find them at the expected paths. (species.
-;; parquet is deliberately NOT here — species_export writes its own enriched copy.)
-(define mart-files
-  '("occurrences.parquet" "occurrence_places.parquet" "counties.geojson"
-    "ecoregions.geojson" "wilderness.geojson" "checklist.parquet"))
+;; --- Physical placement, declared once (st-bft) ------------------------------
+;; Where each file artifact lives is one fact per artifact, kept in the four lists
+;; below; everything downstream (the @export copies, place-marts' copy edge,
+;; dbt-build's outputs, path resolution) derives from them rather than repeating
+;; the names. The recurring authoring bug was this placement axis leaking into
+;; five different spots; now a new mart or export is a one-line edit.
 
-;; name of the EXPORT_DIR-placed copy of a mart file (distinct from the sandbox
-;; artifact so the graph has one producer per artifact: dbt-build makes the
-;; sandbox copy, place-marts makes the @export copy).
-(define (export-name file) (string->symbol (string-append file "@export")))
+;; dbt-build writes these nine marts into the sandbox — they ARE its file outputs.
+(define sandbox-marts
+  '(occurrences.parquet occurrence_places.parquet checklist.parquet
+    species.parquet species_traits.parquet higher_taxa.parquet
+    counties.geojson ecoregions.geojson wilderness.geojson))
+
+;; place-marts copies these six verbatim into EXPORT_DIR, where the post-dbt
+;; exporters read them (Pitfall 5). Each copied mart gets a byte-identical
+;; `<name>@export' sibling — its own artifact, so one-producer-per-artifact holds:
+;; dbt-build makes the sandbox copy, place-marts makes the @export copy.
+;; species.parquet is deliberately absent — species-export writes its OWN enriched
+;; @export copy (different bytes), not a verbatim mart copy.
+(define placed-marts
+  '(occurrences.parquet occurrence_places.parquet counties.geojson
+    ecoregions.geojson wilderness.geojson checklist.parquet))
+
+;; the @export sibling name of a placed artifact.
+(define (export-name name) (string->symbol (string-append (~a name) "@export")))
+
+;; Single-file terminal exports that land in the build's EXPORT_DIR (species_export
+;; etc. write ASSETS_DIR := EXPORT_DIR). Explicit on purpose: being listed here
+;; means "a built+verified single-file export target." Directory outputs
+;; (species-maps, place-maps, feeds) are deliberately NOT here — their shape is an
+;; open decision, so they stay unresolvable and the st-6qc guard refuses to build
+;; them until they are modelled.
+(define export-dir-files
+  '(occurrences.db species.json collectors.json
+    places.json places.geojson place_details.json
+    seasonality.json photos.json species_hosts.json higher_taxa.json))
+
+;; raw/fetched inputs at fixed paths under DATA.
+(define raw-file-paths (hash 'taxa.csv.gz (build-path DATA "raw" "taxa.csv.gz")))
 
 ;; Where beeatlas's file artifacts physically live — the resolver caching uses to
 ;; content-hash inputs and to place/verify outputs. #f for artifacts with no known
-;; single file (duckdb relations, tokens, externals): those aren't content-hashed
-;; in Horizon 0. Outputs land under the build's export-dir (explicit destination).
+;; single file (duckdb relations, tokens, externals, and not-yet-modelled directory
+;; outputs): those aren't content-hashed in Horizon 0.
 (define SANDBOX (string-append DATA "/dbt/target/sandbox"))
 (define (beeatlas-path artifact export-dir)
   (define s (~a artifact))
   (cond
-    ;; @export artifacts are the EXPORT_DIR-placed copies (place-marts, st-4cm):
-    ;; strip the suffix to get the on-disk filename under export-dir.
+    [(hash-ref raw-file-paths artifact #f)]
+    [(memq artifact sandbox-marts) (build-path SANDBOX s)]
+    ;; @export copies (place-marts' verbatim copies + species-export's enriched
+    ;; parquet): the placed sibling lives under export-dir at the un-suffixed name.
     [(regexp-match #rx"^(.+)@export$" s)
      => (lambda (m) (build-path export-dir (cadr m)))]
-    [else (beeatlas-path/case artifact export-dir)]))
-(define (beeatlas-path/case artifact export-dir)
-  (case artifact
-    [(occurrences.parquet occurrence_places.parquet checklist.parquet
-      species.parquet species_traits.parquet higher_taxa.parquet
-      counties.geojson ecoregions.geojson wilderness.geojson)
-     (build-path SANDBOX (~a artifact))]
-    [(taxa.csv.gz)   (build-path DATA "raw" "taxa.csv.gz")]
-    ;; terminal export targets land in EXPORT_DIR (species_export writes
-    ;; ASSETS_DIR := EXPORT_DIR). species.json was the first post-dbt target built
-    ;; and verified through Stelis beyond occurrences.db (st-h4m); collectors.json
-    ;; is the second, via place-marts (st-4cm slice 2); places.json (with its
-    ;; siblings places.geojson + place_details.json, all written by one
-    ;; places_export invocation) is the third (st-4cm slice 3).
-    [(occurrences.db species.json collectors.json
-      places.json places.geojson place_details.json
-      ;; species-export's four sibling feeds (st-qp7 — see its outputs)
-      seasonality.json photos.json species_hosts.json higher_taxa.json)
-     (build-path export-dir (~a artifact))]
+    [(memq artifact export-dir-files) (build-path export-dir s)]
     [else #f]))
 
 ;; --- db-relation content-addressing (st-d5d) --------------------------------
@@ -160,14 +172,18 @@
 ;; placement. This is exactly run.py's _run_dbt_build copy loop, split out as its
 ;; own node (the copy is placement, not the dbt transform).
 (define place-marts-script
-  (string-append "set -e; for f in " (string-join mart-files " ")
+  (string-append "set -e; for f in " (string-join (map ~a placed-marts) " ")
                  "; do cp \"" SANDBOX "/$f\" \"$EXPORT_DIR/$f\"; done"))
 
 ;; --- Artifacts --------------------------------------------------------------
 ;; kinds: 'file  'db-relation (a schema/table in the shared beeatlas.duckdb)
 ;;        'external (loaded outside the nightly graph)  'token (a gate result)
 (define artifacts
-  (list
+  (append
+   ;; the nine dbt sandbox marts — one 'file artifact each, derived from the
+   ;; placement list so the mart set lives in exactly one place (st-bft).
+   (for/list ([m (in-list sandbox-marts)]) (make-artifact m 'file))
+   (list
    (make-artifact 'taxa.csv.gz              'file)
    (make-artifact 'ecdysis_data             'db-relation)
    (make-artifact 'ecdysis_links            'db-relation)
@@ -189,15 +205,6 @@
    (make-artifact 'inactive-verified        'token)
    (make-artifact 'places-validated         'token)
    (make-artifact 'dedup-verified           'token)
-   (make-artifact 'occurrences.parquet          'file)
-   (make-artifact 'occurrence_places.parquet    'file)
-   (make-artifact 'checklist.parquet            'file)
-   (make-artifact 'species.parquet              'file)
-   (make-artifact 'species_traits.parquet       'file)
-   (make-artifact 'higher_taxa.parquet          'file)
-   (make-artifact 'counties.geojson             'file)
-   (make-artifact 'ecoregions.geojson           'file)
-   (make-artifact 'wilderness.geojson           'file)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
    (make-artifact 'region-topology-clean        'file)
@@ -228,9 +235,9 @@
    ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
    ;; enriched species.parquet species-export writes there. Distinct artifacts
    ;; from the sandbox originals so each has exactly one producer.
-   (make-artifact 'species.parquet@export       'file)))
+   (make-artifact 'species.parquet@export       'file))))
 (define mart-export-artifacts
-  (for/list ([f (in-list mart-files)]) (make-artifact (export-name f) 'file)))
+  (for/list ([m (in-list placed-marts)]) (make-artifact (export-name m) 'file)))
 
 ;; --- Tasks (the 32 run.py STEPS, in list order) -----------------------------
 ;; `invoke' recipes transcribed from run.py's imports (module + function).
@@ -301,10 +308,7 @@
                          inat_obs_data canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
                          taxon_lineage_extended host_plant_lineage geographies_places)
-              #:outputs '(occurrences.parquet occurrence_places.parquet
-                          checklist.parquet species.parquet species_traits.parquet
-                          higher_taxa.parquet counties.geojson ecoregions.geojson
-                          wilderness.geojson)
+              #:outputs sandbox-marts   ; exactly the nine sandbox marts (st-bft)
               ;; Recipe is `run.sh build' only — it writes the marts to the dbt
               ;; sandbox. run.py's _run_dbt_build ALSO copies six of them to
               ;; EXPORT_DIR; that placement is now its own `place-marts' node
@@ -323,8 +327,8 @@
    ;; node so the placement is a modeled, cache-skippable edge. Not on the
    ;; occurrences.db path (generate-sqlite reads the sandbox directly).
    (make-task 'place-marts 'transform
-              #:inputs (map string->symbol mart-files)
-              #:outputs (map export-name mart-files)
+              #:inputs placed-marts
+              #:outputs (map export-name placed-marts)
               #:invoke (recipe 'sh (list place-marts-script)))
 
    ;; --- post-dbt siblings (NOT upstream of occurrences.db) ---
