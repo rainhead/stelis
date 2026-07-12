@@ -4,6 +4,7 @@
 ;;
 ;;   racket src/main.rkt occurrences.db                    ; print the plan
 ;;   racket src/main.rkt --commands occurrences.db         ; dry-run: print commands
+;;   racket src/main.rkt --explain occurrences.db          ; why would each task run/skip?
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
@@ -16,9 +17,10 @@
          "model.rkt"
          "beeatlas.rkt"
          "exec.rkt"
+         "explain.rkt"
          "determinism.rkt")
 
-(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'run | 'build | 'verify
+(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'run | 'build | 'verify
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 
 (define name
@@ -27,6 +29,8 @@
    #:once-any
    [("--commands") "dry-run: print the exact hermetic command per task (runs nothing)"
                    (mode 'commands)]
+   [("--explain") "print why each task in TARGET's plan would run or be skipped"
+                  (mode 'explain)]
    [("--run") "execute the named TASK as a subprocess (output to a scratch dir)"
               (mode 'run)]
    [("--build") "execute the plan for TARGET in dependency order (partial success)"
@@ -100,6 +104,16 @@
    (define-values (ordered pruned) (plan beeatlas-graph name))
    (printf "Target: ~a\n\n" name)
    (cond
+     [(eq? (mode) 'explain)
+      (define to-run (plan-suffix ordered))
+      (printf "Explain — ~a task(s)~a, in build order:\n"
+              (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
+      (printf "  ≡ skips · ≈ conditional (upstream reruns) · ▶ runs\n\n")
+      (print-explanations
+       (plan-explanations beeatlas-graph to-run
+                          #:resolve beeatlas-path
+                          #:export-dir (scratch-out-path)
+                          #:cache-dir stelis-cache))]
      [(eq? (mode) 'commands)
       (define to-run (plan-suffix ordered))
       (printf "Dry run — ~a command(s)~a, in build order (nothing executed):\n"

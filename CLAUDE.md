@@ -33,6 +33,7 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
 
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
+  `--explain <target>` (why would each task run or skip?) ·
   `--run <task>` (execute one task in its hermetic runtime).
 - **Test:** `raco test src/*-test.rkt`.
 
