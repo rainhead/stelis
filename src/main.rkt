@@ -18,6 +18,7 @@
          racket/string
          "model.rkt"
          "beeatlas.rkt"
+         "cache.rkt"
          "exec.rkt"
          "explain.rkt"
          "provenance-datalog.rkt"
@@ -181,17 +182,24 @@
       (let loop ([t wt] [depth 0])
         (define first-time? (not (set-member? shown t)))
         (set-add! shown t)
+        (define blames
+          (if first-time?
+              (sort (set->list (datalog-direct-blames thy t)) symbol<?)
+              '()))
+        (define d (hash-ref dec-of t))
         (printf "~a~a~a — ~a\n"
                 (make-string (* 2 depth) #\space)
                 (if (zero? depth) "" "⤷ ")
                 t
-                (if first-time?
-                    (decision->string (hash-ref dec-of t))
-                    "(shown above)"))
-        (when first-time?
-          (for ([u (in-list (sort (set->list (datalog-direct-blames thy t))
-                                  symbol<?))])
-            (loop u (add1 depth)))))])]
+                (cond
+                  [(not first-time?) "(shown above)"]
+                  ;; own inputs are fine; the staleness is inherited — say so
+                  ;; instead of the misleading bare "cached"
+                  [(and (eq? 'skip (decision-verdict d)) (pair? blames))
+                   "inputs unchanged, but stale through upstreams ↓"]
+                  [else (decision->string d)]))
+        (for ([u (in-list blames)])
+          (loop u (add1 depth))))])]
 
   ;; --- plan / dry-run for a target artifact ------------------------------
   [else
