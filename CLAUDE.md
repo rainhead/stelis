@@ -46,13 +46,15 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner ·
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
-recipes, and the two runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
+recipes, and the runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions +
 early-cutoff output receipts · [`relation-digest.rkt`](src/relation-digest.rkt)
 content-addresses db-relation inputs via a DuckDB order-independent digest ·
 [`trace.rkt`](src/trace.rkt) the last-build trace ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules ·
+[`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
+runtime reality (declared inputs sufficient? outputs complete?) ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
 
