@@ -105,9 +105,20 @@
                      (string-join (map symbol->string (trace-record-blockers r)) ", "))]
             [(trace-record-decision r) (decision->string (trace-record-decision r))]
             [else "(caching was off)"]))
-        (printf "~a~a. ~a ~a\n     ~a\n"
+        ;; the cutoff receipt (st-8ig): what the rerun did to its outputs
+        (define delta (trace-record-delta r))
+        (define delta-note
+          (cond
+            [(not delta) ""]
+            [(eq? 'identical (output-delta-status delta))
+             " → reran; outputs identical — early cutoff, downstream saw unchanged inputs"]
+            [else
+             (format " → reran; outputs changed: ~a"
+                     (string-join (map symbol->string (output-delta-details delta)) ", "))]))
+        (printf "~a~a. ~a ~a\n     ~a~a\n"
                 (if (< i 10) " " "") i
-                (outcome-glyph (trace-record-outcome r)) (trace-record-task r) why))])]
+                (outcome-glyph (trace-record-outcome r)) (trace-record-task r)
+                why delta-note))])]
 
   ;; --- execute a single task ---------------------------------------------
   [(eq? (mode) 'run)

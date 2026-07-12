@@ -14,8 +14,10 @@
 
 (define snap-a (snapshot "r1" (hash 'x "hx" 'y "hy")))
 ;; an entry as read-cache-entry returns it (input-hashes is a sorted alist)
-(define (entry #:recipe [r "r1"] #:inputs [ins '((x . "hx") (y . "hy"))])
-  (hash 'version 2 'recipe-hash r 'input-hashes ins 'outputs '()))
+(define (entry #:recipe [r "r1"] #:inputs [ins '((x . "hx") (y . "hy"))]
+               #:out-hashes [outs '()])
+  (hash 'version 3 'recipe-hash r 'input-hashes ins 'outputs '()
+        'output-hashes outs))
 
 (define (reason d) (decision-reason d))
 
@@ -43,6 +45,22 @@
 (check-equal? (reason (decide snap-a (entry #:inputs '((x . "OLD") (y . "hy"))) '("out.db")))
               'input-changed
               "content change outranks missing output as the reason")
+
+;; --- compare-outputs: the pure cutoff question (st-8ig) -----------------------
+
+(check-false (compare-outputs #f '((out . "h1")))
+             "no prior entry — no basis to compare")
+(check-false (compare-outputs (entry #:out-hashes '((out . "h1"))) '())
+             "nothing hashable this run — no basis to compare")
+(check-equal? (compare-outputs (entry #:out-hashes '((out . "h1"))) '((out . "h1")))
+              (output-delta 'identical '(out))
+              "rebuilt to identical content — the cutoff signal, outputs named")
+(check-equal? (compare-outputs (entry #:out-hashes '((out . "h1"))) '((out . "h2")))
+              (output-delta 'changed '(out))
+              "a changed output is named")
+(check-equal? (compare-outputs (entry #:out-hashes '((a . "h1"))) '((b . "h1")))
+              (output-delta 'changed '(a b))
+              "outputs present on only one side count as changed")
 
 ;; --- the IO round trip over a synthetic graph --------------------------------
 
@@ -80,12 +98,32 @@
 ;; store, then ask again: a hit, through both the decision and boolean APIs
 (define snap-1 (input-snapshot g 'xform resolve))
 (check-pred snapshot? snap-1 "xform's inputs all resolve to files")
-(cache-store! cache-dir 'xform snap-1 (list out-path))
+(cache-store! cache-dir 'xform snap-1 (list out-path) (output-snapshot g 'xform env))
 (check-equal? (task-decision g 'xform env)
               (decision 'skip 'cached '())
               "stored + unchanged + outputs present -> cached")
 (check-true (cache-hit? cache-dir 'xform snap-1 (list out-path))
             "cache-hit? agrees with the decision verdict")
+
+;; --- output snapshots: what cutoff may hash (st-8ig) --------------------------
+
+(check-equal? (map car (output-snapshot g 'xform env)) '(out)
+              "a derived, resolvable, existing output is hashed")
+(check-equal? (output-snapshot g 'needs-token env) '()
+              "an unresolvable output has nothing to hash")
+(define g-auth
+  (build-graph
+   (list (make-task 'xform 'transform #:inputs '(raw) #:outputs '(out)))
+   (list (make-artifact 'raw 'file)
+         (make-artifact 'out 'file #:provenance 'authoritative))))
+(check-equal? (output-snapshot g-auth 'xform env) '()
+              "an authoritative output is never cutoff-eligible")
+
+;; the stored entry vs a fresh snapshot of unchanged outputs: the cutoff signal
+(check-equal? (compare-outputs (read-cache-entry cache-dir 'xform)
+                               (output-snapshot g 'xform env))
+              (output-delta 'identical '(out))
+              "rebuilt-to-identical reads back through the store as identical")
 
 ;; change the input's content -> the changed input is named
 (display-to-file "a,b\n9,9\n" raw-path #:exists 'replace)

@@ -170,6 +170,12 @@
 ;; With a #:context build-env, a task whose decision verdict is 'skip (inputs
 ;; unchanged, outputs present) is SKIPPED as 'cached. Tasks whose inputs aren't
 ;; fully content-addressable always run — their decision says why.
+;; Early cutoff (st-8ig) needs no machinery here beyond observing it: each
+;; task's decision is taken AFTER its upstreams ran, so a rerun that rebuilds
+;; to identical content leaves downstream input hashes unchanged and they skip
+;; as 'cached. What this loop adds is the receipt — after a run, the rebuilt
+;; outputs are hashed and compared against the previous entry (the delta on
+;; the trace record), so the cutoff point can be named, not just enjoyed.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
                   #:context [env #f])
@@ -182,6 +188,7 @@
     ;; task is content-addressable, the snapshot to store after a clean run
     (define-values (dec snap)
       (if env (decision+snapshot g name env) (values #f #f)))
+    (define delta #f)
     (define outcome
       (cond
         [(pair? blockers)
@@ -194,12 +201,25 @@
         [else
          (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
          (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
+         ;; the previous entry, read before cache-store! overwrites it — the
+         ;; comparison basis for the output delta
+         (define prior (and env (read-cache-entry (build-env-cache-dir env) name)))
          (define code (run-task g name runtimes #:env extra-env #:label name))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
-         (when (and ok? snap)
-           (cache-store! (build-env-cache-dir env) name snap (env-output-paths env t)))
+         (when (and ok? env)
+           (define out-hashes (output-snapshot g name env))
+           (cache-store! (build-env-cache-dir env) name snap
+                         (env-output-paths env t) out-hashes)
+           (set! delta (compare-outputs prior out-hashes))
+           (when delta
+             (case (output-delta-status delta)
+               [(identical)
+                (printf "  ≡ outputs identical to last build — early cutoff: downstream sees unchanged inputs\n")]
+               [(changed)
+                (printf "  ± outputs changed: ~a\n"
+                        (string-join (map symbol->string (output-delta-details delta)) ", "))])))
          (if ok? 'ok 'failed)]))
     (hash-set! status name outcome)
-    (set! records (cons (trace-record name dec snap outcome blockers) records)))
+    (set! records (cons (trace-record name dec snap outcome blockers delta) records)))
   (values status (reverse records)))

@@ -52,6 +52,12 @@ non-content-addressable task) · `≡` skips (inputs unchanged, outputs present)
 · `≈` conditional (a cache hit today, but an upstream will run first and may
 change its inputs).
 
+Whether a `≈` resolves to a skip is **early cutoff**: a task that reruns but
+rebuilds its outputs to identical content leaves downstream inputs unchanged,
+so downstream tasks cache-skip naturally. A real build records the comparison,
+and `--explain --last` names the cutoff point ("reran; outputs identical").
+See [ADR 0003](docs/adr/0003-early-cutoff.md).
+
 Outputs land in an explicit export directory (a scratch dir under the system
 temp dir, printed at build time). Build state — the input-addressed cache and
 the last-build trace — lives in `.stelis/`, which is derived and disposable:

@@ -43,7 +43,8 @@ Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planne
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the two runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
-subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions ·
+subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions +
+early-cutoff output receipts · [`trace.rkt`](src/trace.rkt) the last-build trace ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·

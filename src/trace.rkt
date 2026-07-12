@@ -20,9 +20,9 @@
          trace-store!
          trace-load)
 
-;; v2: records carry the input snapshot (recipe hash + per-input hashes), so a
-;; trace consumer can verify or re-derive a decision, not just read it.
-(define TRACE-VERSION 2)
+;; v3: records carry the post-run output delta (st-8ig), so the trace can name
+;; the cutoff point — "reran, outputs identical, downstream skipped".
+(define TRACE-VERSION 3)
 
 ;; One task's actual fate in a build.
 ;;   task     : symbol
@@ -31,7 +31,9 @@
 ;;              task wasn't content-addressable (or caching was off)
 ;;   outcome  : 'ok | 'cached | 'failed | 'skipped
 ;;   blockers : (listof symbol) — for 'skipped: the failed/skipped producers
-(struct trace-record (task decision snapshot outcome blockers) #:transparent)
+;;   delta    : (or/c output-delta? #f) — for 'ok: how the rebuilt outputs
+;;              compare to the previous build's; #f when there was no basis
+(struct trace-record (task decision snapshot outcome blockers delta) #:transparent)
 
 ;; outcome-glyph : symbol -> string — the one legend for actual outcomes.
 (define (outcome-glyph o)
@@ -51,6 +53,11 @@
   (and (list? v) (= 2 (length v))
        (snapshot (car v) (make-immutable-hash (cadr v)))))
 
+(define (delta->datum d)
+  (and d (list (output-delta-status d) (output-delta-details d))))
+(define (datum->delta v)
+  (and (list? v) (= 2 (length v)) (output-delta (car v) (cadr v))))
+
 (define (trace-file state-dir) (build-path state-dir "last-build.rktd"))
 
 ;; trace-store! : path-string symbol (listof trace-record?) -> void
@@ -65,7 +72,8 @@
                                     (decision->datum (trace-record-decision r))
                                     (snapshot->datum (trace-record-snapshot r))
                                     (trace-record-outcome r)
-                                    (trace-record-blockers r))))
+                                    (trace-record-blockers r)
+                                    (delta->datum (trace-record-delta r)))))
              o))))
 
 ;; trace-load : path-string -> (or/c (cons symbol (listof trace-record?)) #f)
@@ -82,4 +90,5 @@
                                (datum->decision (cadr r))
                                (datum->snapshot (caddr r))
                                (cadddr r)
-                               (car (cddddr r))))))))
+                               (list-ref r 4)
+                               (datum->delta (list-ref r 5))))))))

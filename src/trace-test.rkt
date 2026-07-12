@@ -17,11 +17,13 @@
 ;; --- round trip and degradation ----------------------------------------------
 
 (define some-records
-  (list (trace-record 'ingest (decision 'run 'boundary '()) #f 'ok '())
+  (list (trace-record 'ingest (decision 'run 'boundary '()) #f 'ok '()
+                      (output-delta 'identical '(raw)))
         (trace-record 'xform  (decision 'run 'input-changed '(raw))
-                      (snapshot "r1" (hash 'raw "abc123")) 'failed '())
-        (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform))
-        (trace-record 'no-cache #f #f 'ok '())))
+                      (snapshot "r1" (hash 'raw "abc123")) 'failed '()
+                      (output-delta 'changed '(out)))
+        (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform) #f)
+        (trace-record 'no-cache #f #f 'ok '() #f)))
 
 (trace-store! tmp 'occurrences.db some-records)
 (check-equal? (trace-load tmp) (cons 'occurrences.db some-records)
@@ -77,6 +79,9 @@
 (check-equal? (trace-record-decision (cadr records2))
               (decision 'skip 'cached '())
               "and the record says why")
+(check-equal? (trace-record-delta (car records2))
+              (output-delta 'identical '(raw))
+              "a boundary rerun to identical content still gets a cutoff receipt")
 
 ;; the records persist and reload as stored — snapshots included
 (trace-store! tmp 'out records2)
