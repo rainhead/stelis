@@ -33,6 +33,8 @@
 
 (require racket/format
          racket/string
+         racket/system
+         racket/port
          "model.rkt"
          "exec.rkt"
          "relation-digest.rkt")
@@ -42,7 +44,8 @@
          beeatlas-path
          beeatlas-db
          beeatlas-relation-tables
-         beeatlas-resolve-relation)
+         beeatlas-resolve-relation
+         beeatlas-source-date-epoch)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
@@ -50,6 +53,33 @@
 ;; those existing pins — it just launches the right command per task.
 (define BEEATLAS "/Users/rainhead/dev/beeatlas")
 (define DATA (string-append BEEATLAS "/data"))
+
+;; --- Deterministic build clock (ADR 0004, st-3mi) ---------------------------
+;; SOURCE_DATE_EPOCH: the one build-wide clock a task embeds instead of wall-
+;; clock time, so its outputs stay byte-deterministic (DESIGN: determinism is a
+;; day-one property). Defined as the committer date of beeatlas's HEAD commit — a
+;; function of the source snapshot, so it is identical across the two builds of a
+;; --verify. Honors an already-set SOURCE_DATE_EPOCH (the reproducible-builds
+;; escape hatch). Stelis injects the result into every task's hermetic env (see
+;; main.rkt); a stamping script reads it and falls back to its own clock only when
+;; unset, so it stays runnable standalone (the nightly) yet deterministic here.
+(define (beeatlas-source-date-epoch)
+  (define (epoch? s) (and s (regexp-match? #px"^[0-9]+$" s)))
+  (define preset (getenv "SOURCE_DATE_EPOCH"))
+  (cond
+    [(epoch? preset) preset]
+    [else
+     (define out
+       (with-output-to-string
+         (lambda ()
+           (parameterize ([current-error-port (open-output-nowhere)])
+             (system* (find-executable-path "git")
+                      "-C" BEEATLAS "log" "-1" "--format=%ct")))))
+     (define trimmed (string-trim out))
+     (if (epoch? trimmed)
+         trimmed
+         (error 'beeatlas-source-date-epoch
+                "could not read git committer date for ~a" BEEATLAS))]))
 
 (define beeatlas-runtimes
   (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14")
@@ -93,7 +123,9 @@
 ;; them until they are modelled.
 (define export-dir-files
   '(occurrences.db species.json collectors.json
+    collectors.events.json collector_event_pages.json
     places.json places.geojson place_details.json
+    counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
     seasonality.json photos.json species_hosts.json higher_taxa.json))
 
 ;; raw/fetched inputs at fixed paths under DATA.
@@ -207,7 +239,14 @@
    (make-artifact 'dedup-verified           'token)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
-   (make-artifact 'region-topology-clean        'file)
+   ;; topology-postprocess reads each raw region mart @export copy and writes a
+   ;; distinctly-named cleaned sibling (beeatlas-hyq made this non-in-place): the
+   ;; raw <name>.geojson stays dbt-build's/place-marts' output, .clean.geojson is
+   ;; topology's — one producer per artifact. Replaces the old fictional
+   ;; single-output `region-topology-clean' placeholder (st-4cm slice 4).
+   (make-artifact 'counties.clean.geojson       'file)
+   (make-artifact 'ecoregions.clean.geojson     'file)
+   (make-artifact 'wilderness.clean.geojson     'file)
    (make-artifact 'species.json                 'file)
    ;; species_export writes SIX files in one invocation; species.json is the
    ;; headline target but these four are equally real outputs (the edge-verify
@@ -224,6 +263,11 @@
    ;; collectors.json), modelled so the node's third output has a producer (st-4cm).
    (make-artifact 'place_details.json           'file)
    (make-artifact 'collectors.json              'file)
+   ;; collectors-events-export reads base collectors.json read-only and writes the
+   ;; event-enriched array to a DISTINCT collectors.events.json (beeatlas-hyq); the
+   ;; base collectors.json stays collectors-export's sole output. collector_event_
+   ;; pages.json is the compact sub-page sidecar written by the same invocation.
+   (make-artifact 'collectors.events.json       'file)
    (make-artifact 'collector_event_pages.json   'file)
    ;; notes is beeatlas's one authoritative artifact (data/artifacts.toml) —
    ;; forward-only, never rebuilt from scratch. It's a pruned sibling here, so the
@@ -338,9 +382,20 @@
    (make-task 'dedup-gate 'gate
               #:inputs '(dedup_candidates.csv) #:outputs '(dedup-verified)
               #:invoke (py "checklist_dedup" "check_dedup_gate"))
+   ;; topology_postprocess reads the raw region marts from EXPORT_DIR (the @export
+   ;; copies place-marts drops there — Pitfall 5, same as the other post-dbt
+   ;; exporters), NOT the sandbox originals; the modeled edge read the sandbox marts
+   ;; until this was exercised (st-4cm slice 4). One mapshaper pass per layer writes
+   ;; a distinct <name>.clean.geojson sibling (beeatlas-hyq: no longer in place).
+   ;; EDGE VERIFIED and determinism-clean: all 3 outputs are byte-identical across
+   ;; runs. _meta.built_at now reads the ADR-0004 SOURCE_DATE_EPOCH clock stelis
+   ;; injects (beeatlas-8td SITE 1, beeatlas d9ff9e26), and the geometry was already
+   ;; stable — so two stelis runs of this task reproduce identical bytes.
    (make-task 'topology-postprocess 'transform
-              #:inputs '(counties.geojson ecoregions.geojson wilderness.geojson)
-              #:outputs '(region-topology-clean)
+              #:inputs '(counties.geojson@export ecoregions.geojson@export
+                         wilderness.geojson@export)
+              #:outputs '(counties.clean.geojson ecoregions.clean.geojson
+                          wilderness.clean.geojson)
               #:invoke (py "topology_postprocess" "main"))
    ;; species_export.main reads FOUR dbt-mart parquets from the sandbox and
    ;; writes species.json (among others) to EXPORT_DIR. occurrences.parquet is a
@@ -384,8 +439,20 @@
               #:inputs '(occurrences.parquet@export species.parquet@export)
               #:outputs '(collectors.json)
               #:invoke (py "collectors_export" "export_collectors_step"))
+   ;; collectors_events_export reads base collectors.json (read-only) for the
+   ;; records to enrich, occurrences.parquet@export for the event query, and
+   ;; species.json + higher_taxa.json for slug resolution (all from EXPORT_DIR).
+   ;; The declared edge had only collectors.json + collector_event_pages.json until
+   ;; slice 4 exercised it; the enriched output is now the distinct collectors.
+   ;; events.json (beeatlas-hyq), with collector_event_pages.json its sidecar.
+   ;; (occurrence_synonyms.csv is a fixed dbt seed, not a graph artifact.)
+   ;; EDGE VERIFIED and determinism-clean: both outputs are byte-identical across
+   ;; runs after beeatlas-8td SITE 2 (0a025ff4) gave the event query a total-order
+   ;; tiebreak (was reordering tied first_page_events rows under DuckDB parallelism).
    (make-task 'collectors-events-export 'transform
-              #:inputs '(collectors.json) #:outputs '(collector_event_pages.json)
+              #:inputs '(collectors.json occurrences.parquet@export
+                         species.json higher_taxa.json)
+              #:outputs '(collectors.events.json collector_event_pages.json)
               #:invoke (py "collectors_events_export" "export_collectors_events_step"))
    (make-task 'notes-harvest 'transform
               #:inputs '(collectors.json) #:outputs '(notes.json)

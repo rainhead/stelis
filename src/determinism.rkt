@@ -22,10 +22,19 @@
 (define (file-sha1 path) (call-with-input-file path sha1))
 
 ;; verify-determinism : graph symbol (hash symbol->runtime)
-;;   #:from (or/c symbol #f) #:out-file string -> boolean
-;; Returns #t iff both builds produce a byte-identical target file.
+;;   #:from (or/c symbol #f) #:extra-env (listof (cons string string))
+;;   #:seed (listof (cons path-string string)) #:out-file string -> boolean
+;; Returns #t iff both builds produce a byte-identical target file. `extra-env'
+;; is injected into BOTH builds' task env (e.g. the ADR-0004 SOURCE_DATE_EPOCH
+;; clock) — it must be constant across the two builds or the harness is moot.
+;; `seed' is (src . basename) pairs copied into each fresh build dir BEFORE the
+;; build: for a --from suffix (st-dtq), these are the suffix's external @export
+;; inputs its scripts read from EXPORT_DIR, held fixed so the harness measures the
+;; suffix's own determinism given identical upstream bytes.
 (define (verify-determinism g target runtimes
                             #:from [from #f]
+                            #:extra-env [extra-env '()]
+                            #:seed [seed '()]
                             #:out-file [out-file "occurrences.db"])
   (define-values (ordered _pruned) (plan g target))
   (define to-run
@@ -37,7 +46,10 @@
   (define (build! label)
     (define dir (make-temporary-directory))
     (printf "\n═══ build ~a → ~a ═══\n" label dir)
-    (run-plan g to-run runtimes #:env (list (cons "EXPORT_DIR" (path->string dir))))
+    (for ([s (in-list seed)])
+      (copy-file (car s) (build-path dir (cdr s)) #t))
+    (run-plan g to-run runtimes
+              #:env (cons (cons "EXPORT_DIR" (path->string dir)) extra-env))
     (build-path dir out-file))
 
   (define f1 (build! 1))

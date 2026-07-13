@@ -16,6 +16,7 @@
          racket/set
          racket/list
          racket/file
+         racket/path
          racket/string
          "model.rkt"
          "beeatlas.rkt"
@@ -75,6 +76,39 @@
 (define benv (make-build-env beeatlas-path (scratch-out-path) stelis-cache
                              #:resolve-relation beeatlas-resolve-relation))
 
+;; ADR 0004 (st-3mi): the deterministic build clock injected into every executed
+;; task's hermetic env, so outputs that stamp a build time stay byte-stable.
+;; Computed per exec (not at top level) so pure planning modes never shell git.
+(define (task-env out)
+  (list (cons "EXPORT_DIR" (path->string out))
+        (cons "SOURCE_DATE_EPOCH" (beeatlas-source-date-epoch))))
+
+;; verify-seeds (st-dtq): the (src . basename) files to copy into a --verify
+;; suffix's fresh build dir. The suffix's EXTERNAL input artifacts — those not
+;; produced by any task in the suffix — resolved in `ref-dir' (a populated
+;; EXPORT_DIR) and existing on disk. Post-dbt exporters read all their file inputs
+;; from EXPORT_DIR (Pitfall 5), so seeding by basename lands them where the fresh
+;; build's scripts look; inputs at fixed absolute paths (sandbox marts, raw files)
+;; resolve outside ref-dir and are read in place, so they need no seeding.
+(define (verify-seeds g to-run ref-dir)
+  (define in-suffix (list->set to-run))
+  (define produced
+    (for*/set ([t (in-list to-run)]
+               [o (in-list (task-outputs (hash-ref (graph-tasks g) t)))])
+      o))
+  (define externals
+    (remove-duplicates
+     (for*/list ([t (in-list to-run)]
+                 [i (in-list (task-inputs (hash-ref (graph-tasks g) t)))]
+                 #:unless (set-member? produced i))
+       i)))
+  (for*/list ([a (in-list externals)]
+              [p (in-value (beeatlas-path a ref-dir))]
+              #:when (and (path? p) (file-exists? p)
+                          ;; only EXPORT_DIR-relative inputs need seeding
+                          (equal? (path-only p) (path->directory-path ref-dir))))
+    (cons p (path->string (file-name-from-path p)))))
+
 ;; Restrict a plan to the suffix beginning at --from, when given. Used by both
 ;; --build (what runs) and --commands (what the dry run previews), so the preview
 ;; always mirrors the execution scope.
@@ -128,7 +162,7 @@
    (define out (scratch-out))
    (printf "Running ~a  (EXPORT_DIR=~a)\n" name out)
    (define code (run-task beeatlas-graph name beeatlas-runtimes
-                          #:env (list (cons "EXPORT_DIR" (path->string out)))))
+                          #:env (task-env out)))
    (printf "\n~a ~a — exit ~a\n" (if (zero? code) "✓" "✗") name code)
    (define db (build-path out "occurrences.db"))
    (when (and (eq? name 'generate-sqlite) (file-exists? db))
@@ -148,7 +182,7 @@
            out)
    (define-values (status records)
      (run-plan beeatlas-graph to-run beeatlas-runtimes
-               #:env (list (cons "EXPORT_DIR" (path->string out)))
+               #:env (task-env out)
                #:context benv))
    (trace-store! stelis-state name records)
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
@@ -162,10 +196,28 @@
   [(eq? (mode) 'verify)
    ;; st-6qc: same guard as --build — the plan verify will run must have
    ;; verifiable file outputs.
-   (let-values ([(ordered _pruned) (plan beeatlas-graph name)])
-     (check-file-outputs-resolvable beeatlas-graph (plan-suffix ordered) benv))
+   (define-values (ordered _pruned) (plan beeatlas-graph name))
+   (define to-run (plan-suffix ordered))
+   (check-file-outputs-resolvable beeatlas-graph to-run benv)
+   ;; st-dtq (1): compare the TARGET's on-disk file, not a hardcoded occurrences.db.
+   ;; The basename is stable across export-dirs, so any resolvable dir gives it.
+   (define target-path (beeatlas-path name (scratch-out-path)))
+   (unless (path? target-path)
+     (error 'stelis "--verify ~a: target has no resolvable file to compare" name))
+   (define out-file (path->string (file-name-from-path target-path)))
+   ;; st-dtq (2): a --from suffix builds into a fresh dir that lacks the @export
+   ;; inputs its scripts read from EXPORT_DIR. Seed each build with the suffix's
+   ;; EXTERNAL inputs (produced outside the suffix), taken from the populated
+   ;; scratch dir a prior --build/--run left behind — holding upstream fixed so we
+   ;; measure the suffix's own determinism. (Full-plan --verify needs no seeding.)
+   (define seed (verify-seeds beeatlas-graph to-run (scratch-out-path)))
    (exit (if (verify-determinism beeatlas-graph name beeatlas-runtimes
-                                 #:from (from-task))
+                                 #:from (from-task)
+                                 #:seed seed
+                                 #:out-file out-file
+                                 #:extra-env
+                                 (list (cons "SOURCE_DATE_EPOCH"
+                                             (beeatlas-source-date-epoch))))
              0 1))]
 
   ;; --- why is NAME stale? (a task or an artifact) -------------------------

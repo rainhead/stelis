@@ -151,7 +151,52 @@
               '(places.geojson places.json place_details.json)
               "one places_export invocation produces all three outputs")
 
-;; 11. Fail-loud guard (st-6qc). A 'file output that resolves to #f drops silently
+;; 11. topology-postprocess + collectors-events-export terminals (st-4cm slice 4).
+;;     Both were fictional edges until built+verified; beeatlas-hyq made them write
+;;     DISTINCT outputs (no sibling-file mutation), so each is a single-file export
+;;     with one producer. Pin the corrected edges and their cones.
+;;
+;;     topology reads the three region marts' @export copies (Pitfall 5, not the
+;;     sandbox originals) and writes three .clean.geojson siblings; its cone is just
+;;     dbt-build -> place-marts -> topology, and it pulls in NEITHER species-export
+;;     nor the occurrences.db producer.
+(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'topology-postprocess))
+              '(counties.geojson@export ecoregions.geojson@export wilderness.geojson@export)
+              "topology reads the @export mart copies, not the sandbox originals")
+(check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'topology-postprocess))
+              '(counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson)
+              "topology writes a distinct .clean.geojson per layer (no in-place rewrite)")
+(let-values ([(tp-ordered _p) (plan beeatlas-graph 'counties.clean.geojson)])
+  (define pos (for/hash ([n (in-list tp-ordered)] [i (in-naturals)]) (values n i)))
+  (for ([t '(dbt-build place-marts topology-postprocess)])
+    (check-not-false (memq t tp-ordered) (~a t " is in counties.clean.geojson's plan")))
+  (check-true (< (hash-ref pos 'place-marts) (hash-ref pos 'topology-postprocess))
+              "place-marts (the @export copies) runs before topology")
+  (check-false (memq 'species-export tp-ordered)
+               "topology's cone does NOT pull in species-export")
+  (check-false (memq 'generate-sqlite tp-ordered)
+               "topology's cone does NOT pull in the occurrences.db producer"))
+
+;;     collectors-events extends the base collectors.json's records into a DISTINCT
+;;     collectors.events.json (+ its sidecar), reading occurrences.parquet@export and
+;;     the species/higher-taxa JSON for slug resolution; its cone adds collectors-
+;;     export and species-export on top of place-marts.
+(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-events-export))
+              '(collectors.json occurrences.parquet@export species.json higher_taxa.json)
+              "collectors-events reads base collectors.json + @export occ + slug JSON")
+(check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-events-export))
+              '(collectors.events.json collector_event_pages.json)
+              "collectors-events writes a distinct enriched file, not collectors.json in place")
+(let-values ([(ce-ordered _p) (plan beeatlas-graph 'collectors.events.json)])
+  (define pos (for/hash ([n (in-list ce-ordered)] [i (in-naturals)]) (values n i)))
+  (for ([t '(dbt-build place-marts species-export collectors-export collectors-events-export)])
+    (check-not-false (memq t ce-ordered) (~a t " is in collectors.events.json's plan")))
+  (check-true (< (hash-ref pos 'collectors-export) (hash-ref pos 'collectors-events-export))
+              "collectors-export (the base collectors.json) runs before the events step")
+  (check-false (memq 'generate-sqlite ce-ordered)
+               "collectors.events.json does NOT pull in the occurrences.db producer"))
+
+;; 12. Fail-loud guard (st-6qc). A 'file output that resolves to #f drops silently
 ;;     out of env-output-paths (never verified, never hashed); the guard turns that
 ;;     into a hard error. A built+verified target's whole plan resolves; an
 ;;     unwired terminal (feeds — no beeatlas-path entry yet) raises, naming it.
@@ -166,3 +211,22 @@
    #rx"unresolvable file output"
    (lambda () (check-file-outputs-resolvable beeatlas-graph feeds-ordered guard-env))
    "an unwired terminal (feeds) is rejected loudly, not skipped"))
+;; slice-4 terminals must have EVERY output resolvable, incl. the multi-output
+;; siblings (topology's 3 .clean.geojson; collectors-events' enriched file AND its
+;; collector_event_pages.json sidecar — the latter was missing from the resolver
+;; until --verify's st-6qc guard surfaced it, st-dtq).
+(for ([tgt '(counties.clean.geojson collectors.events.json)])
+  (let-values ([(ordered _p) (plan beeatlas-graph tgt)])
+    (check-not-exn
+     (lambda () (check-file-outputs-resolvable beeatlas-graph ordered guard-env))
+     (~a tgt "'s plan has no unresolvable file outputs"))))
+
+;; 13. ADR 0004 build clock (st-3mi): the SOURCE_DATE_EPOCH the executor injects
+;;     into every task must be a deterministic function of the source snapshot —
+;;     numeric and STABLE across calls, or --verify's build-twice compare is moot.
+;;     (Injection into the subprocess env is exercised by the exec path; here we
+;;     pin the value's shape and stability.)
+(let ([e1 (beeatlas-source-date-epoch)]
+      [e2 (beeatlas-source-date-epoch)])
+  (check-true (regexp-match? #px"^[0-9]+$" e1) "build clock is a numeric epoch")
+  (check-equal? e1 e2 "build clock is stable across calls (deterministic)"))
