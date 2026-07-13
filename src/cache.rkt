@@ -18,7 +18,8 @@
          racket/set
          racket/format
          racket/string
-         "model.rkt")
+         "model.rkt"
+         "tree-digest.rkt")
 
 (provide (struct-out decision)
          (struct-out snapshot)
@@ -27,7 +28,7 @@
          make-build-env
          env-resolve
          env-output-paths
-         check-file-outputs-resolvable
+         check-output-paths-resolvable
          input-snapshot
          output-snapshot
          compare-outputs
@@ -108,26 +109,26 @@
 (define (env-output-paths env t)
   (filter values (map (lambda (o) (env-resolve env o)) (task-outputs t))))
 
-;; check-file-outputs-resolvable : graph (listof symbol) build-env? -> void
-;; Guard (st-6qc): every 'file output produced by a task in `tasks' must resolve to
-;; a path under `env'. A #f path for a 'file output is a modeling gap — it silently
-;; drops out of env-output-paths, so the artifact is never checked for presence nor
-;; hashed for cutoff, and the task can "succeed"/cache without its output verified.
-;; Tokens, db-relations, and externals have no single file and are exempt. Raise
-;; (naming task → artifact) instead of letting the gap pass quietly.
-(define (check-file-outputs-resolvable g tasks env)
+;; check-output-paths-resolvable : graph (listof symbol) build-env? -> void
+;; Guard (st-6qc): every 'file or 'dir output produced by a task in `tasks' must
+;; resolve to a path under `env'. A #f path for such an output is a modeling gap —
+;; it silently drops out of env-output-paths, so the artifact is never checked for
+;; presence nor hashed for cutoff, and the task can "succeed"/cache without its
+;; output verified. Tokens, db-relations, and externals have no single path and are
+;; exempt. Raise (naming task → artifact) instead of letting the gap pass quietly.
+(define (check-output-paths-resolvable g tasks env)
   (define offenders
     (for*/list ([name (in-list tasks)]
                 [t (in-value (hash-ref (graph-tasks g) name))]
                 [o (in-list (task-outputs t))]
                 #:when (let ([a (hash-ref (graph-artifacts g) o #f)])
-                         (and a (eq? (artifact-kind a) 'file)
+                         (and a (memq (artifact-kind a) '(file dir))
                               (not (env-resolve env o)))))
       (format "  ~a → ~a" name o)))
   (unless (null? offenders)
     (error 'stelis
            (string-append
-            "unresolvable file output(s) — the path resolver returns #f, so they "
+            "unresolvable file/dir output(s) — the path resolver returns #f, so they "
             "would be built but never verified. Add them to the resolver:\n"
             (string-join offenders "\n")))))
 
@@ -158,12 +159,17 @@
 
 ;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)
 ;;              -> (or/c string #f)
-;; One input's content hash, by artifact kind, or #f if not content-addressable.
+;; One input's content hash, by artifact kind, or #f if not content-addressable:
+;; a file by its bytes; a dir by its order-independent tree digest (st-cly); a
+;; db-relation by `resolve-relation'. #f (absent/unresolvable) forces a rerun.
 (define (input-hash g in resolve resolve-relation)
   (define a (hash-ref (graph-artifacts g) in #f))
   (cond
     [(and a (eq? (artifact-kind a) 'db-relation))
      (and resolve-relation (resolve-relation in))]
+    [(and a (eq? (artifact-kind a) 'dir))
+     (define p (resolve in))
+     (and p (tree-digest p))]
     [else
      (define p (resolve in))
      (and p (file-exists? p) (file-sha1 p))]))
@@ -173,8 +179,9 @@
 ;; DERIVED artifacts that resolve to an existing file, as a sorted alist.
 ;; Authoritative outputs are excluded — cutoff applies only to derived state
 ;; (forward-only writes are effects; "rebuilt to identical bytes" is not a
-;; claim we make about them). Tokens/relations have no file to hash and drop
-;; out, so a task like dbt-build is judged on the outputs we CAN verify.
+;; claim we make about them). A 'dir output is hashed by its tree digest (st-cly),
+;; a 'file by its bytes; tokens/relations have no path to hash and drop out, so a
+;; task like dbt-build is judged on the outputs we CAN verify.
 (define (output-snapshot g name env)
   (define t (hash-ref (graph-tasks g) name))
   (sort
@@ -182,8 +189,11 @@
                [a (in-value (hash-ref (graph-artifacts g) out #f))]
                #:when (and a (eq? 'derived (artifact-provenance a)))
                [p (in-value (env-resolve env out))]
-               #:when (and p (file-exists? p)))
-     (cons out (file-sha1 p)))
+               [h (in-value (and p (if (eq? (artifact-kind a) 'dir)
+                                       (tree-digest p)
+                                       (and (file-exists? p) (file-sha1 p)))))]
+               #:when h)
+     (cons out h))
    symbol<? #:key car))
 
 ;; compare-outputs : (or/c hash? #f) (listof (cons symbol string))
@@ -295,5 +305,9 @@
   (eq? 'skip (decision-verdict
               (decide snap (read-cache-entry cache-dir name) (missing output-paths)))))
 
+;; a recorded output is present if it exists as a file OR a directory ('dir
+;; outputs, st-cly, resolve to a directory that file-exists? would miss).
 (define (missing output-paths)
-  (for/list ([p (in-list output-paths)] #:unless (file-exists? p)) p))
+  (for/list ([p (in-list output-paths)]
+             #:unless (or (file-exists? p) (directory-exists? p)))
+    p))

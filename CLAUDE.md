@@ -50,6 +50,11 @@ recipes, and the runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions +
 early-cutoff output receipts · [`relation-digest.rkt`](src/relation-digest.rkt)
 content-addresses db-relation inputs via a DuckDB order-independent digest ·
+[`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
+order-independent digest over its sorted (relative-path → content-hash) tree ·
+[`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
+its files ⊆ the keys of a declared input relation (soundness gated, completeness
+reported) ·
 [`trace.rkt`](src/trace.rkt) the last-build trace ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules ·

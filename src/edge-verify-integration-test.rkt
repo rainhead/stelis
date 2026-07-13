@@ -15,15 +15,21 @@
          "beeatlas.rkt"
          "edge-verify.rkt")
 
-;; the four shipped terminals whose edges have been built+verified (st-h4m, st-4cm)
-(define TERMINALS '(generate-sqlite species-export collectors-export places-export))
+;; the shipped terminals whose edges have been built+verified (st-h4m, st-4cm).
+;; species-maps and feeds joined when st-4cm corrected their edges: species-maps
+;; reads three @export parquets (not species.json); feeds reads the ecdysis_data
+;; db-relation ambiently (no @export input, so nothing to seed).
+(define TERMINALS '(generate-sqlite species-export collectors-export places-export
+                    species-maps places-maps feeds))
 
 ;; reference = the scratch out-dir a prior --build populates with @export copies
 (define reference (build-path (find-system-path 'temp-dir) "stelis-out"))
 
-;; the EXPORT_DIR inputs the terminals need seeded (by basename)
+;; the EXPORT_DIR inputs the terminals need seeded (by basename); checklist.parquet
+;; joined for species-maps' per-species checklist counties.
 (define REQUIRED-SEEDS
-  '("occurrences.parquet" "occurrence_places.parquet" "species.parquet"))
+  '("occurrences.parquet" "occurrence_places.parquet" "species.parquet"
+    "checklist.parquet"))
 
 (define (reference-usable?)
   (and (file-exists? beeatlas-db)          ; beeatlas checkout present

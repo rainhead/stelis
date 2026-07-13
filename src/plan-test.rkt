@@ -196,30 +196,33 @@
   (check-false (memq 'generate-sqlite ce-ordered)
                "collectors.events.json does NOT pull in the occurrences.db producer"))
 
-;; 12. Fail-loud guard (st-6qc). A 'file output that resolves to #f drops silently
-;;     out of env-output-paths (never verified, never hashed); the guard turns that
-;;     into a hard error. A built+verified target's whole plan resolves; an
-;;     unwired terminal (feeds — no beeatlas-path entry yet) raises, naming it.
+;; 12. Fail-loud guard (st-6qc). A 'file or 'dir output that resolves to #f drops
+;;     silently out of env-output-paths (never verified, never hashed); the guard
+;;     turns that into a hard error. A built+verified target's whole plan resolves;
+;;     an unwired terminal (dedup_candidates.csv — no beeatlas-path entry yet)
+;;     raises, naming it.
 (define guard-env (make-build-env beeatlas-path (build-path "/tmp/guard-out")
                                   (build-path "/tmp/guard-cache")))
 (let-values ([(pl-ordered _p) (plan beeatlas-graph 'places.json)])
   (check-not-exn
-   (lambda () (check-file-outputs-resolvable beeatlas-graph pl-ordered guard-env))
+   (lambda () (check-output-paths-resolvable beeatlas-graph pl-ordered guard-env))
    "places.json's plan has no unresolvable file outputs"))
-(let-values ([(feeds-ordered _p) (plan beeatlas-graph 'feeds)])
+(let-values ([(dc-ordered _p) (plan beeatlas-graph 'dedup_candidates.csv)])
   (check-exn
-   #rx"unresolvable file output"
-   (lambda () (check-file-outputs-resolvable beeatlas-graph feeds-ordered guard-env))
-   "an unwired terminal (feeds) is rejected loudly, not skipped"))
+   #rx"unresolvable file/dir output"
+   (lambda () (check-output-paths-resolvable beeatlas-graph dc-ordered guard-env))
+   "an unwired terminal (dedup_candidates.csv) is rejected loudly, not skipped"))
 ;; slice-4 terminals must have EVERY output resolvable, incl. the multi-output
 ;; siblings (topology's 3 .clean.geojson; collectors-events' enriched file AND its
 ;; collector_event_pages.json sidecar — the latter was missing from the resolver
-;; until --verify's st-6qc guard surfaced it, st-dtq).
-(for ([tgt '(counties.clean.geojson collectors.events.json)])
+;; until --verify's st-6qc guard surfaced it, st-dtq). The 'dir terminals (st-cly)
+;; now resolve too: species-maps/place-maps/feeds each land as a directory.
+(for ([tgt '(counties.clean.geojson collectors.events.json
+             species-maps place-maps feeds)])
   (let-values ([(ordered _p) (plan beeatlas-graph tgt)])
     (check-not-exn
-     (lambda () (check-file-outputs-resolvable beeatlas-graph ordered guard-env))
-     (~a tgt "'s plan has no unresolvable file outputs"))))
+     (lambda () (check-output-paths-resolvable beeatlas-graph ordered guard-env))
+     (~a tgt "'s plan has no unresolvable file/dir outputs"))))
 
 ;; 13. ADR 0004 build clock (st-3mi): the SOURCE_DATE_EPOCH the executor injects
 ;;     into every task must be a deterministic function of the source snapshot —

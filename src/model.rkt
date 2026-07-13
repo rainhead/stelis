@@ -26,11 +26,17 @@
 
 ;; An artifact node: a logical dataset.
 ;;   name        : symbol
-;;   kind        : 'file | 'db-relation | 'external | 'token
+;;   kind        : 'file | 'dir | 'db-relation | 'external | 'token
+;;                 'dir is a directory TREE — a data-dependent output SET, content-
+;;                 addressed by an order-independent tree digest (tree-digest.rkt)
 ;;   fingerprint : content/version fingerprint; #f until computed (see cache.rkt)
 ;;   provenance  : 'derived (safe to destroy and rebuild) | 'authoritative
 ;;                 (forward-only; never rebuilt from scratch — migrations only)
-(struct artifact (name kind fingerprint provenance) #:transparent)
+;;   keyed-by    : #f, or (for a 'dir) a list of fan-out branches declaring the
+;;                 directory's files are keyed by a column of a named input
+;;                 relation (st-tul). Opaque here — interpreted by fan-out-key.rkt;
+;;                 it lets the SET be verified, not just the tree hashed.
+(struct artifact (name kind fingerprint provenance keyed-by) #:transparent)
 
 ;; A task node.
 ;;   name    : symbol  (matches the run.py step name)
@@ -44,8 +50,9 @@
 ;; authored graph reads cleanly.
 (define (make-artifact name kind
                        #:fingerprint [fingerprint #f]
-                       #:provenance [provenance 'derived])
-  (artifact name kind fingerprint provenance))
+                       #:provenance [provenance 'derived]
+                       #:keyed-by [keyed-by #f])
+  (artifact name kind fingerprint provenance keyed-by))
 
 (define (make-task name kind
                    #:inputs [inputs '()]

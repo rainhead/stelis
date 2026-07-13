@@ -151,4 +151,43 @@
               (decision 'run 'no-cache-entry '())
               "other-version entry reads as no entry")
 
+;; --- a 'dir output: content-addressed as a whole tree (st-cly) ----------------
+;; A task producing a directory artifact caches on the tree digest: present +
+;; unchanged -> skip; a file changed anywhere inside -> run; the whole dir gone ->
+;; run (output-missing sees the directory, not a file).
+(define dir-out (build-path tmp "maps"))
+(make-directory dir-out)
+(display-to-file "svg-a" (build-path dir-out "a.svg"))
+(define (dir-resolve a) (case a [(raw) raw-path] [(maps) dir-out] [else #f]))
+(define dir-env (make-build-env (lambda (a _e) (dir-resolve a)) tmp cache-dir))
+(define gdir
+  (build-graph
+   (list (make-task 'ingest 'boundary #:outputs '(raw))
+         (make-task 'render 'transform #:inputs '(raw) #:outputs '(maps)
+                    #:invoke "v1"))
+   (list (make-artifact 'raw 'file) (make-artifact 'maps 'dir))))
+
+(check-equal? (map car (output-snapshot gdir 'render dir-env)) '(maps)
+              "a derived, resolvable, existing 'dir output is hashed")
+
+(define snap-dir (input-snapshot gdir 'render dir-resolve))
+(cache-store! cache-dir 'render snap-dir (list dir-out)
+              (output-snapshot gdir 'render dir-env))
+(check-equal? (task-decision gdir 'render dir-env)
+              (decision 'skip 'cached '())
+              "stored + dir present + inputs unchanged -> cached")
+
+;; add a file inside the directory: the tree digest changes, cutoff would fire
+(display-to-file "svg-b" (build-path dir-out "b.svg"))
+(check-equal? (compare-outputs (read-cache-entry cache-dir 'render)
+                               (output-snapshot gdir 'render dir-env))
+              (output-delta 'changed '(maps))
+              "a new file inside the dir changes its tree digest")
+
+;; lose the whole directory: output-missing names the dir path, not a file
+(delete-directory/files dir-out)
+(check-equal? (task-decision gdir 'render dir-env)
+              (decision 'run 'output-missing (list dir-out))
+              "a 'dir output gone entirely -> run, output-missing")
+
 (delete-directory/files tmp)

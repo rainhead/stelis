@@ -23,6 +23,11 @@
 ;; (classify-outputs) is unit-tested in edge-verify-test.rkt; the integration
 ;; driver (verify-edges) is run against the shipped terminals when a reference
 ;; EXPORT_DIR is available.
+;;
+;; This harness checks a 'dir output only as one appeared basename ("the directory
+;; exists"). Verifying the SET *inside* a keyed 'dir — its files ⊆ the keys of a
+;; declared input relation — is fan-out-key.rkt (st-tul), driven the same way
+;; against a reference build.
 
 (require racket/file
          racket/path

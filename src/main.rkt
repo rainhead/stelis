@@ -173,8 +173,8 @@
   [(eq? (mode) 'build)
    (define-values (ordered pruned) (plan beeatlas-graph name))
    (define to-run (plan-suffix ordered))
-   ;; st-6qc: refuse to build a plan whose 'file outputs can't be verified.
-   (check-file-outputs-resolvable beeatlas-graph to-run benv)
+   ;; st-6qc: refuse to build a plan whose file/dir outputs can't be verified.
+   (check-output-paths-resolvable beeatlas-graph to-run benv)
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            name (length to-run)
@@ -195,15 +195,16 @@
   ;; --- determinism: build twice, compare hashes --------------------------
   [(eq? (mode) 'verify)
    ;; st-6qc: same guard as --build — the plan verify will run must have
-   ;; verifiable file outputs.
+   ;; verifiable file/dir outputs.
    (define-values (ordered _pruned) (plan beeatlas-graph name))
    (define to-run (plan-suffix ordered))
-   (check-file-outputs-resolvable beeatlas-graph to-run benv)
-   ;; st-dtq (1): compare the TARGET's on-disk file, not a hardcoded occurrences.db.
-   ;; The basename is stable across export-dirs, so any resolvable dir gives it.
+   (check-output-paths-resolvable beeatlas-graph to-run benv)
+   ;; st-dtq (1): compare the TARGET's on-disk file/dir, not a hardcoded
+   ;; occurrences.db. The basename is stable across export-dirs, so any resolvable
+   ;; target (a file, or a 'dir tree — st-cly) gives it.
    (define target-path (beeatlas-path name (scratch-out-path)))
    (unless (path? target-path)
-     (error 'stelis "--verify ~a: target has no resolvable file to compare" name))
+     (error 'stelis "--verify ~a: target has no resolvable path to compare" name))
    (define out-file (path->string (file-name-from-path target-path)))
    ;; st-dtq (2): a --from suffix builds into a fresh dir that lacks the @export
    ;; inputs its scripts read from EXPORT_DIR. Seed each build with the suffix's

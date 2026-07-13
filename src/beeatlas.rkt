@@ -37,7 +37,8 @@
          racket/port
          "model.rkt"
          "exec.rkt"
-         "relation-digest.rkt")
+         "relation-digest.rkt"
+         "fan-out-key.rkt")
 
 (provide beeatlas-graph
          beeatlas-runtimes
@@ -117,10 +118,7 @@
 
 ;; Single-file terminal exports that land in the build's EXPORT_DIR (species_export
 ;; etc. write ASSETS_DIR := EXPORT_DIR). Explicit on purpose: being listed here
-;; means "a built+verified single-file export target." Directory outputs
-;; (species-maps, place-maps, feeds) are deliberately NOT here — their shape is an
-;; open decision, so they stay unresolvable and the st-6qc guard refuses to build
-;; them until they are modelled.
+;; means "a built+verified single-file export target."
 (define export-dir-files
   '(occurrences.db species.json collectors.json
     collectors.events.json collector_event_pages.json
@@ -128,13 +126,20 @@
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
     seasonality.json photos.json species_hosts.json higher_taxa.json))
 
+;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
+;; land as a directory of per-entity files under EXPORT_DIR — species_maps writes
+;; EXPORT_DIR/species-maps/, places_maps EXPORT_DIR/place-maps/, feeds EXPORT_DIR/
+;; feeds/. The directory name is the artifact name. Content-addressed as a whole by
+;; an order-independent tree digest (tree-digest.rkt); SET completeness is st-tul.
+(define export-dir-dirs '(species-maps place-maps feeds))
+
 ;; raw/fetched inputs at fixed paths under DATA.
 (define raw-file-paths (hash 'taxa.csv.gz (build-path DATA "raw" "taxa.csv.gz")))
 
-;; Where beeatlas's file artifacts physically live — the resolver caching uses to
-;; content-hash inputs and to place/verify outputs. #f for artifacts with no known
-;; single file (duckdb relations, tokens, externals, and not-yet-modelled directory
-;; outputs): those aren't content-hashed in Horizon 0.
+;; Where beeatlas's file/dir artifacts physically live — the resolver caching uses
+;; to content-hash inputs and to place/verify outputs. #f for artifacts with no
+;; known path (duckdb relations, tokens, externals): those aren't content-hashed
+;; here. 'dir outputs resolve to a directory under export-dir (st-cly).
 (define SANDBOX (string-append DATA "/dbt/target/sandbox"))
 (define (beeatlas-path artifact export-dir)
   (define s (~a artifact))
@@ -146,6 +151,8 @@
     [(regexp-match #rx"^(.+)@export$" s)
      => (lambda (m) (build-path export-dir (cadr m)))]
     [(memq artifact export-dir-files) (build-path export-dir s)]
+    ;; 'dir outputs: a directory named for the artifact, directly under export-dir.
+    [(memq artifact export-dir-dirs) (build-path export-dir s)]
     [else #f]))
 
 ;; --- db-relation content-addressing (st-d5d) --------------------------------
@@ -186,6 +193,8 @@
     [(taxon_lineage_extended) '("inaturalist_data.taxon_lineage_extended")]
     [(host_plant_lineage)     '("inaturalist_data.host_plant_lineage")]
     [(geographies_places)     '("geographies.places")]
+    ;; county GEOMETRY species_maps reads straight from the duckdb (st-4cm edge fix)
+    [(geographies_us_counties) '("geographies.us_counties")]
     [else #f]))
 
 ;; beeatlas-resolve-relation : symbol -> (or/c string #f)
@@ -230,6 +239,7 @@
    (make-artifact 'taxon_lineage_extended   'db-relation)
    (make-artifact 'host_plant_lineage       'db-relation)
    (make-artifact 'geographies_places       'db-relation)
+   (make-artifact 'geographies_us_counties  'db-relation) ; county geometry (st-4cm)
    (make-artifact 'geographies              'external)
    (make-artifact 'anti-entropy-applied     'token)
    (make-artifact 'checklist-resolution-verified 'token)
@@ -255,7 +265,7 @@
    (make-artifact 'photos.json                  'file)
    (make-artifact 'species_hosts.json           'file)
    (make-artifact 'higher_taxa.json             'file)
-   (make-artifact 'species-maps                 'file)
+   (make-artifact 'species-maps                 'dir) ; per-species SVG set (st-cly)
    (make-artifact 'places.geojson               'file)
    (make-artifact 'places.json                  'file)
    ;; heavy per-place feed (species + collection timing) written by the same
@@ -274,8 +284,13 @@
    ;; escape hatch isn't exercised on the occurrences.db path, but the model now
    ;; expresses it (addresses the derived-vs-authoritative commitment).
    (make-artifact 'notes.json                   'file #:provenance 'authoritative)
-   (make-artifact 'place-maps                   'file)
-   (make-artifact 'feeds                        'file)
+   ;; per-place SVG set (st-cly), verified as a data-dependent SET (st-tul): one
+   ;; place-maps/<slug>.svg per places.json[].slug. SOUNDNESS is gated — every map
+   ;; is a real place; the places with zero occurrences get no map (filtered), so
+   ;; those keys are reported incomplete, not failed.
+   (make-artifact 'place-maps                   'dir
+                  #:keyed-by (list (fan-out 'places.json "slug" "{}.svg")))
+   (make-artifact 'feeds                        'dir) ; per-variant Atom XML set (st-cly)
    ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
    ;; enriched species.parquet species-export writes there. Distinct artifacts
    ;; from the sandbox originals so each has exactly one producer.
@@ -414,8 +429,20 @@
               #:outputs '(species.json species.parquet@export
                           seasonality.json photos.json species_hosts.json higher_taxa.json)
               #:invoke (py "species_export" "main"))
+   ;; species_maps reads THREE EXPORT_DIR @export parquets — it never opens
+   ;; species.json, so the slice-1 edge (declaring species.json) was wrong (st-4cm):
+   ;;   species.parquet@export     enriched slug + genus/subgenus/tribe/subfamily membership
+   ;;   occurrences.parquet@export occurrence points
+   ;;   checklist.parquet@export   per-species checklist counties (degrades if absent)
+   ;; County GEOMETRY comes from the geographies.us_counties db-relation, read
+   ;; straight from the duckdb. Writes the species-maps/ directory SET (st-cly);
+   ;; still an opaque 'dir — its fan-out is multi-key incl. a composite subgenus
+   ;; (genus,subgenus), beyond the single-column st-tul model (follow-on st-5jt).
+   ;; Edge corrected + determinism-verified (identical tree digest twice) here.
    (make-task 'species-maps 'transform
-              #:inputs '(species.json) #:outputs '(species-maps)
+              #:inputs '(species.parquet@export occurrences.parquet@export
+                         checklist.parquet@export geographies_us_counties)
+              #:outputs '(species-maps)
               #:invoke (py "species_maps" "main"))
    ;; places_export reads its parquets from EXPORT_DIR (ASSETS_DIR), not the dbt
    ;; sandbox — the occurrence_places bridge, the occurrences mart (specimen/sample
@@ -457,11 +484,28 @@
    (make-task 'notes-harvest 'transform
               #:inputs '(collectors.json) #:outputs '(notes.json)
               #:invoke (py "notes_harvest" "main"))
+   ;; places_maps reads occurrences.parquet@export + the occurrence_places.parquet@
+   ;; export bridge (grouping points per place_slug) and county GEOMETRY from the
+   ;; geographies.us_counties db-relation — it never opens places.geojson, so the
+   ;; slice edge declaring it was wrong (st-4cm). The place SET it writes is a
+   ;; FILTERED subset of the bridge's slugs (places with occurrences). Its fan-out
+   ;; key (places.json[].slug, on the artifact) is verification metadata, not a data
+   ;; read, so it stays off this input list. Determinism-gated.
    (make-task 'places-maps 'transform
-              #:inputs '(places.geojson) #:outputs '(place-maps)
+              #:inputs '(occurrences.parquet@export occurrence_places.parquet@export
+                         geographies_us_counties)
+              #:outputs '(place-maps)
               #:invoke (py "places_maps" "main"))
+   ;; feeds queries the ecdysis_data db-relation (identifications JOIN occurrences)
+   ;; STRAIGHT from the duckdb and reads no @export file — so the slice-1 edge
+   ;; (occurrences.parquet + species.json) was wrong on both inputs, and feeds does
+   ;; NOT depend on dbt-build (st-4cm). Writes the feeds/ directory SET (st-cly):
+   ;; per-collector + per-genus Atom XML plus determinations.xml/index.json
+   ;; singletons — an opaque 'dir until the richer fan-out key lands (st-5jt).
+   ;; Determinism-gated: feeds.py now honors SOURCE_DATE_EPOCH for empty feeds'
+   ;; <updated> (was wall-clock), so two builds of a snapshot are byte-identical.
    (make-task 'feeds 'transform
-              #:inputs '(occurrences.parquet species.json) #:outputs '(feeds)
+              #:inputs '(ecdysis_data) #:outputs '(feeds)
               #:invoke (py "feeds" "main"))))
 
 (define beeatlas-graph (build-graph tasks (append artifacts mart-export-artifacts)))

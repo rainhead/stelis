@@ -15,11 +15,26 @@
 (require file/sha1
          racket/file
          "model.rkt"
-         "exec.rkt")
+         "exec.rkt"
+         "tree-digest.rkt")
 
 (provide verify-determinism)
 
 (define (file-sha1 path) (call-with-input-file path sha1))
+
+;; digest the built target whether it is a single file or a directory TREE ('dir
+;; artifacts, st-cly): a dir compares by its order-independent tree digest.
+(define (target-digest p)
+  (cond
+    [(directory-exists? p) (tree-digest p)]
+    [(file-exists? p) (file-sha1 p)]
+    [else (error 'verify-determinism "target was not produced: ~a" p)]))
+
+;; total bytes under a path — the file's own size, or the sum for a directory.
+(define (path-bytes p)
+  (if (directory-exists? p)
+      (for/sum ([f (in-directory p)] #:when (file-exists? f)) (file-size f))
+      (file-size p)))
 
 ;; verify-determinism : graph symbol (hash symbol->runtime)
 ;;   #:from (or/c symbol #f) #:extra-env (listof (cons string string))
@@ -54,15 +69,15 @@
 
   (define f1 (build! 1))
   (define f2 (build! 2))
-  (define h1 (file-sha1 f1))
-  (define h2 (file-sha1 f2))
-  (printf "\nbuild #1  sha1 ~a  (~a bytes)\n" h1 (file-size f1))
-  (printf "build #2  sha1 ~a  (~a bytes)\n" h2 (file-size f2))
+  (define h1 (target-digest f1))
+  (define h2 (target-digest f2))
+  (printf "\nbuild #1  digest ~a  (~a bytes)\n" h1 (path-bytes f1))
+  (printf "build #2  digest ~a  (~a bytes)\n" h2 (path-bytes f2))
   (cond
     [(string=? h1 h2)
      (printf "\n✓ DETERMINISTIC — ~a is byte-identical across builds\n" out-file)
      #t]
     [else
      (printf "\n✗ NONDETERMINISTIC — ~a differs between builds (sizes ~a vs ~a)\n"
-             out-file (file-size f1) (file-size f2))
+             out-file (path-bytes f1) (path-bytes f2))
      #f]))
