@@ -1,8 +1,9 @@
 #lang racket/base
 
-;; Unit tests for the declared fan-out key (st-tul). The pure core (template
-;; matching, set classification) is filesystem-free; the IO (json-column-keys,
-;; dir-relpaths, verify-fan-out-key) runs over tiny fixtures in a scratch dir.
+;; Unit tests for the declared fan-out key (st-tul, st-5jt). The pure core (template
+;; arity, key-tuple extraction, set classification) is filesystem-free; the driver
+;; (json-column-keys, verify-fan-out-key) runs over tiny JSON fixtures in a scratch
+;; dir. The parquet key source is DuckDB-only and covered by the integration test.
 
 (require rackunit
          racket/set
@@ -15,43 +16,41 @@
   (call-with-output-file path #:exists 'replace
     (lambda (o) (write-json jsexpr o))))
 
-;; --- template-parts / file->key: the template inverse ------------------------
+;; --- template arity + file->key: the template inverse (now tuple-valued) ------
 
-(let-values ([(pre post) (template-parts "{}.svg")])
-  (check-equal? (list pre post) '("" ".svg") "flat template splits around {}"))
-(let-values ([(pre post) (template-parts "genus/{}.svg")])
-  (check-equal? (list pre post) '("genus/" ".svg") "nested template keeps the subdir prefix"))
-(check-exn #rx"placeholder" (lambda () (template-parts "no-brace.svg"))
-           "a template without {} is a declaration error")
+(check-equal? (template-arity "{}.svg") 1 "one placeholder")
+(check-equal? (template-arity "subgenus/{}/{}.svg") 2 "composite: two placeholders")
 
-(check-equal? (file->key "{}.svg" "alta-lake.svg") "alta-lake"
-              "a flat file yields its key")
-(check-equal? (file->key "genus/{}.svg" "genus/Andrena.svg") "Andrena"
-              "a nested file yields its key, prefix stripped")
+(check-equal? (file->key "{}.svg" "alta-lake.svg") '("alta-lake")
+              "a flat file yields a 1-tuple")
+(check-equal? (file->key "genus/{}.svg" "genus/Andrena.svg") '("Andrena")
+              "a nested single-key file, prefix stripped")
+(check-equal? (file->key "subgenus/{}/{}.svg" "subgenus/Andrena/Micrandrena.svg")
+              '("Andrena" "Micrandrena")
+              "a composite file yields the (genus, subgenus) tuple")
+(check-equal? (file->key "{}.svg" "Andrena/prunorum.svg") '("Andrena/prunorum")
+              "a slash inside a single-key slug stays in the one group")
 (check-false (file->key "genus/{}.svg" "subgenus/Foo.svg")
              "a wrong prefix does not match this branch")
 (check-false (file->key "{}.svg" "notes.json")
              "a wrong suffix does not match")
-(check-false (file->key "{}.svg" ".svg")
-             "an empty key (suffix only) is not a match")
 
 ;; --- classify-fan-out: soundness (orphans) vs completeness (incomplete) -------
 
 (let-values ([(orphans incomplete)
-              (classify-fan-out (set "a" "b") (set "a" "b" "c" "d"))])
+              (classify-fan-out (set '("a") '("b")) (set '("a") '("b") '("c") '("d")))])
   (check-equal? orphans '() "filtered subset -> no orphans (sound)")
-  (check-equal? incomplete '("c" "d") "unproduced input keys are reported, sorted"))
+  (check-equal? incomplete '(("c") ("d")) "unproduced input tuples are reported, sorted"))
 (let-values ([(orphans incomplete)
-              (classify-fan-out (set "a" "ghost") (set "a" "b"))])
-  (check-equal? orphans '("ghost") "a file whose key isn't an input key is an orphan")
-  (check-equal? incomplete '("b") "and the uncovered input key is incomplete"))
+              (classify-fan-out (set '("a") '("ghost")) (set '("a") '("b")))])
+  (check-equal? orphans '(("ghost")) "a file tuple absent from the input is an orphan")
+  (check-equal? incomplete '(("b")) "and the uncovered input tuple is incomplete"))
 
-;; --- IO over fixtures --------------------------------------------------------
+;; --- IO over fixtures ---------------------------------------------------------
 
 (define tmp (make-temporary-file "stelis-fok-~a" 'directory))
 (define (at . parts) (apply build-path tmp parts))
 
-;; a JSON array-of-objects input, like places.json
 (define places.json (at "places.json"))
 (write-json-file
  (list (hasheq 'slug "alta-lake" 'name "Alta Lake")
@@ -59,71 +58,78 @@
        (hasheq 'slug "cold-creek" 'name "Cold Creek")   ; filtered: no map produced
        (hasheq 'name "no-slug-here"))                    ; missing key -> skipped
  places.json)
-(check-equal? (json-column-keys places.json "slug")
-              (set "alta-lake" "bee-hill" "cold-creek")
-              "json-column-keys pulls the column, skipping missing values")
+(check-equal? (json-column-keys places.json '("slug"))
+              (set '("alta-lake") '("bee-hill") '("cold-creek"))
+              "json-column-keys pulls a 1-column tuple set, skipping missing values")
 
-;; a produced directory: two real maps + one nested file under a group prefix
+;; composite: distinct (genus, subgenus) tuples, rows missing either are skipped
+(define species.json (at "species.json"))
+(write-json-file
+ (list (hasheq 'genus "Andrena" 'subgenus "Micrandrena" 'slug "Andrena/prunorum")
+       (hasheq 'genus "Andrena" 'subgenus "Micrandrena" 'slug "Andrena/wilkella") ; dup pair
+       (hasheq 'genus "Bombus"  'subgenus "Pyrobombus"  'slug "Bombus/mixtus")
+       (hasheq 'genus "Halictus" 'slug "Halictus/rubicundus"))                    ; no subgenus
+ species.json)
+(check-equal? (json-column-keys species.json '("genus" "subgenus"))
+              (set '("Andrena" "Micrandrena") '("Bombus" "Pyrobombus"))
+              "composite tuples are DISTINCT; a row missing a column is dropped")
+
+;; --- verify-fan-out-key: single-branch driver (place-maps shape) --------------
+
 (define maps (at "place-maps"))
 (make-directory maps)
 (display-to-file "svg" (build-path maps "alta-lake.svg"))
 (display-to-file "svg" (build-path maps "bee-hill.svg"))
-(check-equal? (list->set (dir-relpaths maps))
-              (set "alta-lake.svg" "bee-hill.svg")
-              "dir-relpaths lists regular files as posix relative paths")
+(define (presolve a) (case a [(places.json) places.json] [else #f]))
+(define pbranches (list (fan-out 'places.json '("slug") "{}.svg")))
 
-;; --- verify-fan-out-key: the driver ------------------------------------------
-
-(define (resolve a)
-  (case a [(places.json) places.json] [else #f]))
-(define branches (list (fan-out 'places.json "slug" "{}.svg")))
-
-;; clean, filtered case: 2 of 3 places have maps -> sound, 1 incomplete
-(let ([v (verify-fan-out-key branches maps resolve)])
+(let ([v (verify-fan-out-key pbranches maps presolve)])
   (check-true (fan-out-verdict-sound? v) "no orphans: every map is a real place")
-  (check-equal? (fan-out-verdict-sound-files v) 2 "two produced files, both keyed to an input")
-  (check-equal? (fan-out-verdict-incomplete v) '((places.json . "cold-creek"))
+  (check-equal? (fan-out-verdict-sound-files v) 2 "two produced files, both keyed")
+  (check-equal? (fan-out-verdict-incomplete v) '((places.json . ("cold-creek")))
                 "the filtered-out place is reported incomplete, not failed"))
 
-;; an ORPHAN: a map whose slug is not in places.json -> unsound
 (display-to-file "svg" (build-path maps "ghost-place.svg"))
-(let ([v (verify-fan-out-key branches maps resolve)])
+(let ([v (verify-fan-out-key pbranches maps presolve)])
   (check-false (fan-out-verdict-sound? v) "an orphan map fails soundness")
-  (check-equal? (fan-out-verdict-orphans v) '("ghost-place.svg")
-                "the orphan file is named"))
+  (check-equal? (fan-out-verdict-orphans v) '("ghost-place.svg") "the orphan file is named"))
 (delete-file (build-path maps "ghost-place.svg"))
 
-;; a file NO branch template explains is also an orphan
-(display-to-file "x" (build-path maps "README.txt"))
-(let ([v (verify-fan-out-key branches maps resolve)])
-  (check-equal? (fan-out-verdict-orphans v) '("README.txt")
-                "a file matching no branch template is an orphan"))
-(delete-file (build-path maps "README.txt"))
+;; --- multi-branch composite driver (species-maps shape, JSON-sourced) ---------
 
-;; --- multi-branch: a species-maps-shaped dir (slug + genus rank) -------------
-
-(define species.json (at "species.json"))
-(write-json-file
- (list (hasheq 'slug "Andrena/prunorum" 'genus "Andrena")
-       (hasheq 'slug "Bombus/vosnesenskii" 'genus "Bombus"))
- species.json)
 (define smaps (at "species-maps"))
 (make-directory* (build-path smaps "Andrena"))
 (make-directory* (build-path smaps "Bombus"))
 (make-directory* (build-path smaps "genus"))
-(display-to-file "svg" (build-path smaps "Andrena" "prunorum.svg"))   ; per-species
-(display-to-file "svg" (build-path smaps "Bombus" "vosnesenskii.svg")) ; per-species
-(display-to-file "svg" (build-path smaps "genus" "Andrena.svg"))       ; genus rank
-;; note: no genus/Bombus.svg -> Bombus genus key is incomplete (allowed)
-(define sbranches
-  (list (fan-out 'species.json "slug" "{}.svg")
-        (fan-out 'species.json "genus" "genus/{}.svg")))
+(make-directory* (build-path smaps "subgenus" "Andrena"))
+(display-to-file "svg" (build-path smaps "Andrena" "prunorum.svg"))         ; per-species slug
+(display-to-file "svg" (build-path smaps "Bombus" "mixtus.svg"))            ; per-species slug
+(display-to-file "svg" (build-path smaps "genus" "Andrena.svg"))            ; genus rank
+(display-to-file "svg" (build-path smaps "subgenus" "Andrena" "Micrandrena.svg")) ; composite
 (define (sresolve a) (case a [(species.json) species.json] [else #f]))
+(define sbranches
+  (list (fan-out 'species.json '("slug")             "{}.svg")
+        (fan-out 'species.json '("genus")            "genus/{}.svg")
+        (fan-out 'species.json '("genus" "subgenus") "subgenus/{}/{}.svg")))
 (let ([v (verify-fan-out-key sbranches smaps sresolve)])
   (check-true (fan-out-verdict-sound? v)
-              "multi-branch: per-species AND genus files all key to species.json")
-  (check-equal? (fan-out-verdict-sound-files v) 3 "three produced files (2 species + 1 genus), all sound")
-  (check-equal? (fan-out-verdict-incomplete v) '((species.json . "Bombus"))
-                "the missing Bombus genus map is reported incomplete"))
+              "per-species, genus, AND composite subgenus files all key to species.json")
+  (check-equal? (fan-out-verdict-sound-files v) 4 "all four files explained"))
+
+;; a composite orphan: a subgenus map for a (genus, subgenus) not in the input
+(make-directory* (build-path smaps "subgenus" "Bombus"))
+(display-to-file "svg" (build-path smaps "subgenus" "Bombus" "Ghostbombus.svg"))
+(let ([v (verify-fan-out-key sbranches smaps sresolve)])
+  (check-false (fan-out-verdict-sound? v) "a composite key absent from the input is an orphan")
+  (check-equal? (fan-out-verdict-orphans v) '("subgenus/Bombus/Ghostbombus.svg")
+                "the composite orphan is named by its relative path"))
+
+;; --- declaration sanity: column count must match template placeholders --------
+
+(check-exn #rx"columns but"
+           (lambda ()
+             (verify-fan-out-key (list (fan-out 'species.json '("genus") "subgenus/{}/{}.svg"))
+                                 smaps sresolve))
+           "1 column against a 2-placeholder template is a declaration error")
 
 (delete-directory/files tmp)

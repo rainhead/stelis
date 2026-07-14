@@ -30,10 +30,9 @@
 ;; digests (the substrate for future attribute-level provenance) are a separate
 ;; slice; the single-table query is shaped so they can be added there.
 
-(require racket/port
-         racket/string
-         racket/system
-         file/sha1)
+(require racket/string
+         file/sha1
+         "duckdb.rkt")
 
 (provide relation-digest)
 
@@ -66,33 +65,12 @@
     "\n  UNION ALL\n")
    "\n) ORDER BY tbl;"))
 
-;; run-duckdb : path-string string -> (or/c string #f)
-;; Read-only CLI query. #f (not an error) when duckdb is absent, the db is
-;; missing/locked, or a table can't be read — the caller then treats the relation
-;; as unresolvable, which only ever forces a conservative rerun.
-;;
-;; The CLI is taken from ambient PATH, not a hermetic runtime like the uv/uvx task
-;; runtimes: this is a between-tasks READ of already-written state (no task's
-;; hermeticity depends on it), and its #f-on-absence path keeps a missing CLI from
-;; ever failing a build. If total hermeticity is later wanted, pin it as a runtime.
-(define (run-duckdb db sql)
-  (define exe (find-executable-path "duckdb"))
-  (and exe
-       (with-handlers ([exn:fail? (lambda (_) #f)])
-         (define-values (sp out in err)
-           (subprocess #f #f #f exe "-readonly" "-noheader" "-list"
-                       (if (path? db) (path->string db) db) "-c" sql))
-         (close-output-port in)
-         (define text (port->string out))
-         (port->string err) ; drain so the child can't block on a full stderr pipe
-         (subprocess-wait sp)
-         (and (eqv? 0 (subprocess-status sp)) text))))
-
 ;; relation-digest : path-string (listof string) -> (or/c string #f)
 ;; The content hash of the logical relation made of `tables', or #f if it can't
-;; be read. Order-independent in rows (sum) and in tables (ORDER BY tbl).
+;; be read (duckdb.rkt's #f-on-absence contract). Order-independent in rows (sum)
+;; and in tables (ORDER BY tbl).
 (define (relation-digest db tables)
   (and (pair? tables)
        (andmap (lambda (t) (regexp-match? qualified-name? t)) tables)
-       (let ([out (run-duckdb db (relation-query tables))])
+       (let ([out (duckdb-query db (relation-query tables))])
          (and out (sha1 (open-input-string out))))))

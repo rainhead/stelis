@@ -276,7 +276,19 @@
    (make-artifact 'photos.json                  'file)
    (make-artifact 'species_hosts.json           'file)
    (make-artifact 'higher_taxa.json             'file)
-   (make-artifact 'species-maps                 'dir) ; per-species SVG set (st-cly)
+   ;; per-species + per-rank SVG set (st-cly), verified as a data-dependent SET
+   ;; (st-5jt). All five fan-out branches key off the species.parquet@export columns
+   ;; the exporter's group-membership query reads (genus/subgenus/tribe/subfamily/
+   ;; slug) — verbatim, so Racket-verifiable. subgenus is a COMPOSITE (genus,
+   ;; subgenus) key. Soundness gated; the exporter's occurrence-count/checklist
+   ;; filter means many ranks/species have no map, reported incomplete, not failed.
+   (make-artifact 'species-maps                 'dir
+                  #:keyed-by
+                  (list (fan-out 'species.parquet@export '("slug")              "{}.svg")
+                        (fan-out 'species.parquet@export '("genus")             "genus/{}.svg")
+                        (fan-out 'species.parquet@export '("genus" "subgenus")  "subgenus/{}/{}.svg")
+                        (fan-out 'species.parquet@export '("tribe")             "tribe/{}.svg")
+                        (fan-out 'species.parquet@export '("subfamily")         "subfamily/{}.svg")))
    (make-artifact 'places.geojson               'file)
    (make-artifact 'places.json                  'file)
    ;; heavy per-place feed (species + collection timing) written by the same
@@ -308,7 +320,7 @@
    ;; is a real place; the places with zero occurrences get no map (filtered), so
    ;; those keys are reported incomplete, not failed.
    (make-artifact 'place-maps                   'dir
-                  #:keyed-by (list (fan-out 'places.json "slug" "{}.svg")))
+                  #:keyed-by (list (fan-out 'places.json '("slug") "{}.svg")))
    (make-artifact 'feeds                        'dir) ; per-variant Atom XML set (st-cly)
    ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
    ;; enriched species.parquet species-export writes there. Distinct artifacts
