@@ -321,7 +321,18 @@
    ;; those keys are reported incomplete, not failed.
    (make-artifact 'place-maps                   'dir
                   #:keyed-by (list (fan-out 'places.json '("slug") "{}.svg")))
-   (make-artifact 'feeds                        'dir) ; per-variant Atom XML set (st-cly)
+   ;; per-variant Atom XML set (st-cly), verified via the manifest feeds emits
+   ;; (st-q6i). feeds' filenames are collector-<slugify(recorded_by)>.xml /
+   ;; genus-<slugify(genus)>.xml with slug collision-dedup — a TRANSFORM of the
+   ;; column, so we don't re-derive it; feeds/index.json already maps each file to
+   ;; its verbatim filter_value, which we check against the ecdysis_data columns.
+   ;; determinations.xml + index.json are the un-keyed singletons.
+   (make-artifact 'feeds                        'dir
+                  #:keyed-by
+                  (manifest-key "index.json" "filename" "filter_value" "filter_type"
+                                (list (list "collector" "ecdysis_data.occurrences" "recorded_by")
+                                      (list "genus"     "ecdysis_data.occurrences" "genus"))
+                                (list "index.json" "determinations.xml")))
    ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
    ;; enriched species.parquet species-export writes there. Distinct artifacts
    ;; from the sandbox originals so each has exactly one producer.

@@ -132,4 +132,21 @@
                                  smaps sresolve))
            "1 column against a 2-placeholder template is a declaration error")
 
+;; --- manifest file classification (st-q6i, the DB-free half) ------------------
+;; produced files vs {manifest filenames ∪ singletons}: orphans on disk unexplained,
+;; missing declared-but-absent. The filter_value↔column check needs DuckDB and is
+;; covered by the integration test.
+(let-values ([(orphans missing)
+              (classify-manifest-files
+               (list "collector-a.xml" "genus-b.xml" "index.json" "determinations.xml")
+               (set "collector-a.xml" "genus-b.xml" "index.json" "determinations.xml"))])
+  (check-equal? orphans '() "every on-disk file is indexed or a singleton")
+  (check-equal? missing '() "every declared file is on disk"))
+(let-values ([(orphans missing)
+              (classify-manifest-files
+               (list "collector-a.xml" "stray.xml" "index.json")     ; stray not indexed
+               (set "collector-a.xml" "genus-b.xml" "index.json"))]) ; genus-b indexed, absent
+  (check-equal? orphans '("stray.xml") "a file neither indexed nor a singleton is an orphan")
+  (check-equal? missing '("genus-b.xml") "an indexed file not on disk is missing"))
+
 (delete-directory/files tmp)

@@ -36,10 +36,10 @@
 
 (provide relation-digest)
 
-;; A qualified table name we are willing to interpolate into SQL. The mapping in
-;; beeatlas.rkt is trusted (hand-authored, no external input), but we still gate
-;; on a strict shape so a typo fails loudly rather than producing odd SQL.
-(define qualified-name? #px"^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$")
+;; A qualified table name we are willing to interpolate into SQL (duckdb.rkt's
+;; shared gate): the mapping in beeatlas.rkt is trusted, but a strict shape makes a
+;; typo fail loudly rather than produce odd SQL.
+(define qualified-name? sql-qualified-name?)
 
 ;; table-digest-subquery : string -> string
 ;; A scalar subquery yielding "<rows>:<sum-of-row-hashes>", stable ('0:0') for an

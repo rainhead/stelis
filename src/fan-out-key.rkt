@@ -43,16 +43,19 @@
          "duckdb.rkt")       ; duckdb-query — parquet column extraction
 
 (provide (struct-out fan-out)
+         (struct-out manifest-key)
          (struct-out fan-out-verdict)
          fan-out-verdict-sound?
          template-arity
          file->key
          classify-fan-out
+         classify-manifest-files
          json-column-keys
          parquet-column-keys
          column-keys
          dir-relpaths
          verify-fan-out-key
+         verify-manifest
          verify-fan-out-keys)
 
 ;; A fan-out BRANCH: the files whose relative path matches `template' are keyed by
@@ -62,6 +65,23 @@
 ;; key a file encodes is a value TUPLE with one element per column. One 'dir may
 ;; declare several branches.
 (struct fan-out (input key-columns template) #:transparent)
+
+;; A MANIFEST-keyed fan-out (st-q6i), for a dir whose filenames are a TRANSFORM of
+;; the source column (feeds writes collector-<slugify(recorded_by)>.xml with slug
+;; collision-dedup) — reproducing that transform in Racket would reimplement
+;; exporter logic. Instead the exporter EMITS a manifest inside the dir that maps
+;; each produced file to its verbatim source value, and we check that against the
+;; real column. (feeds/index.json already is this manifest — no beeatlas change.)
+;;   manifest    : dir-relative path of the manifest JSON array (e.g. "index.json")
+;;   file-field  : entry field naming the produced file, dir-relative ("filename")
+;;   key-field   : entry field with the VERBATIM source value ("filter_value")
+;;   type-field  : entry field selecting which source ("filter_type")
+;;   sources     : (listof (list type-value relation column)) — the DISTINCT column
+;;                 (in the shared duckdb) a given type's values must come from
+;;   singletons  : dir-relative paths always allowed un-keyed ("index.json" itself,
+;;                 "determinations.xml")
+(struct manifest-key (manifest file-field key-field type-field sources singletons)
+  #:transparent)
 
 ;; The outcome of checking one 'dir's declared fan-out.
 ;;   sound-files: count of produced files that ARE explained — a branch template
@@ -144,17 +164,13 @@
             #:when (and (hash? e) (andmap (lambda (s) (present? (hash-ref e s #f))) syms)))
     (map (lambda (s) (key->string (hash-ref e s))) syms)))
 
-;; A column name we are willing to interpolate into SQL. The keyed-by mapping is
-;; trusted (hand-authored), but gate on a strict shape anyway — as relation-digest
-;; does for table names — so a typo fails loudly rather than producing odd SQL.
-(define column-name? #px"^[A-Za-z_][A-Za-z0-9_]*$")
-
 ;; parquet-column-keys : path-string (listof string) -> (setof (listof string))
 ;; DISTINCT `cols' tuples in a parquet file, read via DuckDB (-list output: rows on
 ;; newlines, columns on '|'; NULL renders empty). Rows with an empty component are
 ;; dropped. Raises if the file can't be read — a harness precondition, not a defect.
+;; Columns are gated on duckdb.rkt's sql-identifier? before interpolation.
 (define (parquet-column-keys src cols)
-  (unless (andmap (lambda (c) (regexp-match? column-name? c)) cols)
+  (unless (andmap (lambda (c) (regexp-match? sql-identifier? c)) cols)
     (error 'parquet-column-keys "not a plain column name: ~a" cols))
   (define sql (string-append "SELECT DISTINCT " (string-join cols ", ")
                              " FROM read_parquet('" src "')"))
@@ -213,11 +229,84 @@
   (fan-out-verdict dir (- (length relpaths) (length orphans))
                    (sort orphans string<?) incomplete))
 
-;; verify-fan-out-keys : graph (listof symbol) (symbol -> path?/#f) path-string -> boolean
+;; --- manifest-driven verification (st-q6i) ----------------------------------
+
+;; classify-manifest-files : (listof string) (setof string) -> (values (listof string) (listof string))
+;; PURE: produced relpaths vs the DECLARED set (manifest filenames ∪ singletons) ->
+;; (orphans, missing), each sorted. orphans = on disk but neither indexed nor a
+;; singleton; missing = declared but not on disk. Filesystem-free, unit-tested.
+(define (classify-manifest-files relpaths declared)
+  (values (sort (set->list (set-subtract (list->set relpaths) declared)) string<?)
+          (sort (set->list (set-subtract declared (list->set relpaths))) string<?)))
+
+;; verify-manifest : manifest-key path-string path-string -> fan-out-verdict
+;; Check a manifest-keyed dir against its emitted manifest AND the source columns.
+;; SOUND iff: every on-disk file is indexed-or-a-singleton (no orphans), every
+;; indexed/singleton file is on disk (no missing), and every entry's verbatim
+;; key-value is a real DISTINCT value of its source column (via `db`). Completeness:
+;; source-column values with no feed, reported. Any discrepancy lands in `orphans'
+;; so the shared sound? gate applies.
+(define (verify-manifest mk dir db)
+  (define (fld name e) (hash-ref e (string->symbol name) #f))
+  (define entries
+    (let ([data (call-with-input-file (build-path dir (manifest-key-manifest mk)) read-json)])
+      (unless (list? data) (error 'verify-manifest "~a is not a JSON array" (manifest-key-manifest mk)))
+      data))
+  (define relpaths (dir-relpaths dir))
+  (define declared
+    (set-union (list->set (filter values (map (lambda (e) (fld (manifest-key-file-field mk) e)) entries)))
+               (list->set (manifest-key-singletons mk))))
+  (define-values (file-orphans missing) (classify-manifest-files relpaths declared))
+  ;; source column values per type, cached; gated like relation-digest's table names.
+  (define type->src (for/hash ([s (in-list (manifest-key-sources mk))])
+                      (values (car s) (cdr s))))          ; type -> (list relation column)
+  (define cache (make-hash))
+  (define (distinct-of relation column)
+    (hash-ref! cache (cons relation column)
+      (lambda ()
+        (unless (and (regexp-match? sql-qualified-name? relation) (regexp-match? sql-identifier? column))
+          (error 'verify-manifest "unsafe source ~a.~a" relation column))
+        (define out (duckdb-query db (string-append "SELECT DISTINCT " column " FROM " relation)))
+        (unless out (error 'verify-manifest "could not read ~a.~a via duckdb" relation column))
+        (list->set (filter (lambda (s) (not (string=? s ""))) (string-split out "\n"))))))
+  ;; (b) each entry's key-value must be a real value of its type's source column
+  (define bad
+    (for/list ([e (in-list entries)]
+               #:do [(define ty (fld (manifest-key-type-field mk) e))
+                     (define kv (fld (manifest-key-key-field mk) e))
+                     (define src (hash-ref type->src ty #f))]
+               #:unless (and src kv
+                             (set-member? (distinct-of (car src) (cadr src)) (key->string kv)))
+               [fn (in-value (fld (manifest-key-file-field mk) e))]
+               #:when fn)
+      fn))
+  ;; completeness: source-column values used by no entry, per source
+  (define used
+    (for/fold ([h (hash)]) ([e (in-list entries)])
+      (define ty (fld (manifest-key-type-field mk) e))
+      (hash-update h ty (lambda (s) (set-add s (key->string (fld (manifest-key-key-field mk) e)))) (set))))
+  (define incomplete
+    (append*
+     (for/list ([s (in-list (manifest-key-sources mk))])
+       (define ty (car s))
+       (define vals (distinct-of (cadr s) (caddr s)))
+       (define seen (hash-ref used ty (set)))
+       (for/list ([v (in-list (sort (set->list vals) string<?))] #:unless (set-member? seen v))
+         (cons ty v)))))
+  (define orphans (sort (append file-orphans
+                                (map (lambda (m) (string-append "missing:" m)) missing)
+                                (map (lambda (b) (string-append "unsound:" b)) bad))
+                        string<?))
+  (fan-out-verdict dir (- (length relpaths) (length file-orphans) (length bad))
+                   orphans incomplete))
+
+;; verify-fan-out-keys : graph (listof symbol) (symbol -> path?/#f) path-string
+;;                       [#:db (or/c path-string #f)] -> boolean
 ;; For each keyed 'dir output of the given tasks, verify its fan-out against the
-;; reference build and print a report. Returns #t iff every keyed dir is SOUND
-;; (no orphans). Completeness gaps are printed but do not fail.
-(define (verify-fan-out-keys g tasks resolve reference-dir)
+;; reference build and print a report. A manifest-key dir is checked by
+;; verify-manifest (needs #:db, the shared duckdb); fan-out branches by
+;; verify-fan-out-key. Returns #t iff every keyed dir is SOUND (no orphans).
+(define (verify-fan-out-keys g tasks resolve reference-dir #:db [db #f])
   (printf "Fan-out-key verification — reference ~a\n\n" reference-dir)
   (define keyed
     (for*/list ([name (in-list tasks)]
@@ -233,9 +322,11 @@
     [else
      (define verdicts
        (for/list ([entry (in-list keyed)])
-         (define-values (name out branches) (apply values entry))
-         (define v (verify-fan-out-key branches (resolve out reference-dir)
-                                       (lambda (a) (resolve a reference-dir))))
+         (define-values (name out keyed-by) (apply values entry))
+         (define dir (resolve out reference-dir))
+         (define v (if (manifest-key? keyed-by)
+                       (verify-manifest keyed-by dir db)
+                       (verify-fan-out-key keyed-by dir (lambda (a) (resolve a reference-dir)))))
          (printf "~a ~a → ~a/\n"
                  (if (fan-out-verdict-sound? v) "✓" "✗") name out)
          (printf "    sound    : ~a\n"

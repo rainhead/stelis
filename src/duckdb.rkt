@@ -14,7 +14,14 @@
 (require racket/port
          racket/system)
 
-(provide duckdb-query)
+(provide duckdb-query sql-identifier? sql-qualified-name?)
+
+;; Shapes a name must match before we interpolate it into SQL. The names come from
+;; hand-authored, trusted mappings (no external input), but gating on a strict shape
+;; makes a typo fail loudly rather than produce odd SQL. A bare column identifier,
+;; and a schema.table qualified name.
+(define sql-identifier? #px"^[A-Za-z_][A-Za-z0-9_]*$")
+(define sql-qualified-name? #px"^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$")
 
 ;; duckdb-query : (or/c path-string #f) string -> (or/c string #f)
 ;; Run `sql' read-only and return the CLI's -noheader -list output (rows on
