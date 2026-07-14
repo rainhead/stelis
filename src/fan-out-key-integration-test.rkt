@@ -27,6 +27,7 @@
 
 (define (reference-usable?)
   (and (file-exists? beeatlas-db)                          ; beeatlas checkout present
+       (find-executable-path "duckdb")                     ; species-maps' parquet keys need it
        (for/and ([r (in-list REQUIRED)])
          (and (directory-exists? (build-path reference (car r)))  ; the built dir set
               (file-exists? (build-path reference (cdr r)))))))   ; its key source

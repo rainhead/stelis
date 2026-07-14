@@ -56,10 +56,12 @@
          verify-fan-out-keys)
 
 ;; A fan-out BRANCH: the files whose relative path matches `template' are keyed by
-;; columns `keys' (a list) of input artifact `input'. `template' is a filename
-;; pattern with one "{}" per key column, e.g. "{}.svg" keyed by ("slug"), or
-;; "subgenus/{}/{}.svg" keyed by ("genus" "subgenus"). One 'dir may declare several.
-(struct fan-out (input keys template) #:transparent)
+;; the columns `key-columns' (a list of column NAMES) of input artifact `input'.
+;; `template' is a filename pattern with one "{}" per key column, e.g. "{}.svg"
+;; keyed by ("slug"), or "subgenus/{}/{}.svg" keyed by ("genus" "subgenus"). The
+;; key a file encodes is a value TUPLE with one element per column. One 'dir may
+;; declare several branches.
+(struct fan-out (input key-columns template) #:transparent)
 
 ;; The outcome of checking one 'dir's declared fan-out.
 ;;   sound-files: count of produced files that ARE explained — a branch template
@@ -105,20 +107,28 @@
   (values (sort (set->list (set-subtract file-keys input-keys)) tuple<?)
           (sort (set->list (set-subtract input-keys file-keys)) tuple<?)))
 
-;; a total order on string tuples, for stable output.
-(define (tuple<? a b) (string<? (string-join a "") (string-join b "")))
+;; tuple<? : (listof string) (listof string) -> boolean
+;; A genuine total order on string tuples (element-wise lexicographic; a shorter
+;; prefix precedes its extensions), for stable output regardless of set order.
+(define (tuple<? a b)
+  (cond
+    [(null? a) (pair? b)]
+    [(null? b) #f]
+    [(string=? (car a) (car b)) (tuple<? (cdr a) (cdr b))]
+    [else (string<? (car a) (car b))]))
 
 ;; --- IO: reading a branch's input key-tuples --------------------------------
 
 ;; column-keys : path-string (listof string) -> (setof (listof string))
 ;; The set of DISTINCT `cols' tuples in the input at `path', dispatched by
 ;; extension: a JSON array-of-objects (read-json) or a parquet file (DuckDB).
-;; Tuples with any missing/empty component are dropped (they key no file).
+;; Tuples with any missing/empty component are dropped (they key no file). Paths are
+;; normalised to a string ONCE here; the readers take it as given.
 (define (column-keys path cols)
   (define p (if (path? path) (path->string path) path))
   (cond
-    [(string-suffix? p ".json")    (json-column-keys path cols)]
-    [(string-suffix? p ".parquet") (parquet-column-keys path cols)]
+    [(string-suffix? p ".json")    (json-column-keys p cols)]
+    [(string-suffix? p ".parquet") (parquet-column-keys p cols)]
     [else (error 'column-keys "unsupported key-source (need .json or .parquet): ~a" p)]))
 
 ;; json-column-keys : path-string (listof string) -> (setof (listof string))
@@ -134,12 +144,18 @@
             #:when (and (hash? e) (andmap (lambda (s) (present? (hash-ref e s #f))) syms)))
     (map (lambda (s) (key->string (hash-ref e s))) syms)))
 
+;; A column name we are willing to interpolate into SQL. The keyed-by mapping is
+;; trusted (hand-authored), but gate on a strict shape anyway — as relation-digest
+;; does for table names — so a typo fails loudly rather than producing odd SQL.
+(define column-name? #px"^[A-Za-z_][A-Za-z0-9_]*$")
+
 ;; parquet-column-keys : path-string (listof string) -> (setof (listof string))
 ;; DISTINCT `cols' tuples in a parquet file, read via DuckDB (-list output: rows on
 ;; newlines, columns on '|'; NULL renders empty). Rows with an empty component are
 ;; dropped. Raises if the file can't be read — a harness precondition, not a defect.
-(define (parquet-column-keys path cols)
-  (define src (if (path? path) (path->string path) path))
+(define (parquet-column-keys src cols)
+  (unless (andmap (lambda (c) (regexp-match? column-name? c)) cols)
+    (error 'parquet-column-keys "not a plain column name: ~a" cols))
   (define sql (string-append "SELECT DISTINCT " (string-join cols ", ")
                              " FROM read_parquet('" src "')"))
   (define out (duckdb-query #f sql))
@@ -164,14 +180,14 @@
 ;; catch-all "{}.svg" per-species branch — so every branch gets a look.)
 (define (verify-fan-out-key branches dir resolve)
   (for ([b (in-list branches)])
-    (unless (= (length (fan-out-keys b)) (template-arity (fan-out-template b)))
+    (unless (= (length (fan-out-key-columns b)) (template-arity (fan-out-template b)))
       (error 'verify-fan-out-key "branch ~a: ~a columns but ~a {} in template ~s"
-             (fan-out-input b) (length (fan-out-keys b))
+             (fan-out-input b) (length (fan-out-key-columns b))
              (template-arity (fan-out-template b)) (fan-out-template b))))
   ;; input key-tuples per branch (parallel to `branches')
   (define branch-keys
     (for/list ([b (in-list branches)])
-      (column-keys (resolve (fan-out-input b)) (fan-out-keys b))))
+      (column-keys (resolve (fan-out-input b)) (fan-out-key-columns b))))
   (define relpaths (dir-relpaths dir))
   ;; matched identity carries the branch's key COLUMNS too, so two branches sharing
   ;; an input don't cross-credit each other.
@@ -182,7 +198,7 @@
       (for/list ([b (in-list branches)] [ks (in-list branch-keys)]
                  #:do [(define tup (file->key (fan-out-template b) rel))]
                  #:when (and tup (set-member? ks tup)))
-        (list (fan-out-input b) (fan-out-keys b) tup)))
+        (list (fan-out-input b) (fan-out-key-columns b) tup)))
     (cond
       [(null? explanations) (set! orphans (cons rel orphans))]
       [else (for ([e (in-list explanations)]) (set-add! matched e))]))
@@ -191,7 +207,7 @@
     (append*
      (for/list ([b (in-list branches)] [ks (in-list branch-keys)])
        (for/list ([tup (in-list (sort (set->list ks) tuple<?))]
-                  #:unless (set-member? matched (list (fan-out-input b) (fan-out-keys b) tup)))
+                  #:unless (set-member? matched (list (fan-out-input b) (fan-out-key-columns b) tup)))
          (cons (fan-out-input b) tup)))))
   ;; sound-files = produced files that were explained = all files minus orphans.
   (fan-out-verdict dir (- (length relpaths) (length orphans))
