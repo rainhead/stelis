@@ -233,3 +233,21 @@
       [e2 (beeatlas-source-date-epoch)])
   (check-true (regexp-match? #px"^[0-9]+$" e1) "build clock is a numeric epoch")
   (check-equal? e1 e2 "build clock is stable across calls (deterministic)"))
+
+;; 14. notes.json provenance reconciliation (st-msn). notes-harvest emits a DERIVED
+;;     notes.json (reproducible from the store, so cutoff-eligible), and reads the
+;;     AUTHORITATIVE notes store — a producerless 'file leaf whose forward-only-ness
+;;     is structural (the graph has no way to rebuild it). The store is a declared
+;;     input, fixing the previously under-declared edge.
+(let ([notes  (hash-ref (graph-artifacts beeatlas-graph) 'notes.json)]
+      [store  (hash-ref (graph-artifacts beeatlas-graph) 'notes-store.db)]
+      [harvest (hash-ref (graph-tasks beeatlas-graph) 'notes-harvest)])
+  (check-eq? (artifact-provenance notes) 'derived
+             "notes.json is derived (was mislabeled authoritative)")
+  (check-eq? (artifact-provenance store) 'authoritative
+             "the authoritative label moved to the input store")
+  (check-eq? (artifact-kind store) 'file "the store is a file input")
+  (check-false (producer-of beeatlas-graph 'notes-store.db)
+               "the store has no producer — forward-only by construction")
+  (check-true (and (memq 'notes-store.db (task-inputs harvest)) #t)
+              "notes-harvest declares the store as an input (edge no longer under-declared)"))

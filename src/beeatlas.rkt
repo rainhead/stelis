@@ -133,8 +133,19 @@
 ;; an order-independent tree digest (tree-digest.rkt); SET completeness is st-tul.
 (define export-dir-dirs '(species-maps place-maps feeds))
 
-;; raw/fetched inputs at fixed paths under DATA.
-(define raw-file-paths (hash 'taxa.csv.gz (build-path DATA "raw" "taxa.csv.gz")))
+;; The authoritative notes STORE (st-msn): the SQLite file notes-harvest reads
+;; read-only. A fixed absolute path OUTSIDE the beeatlas repo (D-15), from
+;; NOTES_DB_PATH — resolved the same way beeatlas does, and the subprocess inherits
+;; stelis's NOTES_DB_PATH unchanged, so both see the same file. Content-hashed like
+;; any file input when present; absent (not mounted locally) it reads unresolvable,
+;; which only forces a conservative rerun.
+(define notes-store-path
+  (string->path (or (getenv "NOTES_DB_PATH") "/opt/beeatlas-store/notes.db")))
+
+;; raw/fetched/authoritative inputs at fixed paths (taxa under DATA; the notes
+;; store at its absolute NOTES_DB_PATH).
+(define raw-file-paths (hash 'taxa.csv.gz    (build-path DATA "raw" "taxa.csv.gz")
+                             'notes-store.db notes-store-path))
 
 ;; Where beeatlas's file/dir artifacts physically live — the resolver caching uses
 ;; to content-hash inputs and to place/verify outputs. #f for artifacts with no
@@ -279,11 +290,19 @@
    ;; pages.json is the compact sub-page sidecar written by the same invocation.
    (make-artifact 'collectors.events.json       'file)
    (make-artifact 'collector_event_pages.json   'file)
-   ;; notes is beeatlas's one authoritative artifact (data/artifacts.toml) —
-   ;; forward-only, never rebuilt from scratch. It's a pruned sibling here, so the
-   ;; escape hatch isn't exercised on the occurrences.db path, but the model now
-   ;; expresses it (addresses the derived-vs-authoritative commitment).
-   (make-artifact 'notes.json                   'file #:provenance 'authoritative)
+   ;; notes.json is DERIVED (st-msn): notes-harvest reads the authoritative notes
+   ;; store read-only and emits notes.json, which is reproducible and safe to
+   ;; rebuild — so beeatlas's data/artifacts.toml 'authoritative' label was a
+   ;; mislabel for stelis's purposes (and marking it forward-only would block the
+   ;; near-term CRUD → targeted-rebuild goal, st-066). The authoritative thing is
+   ;; the INPUT store below, not this output.
+   (make-artifact 'notes.json                   'file)
+   ;; the authoritative notes STORE — beeatlas's one piece of forward-only state on
+   ;; this graph (user-authored notes; regenerable only by migration, never by the
+   ;; build). It has NO producer here, so the graph structurally cannot rebuild it —
+   ;; which IS the forward-only guarantee. 'authoritative documents that; the flag
+   ;; is inert on an input (never output-snapshotted), so this is pure intent.
+   (make-artifact 'notes-store.db               'file #:provenance 'authoritative)
    ;; per-place SVG set (st-cly), verified as a data-dependent SET (st-tul): one
    ;; place-maps/<slug>.svg per places.json[].slug. SOUNDNESS is gated — every map
    ;; is a real place; the places with zero occurrences get no map (filtered), so
@@ -481,8 +500,11 @@
                          species.json higher_taxa.json)
               #:outputs '(collectors.events.json collector_event_pages.json)
               #:invoke (py "collectors_events_export" "export_collectors_events_step"))
+   ;; notes-harvest reads the authoritative notes store (make_engine, NOTES_DB_PATH)
+   ;; for approved notes AND collectors.json (byline resolution, D-11/D-12) — the
+   ;; store was undeclared until st-msn. Emits the DERIVED notes.json.
    (make-task 'notes-harvest 'transform
-              #:inputs '(collectors.json) #:outputs '(notes.json)
+              #:inputs '(collectors.json notes-store.db) #:outputs '(notes.json)
               #:invoke (py "notes_harvest" "main"))
    ;; places_maps reads occurrences.parquet@export + the occurrence_places.parquet@
    ;; export bridge (grouping points per place_slug) and county GEOMETRY from the
