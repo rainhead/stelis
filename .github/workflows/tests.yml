@@ -15,14 +15,14 @@ jobs:
     env:
       SOURCE_DATE_EPOCH: '1700000000'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # The `datalog` package the planner needs ships in the full Racket
       # distribution (setup-racket's default), already installed at installation
       # scope — so we must NOT re-request it as a user package (that errors on the
       # wider-scope install). A bare full distribution is enough.
       - name: Install Racket
-        uses: Bogdanp/setup-racket@v1.15
+        uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
         with:
           version: '9.2'
           variant: 'CS'
