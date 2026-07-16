@@ -9,6 +9,7 @@
 (require rackunit
          racket/file
          "model.rkt"
+         "cache.rkt"
          "exec.rkt")
 
 ;; a synthetic exporter: writes one file per key into $EXPORT_DIR/maps, with
@@ -64,3 +65,44 @@ SH
 (check-equal? (content "a") "a:v3" "full rebuild rewrites every key")
 
 (delete-directory/files out)
+
+;; --- driven through run-plan, via #:rebuild-keys-of (st-pd1 B2) ----------------
+;; The executor honors a caller-supplied partial plan during a real ordered build:
+;; a task that reruns (input changed) rebuilds only the given keys and prunes the
+;; removed ones, merging into the prior build's 'dir. `src' is an input whose change
+;; forces the rerun; the exporter itself ignores it (it keys off TAG/the env var).
+(define g2
+  (build-graph
+   (list (make-task 'export 'transform #:inputs '(src) #:outputs '(maps)
+                    #:invoke (recipe 'sh (list script))))
+   (list (make-artifact 'src 'file) (make-artifact 'maps 'dir))))
+
+(define root (make-temporary-file "stelis-partial2-~a" 'directory))
+(define odir (build-path root "out"))
+(make-directory odir)
+(define src-file (build-path root "src.txt"))
+(define maps2 (build-path odir "maps"))
+(define (resolve a export-dir)
+  (case a [(maps) (build-path export-dir "maps")] [(src) src-file] [else #f]))
+(define env2 (make-build-env resolve odir (build-path root "cache")))
+(define (env-for tag) (list (cons "EXPORT_DIR" (path->string odir)) (cons "TAG" tag)))
+(define (files2) (sort (map path->string (directory-list maps2)) string<?))
+(define (content2 k) (file->string (build-path maps2 k)))
+
+;; build 1: src=v1, no partial plan -> full build of a/b/c
+(display-to-file "v1" src-file #:exists 'replace)
+(let-values ([(_s _r) (run-plan g2 '(export) runtimes #:env (env-for "v1") #:context env2
+                                #:state-dir (build-path root ".stelis"))]) (void))
+(check-equal? (files2) '("a" "b" "c") "full first build")
+
+;; build 2: src changes (forces a rerun); caller's partial plan rebuilds b, prunes c
+(display-to-file "v2" src-file #:exists 'replace)
+(let-values ([(_s _r) (run-plan g2 '(export) runtimes #:env (env-for "v2") #:context env2
+                                #:state-dir (build-path root ".stelis")
+                                #:rebuild-keys-of
+                                (lambda (n) (if (eq? n 'export) (cons '("b") '("c")) #f)))]) (void))
+(check-equal? (files2) '("a" "b") "run-plan partial: b rebuilt in place, c pruned")
+(check-equal? (content2 "b") "b:v2" "the targeted key was rebuilt to the new tag")
+(check-equal? (content2 "a") "a:v1" "an untouched key kept its prior content (merge)")
+
+(delete-directory/files root)

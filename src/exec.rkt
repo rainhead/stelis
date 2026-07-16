@@ -143,8 +143,10 @@
   (define argv (recipe->argv rec runtimes))
   (define exe (or (find-executable-path (car argv))
                   (error 'run-task "executable not found on PATH: ~a" (car argv))))
+  ;; a list (even empty — a pure-retraction rebuild) requests partial mode; #f is a
+  ;; full rebuild (the var stays unset).
   (define env*
-    (if (and rebuild-keys (pair? rebuild-keys))
+    (if (list? rebuild-keys)
         (cons (cons "STELIS_REBUILD_KEYS" (string-join rebuild-keys "\n")) extra-env)
         extra-env))
   (flush-output) ; our buffered banner must land before the child's direct fd writes
@@ -190,6 +192,19 @@
     (define p (build-path dir rel))
     (when (file-exists? p) (delete-file p))))
 
+;; keyed-dir-outputs : graph symbol build-env? -> (listof path-string)
+;; The task's 'dir outputs that already exist on disk — where a partial rebuild
+;; merges into and where retracted keys are pruned. A missing dir means there is no
+;; prior complete build to merge into, so it drops out (the caller then rebuilds
+;; that output fully rather than partially).
+(define (keyed-dir-outputs g name env)
+  (for*/list ([out (in-list (task-outputs (hash-ref (graph-tasks g) name)))]
+              [a (in-value (hash-ref (graph-artifacts g) out #f))]
+              #:when (and a (eq? 'dir (artifact-kind a)))
+              [p (in-value (and env (env-resolve env out)))]
+              #:when (and p (directory-exists? p)))
+    p))
+
 ;; --- Ordered plan execution with partial success ----------------------------
 
 ;; blockers-of : graph symbol (hash symbol->symbol) -> (listof symbol)
@@ -219,10 +234,18 @@
 ;; as 'cached. What this loop adds is the receipt — after a run, the rebuilt
 ;; outputs are hashed and compared against the previous entry (the delta on
 ;; the trace record), so the cutoff point can be named, not just enjoyed.
+;; #:rebuild-keys-of maps a task name to (rebuild-keys . removed-keys) to run it as
+;; a PARTIAL rebuild (st-pd1), or #f for a normal full rebuild. The caller (which
+;; owns the delta machinery) decides; the executor just honors it — injecting the
+;; rebuild keys and, after a clean run, pruning the removed keys from the merged
+;; 'dir output(s). Only tasks with an existing 'dir output can be partial (there
+;; must be a prior build to merge into); the caller is expected to return #f
+;; otherwise, and keyed-dir-outputs is the backstop (no dir -> nothing pruned).
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
                   #:context [env #f]
-                  #:state-dir [state-dir #f])
+                  #:state-dir [state-dir #f]
+                  #:rebuild-keys-of [rebuild-keys-of (lambda (_) #f)])
   (define status (make-hash))
   (define records '())
   (for ([name (in-list ordered)])
@@ -272,10 +295,23 @@
          ;; the previous entry, read before cache-store! overwrites it — the
          ;; comparison basis for the output delta
          (define prior (and env (read-cache-entry (build-env-cache-dir env) name)))
-         (define code (run-task g name runtimes #:env extra-env #:label name))
+         ;; partial rebuild (st-pd1): the caller's (rebuild . removed) for this task,
+         ;; or #f for a full rebuild. Only honored when a prior 'dir output exists.
+         (define rk (and env (pair? (keyed-dir-outputs g name env)) (rebuild-keys-of name)))
+         (when rk
+           (printf "  ⇒ partial: rebuilding ~a key(s)~a\n"
+                   (length (car rk))
+                   (if (pair? (cdr rk)) (format ", pruning ~a" (length (cdr rk))) "")))
+         (define code (run-task g name runtimes #:env extra-env #:label name
+                                #:rebuild-keys (and rk (car rk))))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
          (when (and ok? env)
+           ;; retract removed keys from the merged 'dir(s) before observing, so the
+           ;; recorded per-key map reflects the pruned set.
+           (when rk
+             (for ([d (in-list (keyed-dir-outputs g name env))])
+               (prune-keys! d (cdr rk))))
            (define-values (out-hashes out-keys) (output-snapshot+keys g name env))
            (set! output-hashes out-hashes)
            (set! output-key-hashes out-keys)
