@@ -28,6 +28,8 @@
          "provenance-datalog.rkt"
          "trace.rkt"
          "history.rkt"
+         "delta.rkt"
+         "delta-explain.rkt"
          "determinism.rkt")
 
 (define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history
@@ -74,21 +76,6 @@
   (cond [(not h) "?"]
         [(<= (string-length h) 10) h]
         [else (string-append (substring h 0 10) "…")]))
-
-;; key-diff : (or/c (listof (cons string string)) #f) (listof (cons string string))
-;;            -> (values (listof string) (listof string) (listof string))
-;; Added / removed / changed keys between two per-key maps (prev #f = first
-;; sight). Pure alist set-difference by path, with a hash compare for `changed'.
-(define (key-diff prev cur)
-  (define p (make-immutable-hash (or prev '())))
-  (define c (make-immutable-hash cur))
-  (values (sort (for/list ([k (in-hash-keys c)] #:unless (hash-has-key? p k)) k) string<?)
-          (sort (for/list ([k (in-hash-keys p)] #:unless (hash-has-key? c k)) k) string<?)
-          (sort (for/list ([k (in-hash-keys c)]
-                           #:when (and (hash-has-key? p k)
-                                       (not (equal? (hash-ref p k) (hash-ref c k)))))
-                  k)
-                string<?)))
 
 ;; show-keys : string (listof string) -> void — a labelled key list, capped so a
 ;; wide fan-out doesn't flood the terminal; the cap is REPORTED, never silent.
@@ -243,7 +230,7 @@
                       (trace-record-task (key-observation-record o)))]
              [else
               (define-values (added removed changed)
-                (key-diff (key-observation-keys prev) cur))
+                (diff-key-maps (key-observation-keys prev) cur))
               (cond
                 [(and (null? added) (null? removed) (null? changed))
                  (printf "  build ~a  ≡ rebuilt, all ~a ~a(s) identical\n"
@@ -371,7 +358,8 @@
    (unless (eq? subject-task name)
      (printf "~a is produced by ~a — asking about that task.\n\n" name subject-task))
    (if (datalog-stale? thy subject-task)
-       (print-why-tree thy subject-task (lambda (t) (hash-ref dec-of t)))
+       (print-why-tree thy subject-task (lambda (t) (hash-ref dec-of t))
+                       (make-reason->string beeatlas-graph benv stelis-state))
        (printf "~a is NOT stale — ~a\n"
                subject-task (decision->string (hash-ref dec-of subject-task))))]
 
@@ -385,7 +373,8 @@
       (printf "Explain — ~a task(s)~a, in build order:\n"
               (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
       (printf "  ≡ skips · ≈ conditional (upstream reruns) · ▶ runs\n\n")
-      (print-explanations (plan-explanations beeatlas-graph to-run benv))]
+      (print-explanations (plan-explanations beeatlas-graph to-run benv)
+                          (make-reason->string beeatlas-graph benv stelis-state))]
      [(eq? (mode) 'commands)
       (define to-run (plan-suffix ordered))
       (printf "Dry run — ~a command(s)~a, in build order (nothing executed):\n"

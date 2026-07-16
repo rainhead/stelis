@@ -72,19 +72,23 @@
     [(cached)              "cached — inputs unchanged, outputs present"]
     [else                  (format "~a" (decision-reason d))]))
 
-(define (explanation->string e)
+;; reason->string decorates the base reason prose (default = decision->string,
+;; the pure one). The delta adapter (delta-explain.rkt) passes an impure renderer
+;; that appends the changed KEY subset for an 'input-changed edge; the conditional
+;; suffix is layered on top of whatever it returns.
+(define (explanation->string e [reason->string decision->string])
   (define d (explanation-decision e))
-  (define base (decision->string d))
+  (define base (reason->string d))
   (if (and (eq? 'skip (decision-verdict d)) (pair? (explanation-upstreams e)))
       (format "~a, BUT conditional: upstream ~a runs first and may change its inputs"
               base
               (string-join (map symbol->string (explanation-upstreams e)) ", "))
       base))
 
-;; print-explanations : (listof explanation?) -> void
-(define (print-explanations exps)
+;; print-explanations : (listof explanation?) [(decision? -> string)] -> void
+(define (print-explanations exps [reason->string decision->string])
   (for ([e (in-list exps)] [i (in-naturals 1)])
     (printf "~a~a. ~a ~a\n     ~a\n"
             (if (< i 10) " " "") i
             (explanation-glyph e) (explanation-task e)
-            (explanation->string e))))
+            (explanation->string e reason->string))))

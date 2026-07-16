@@ -77,6 +77,14 @@ manifest (soundness gated, completeness reported) ·
 refinement: path→hash for `'dir`, column→digest:count for `'db-relation`) + a
 once-per-topology graph snapshot; freshness never reads its sequence (ADR 0005) ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
+[`delta.rkt`](src/delta.rkt) the H2 delta substrate entry point (st-066): the pure
+per-key delta core — folds a keyed artifact's key-observation timeline into a named
+added/removed/changed key-set (`observations->delta`, retrospective; `prospective-delta`,
+history-tail vs a live on-disk map). Per-key staleness first, no Z-sets yet ·
+[`delta-explain.rkt`](src/delta-explain.rkt) the impure adapter that refines a pure
+`'input-changed` decision into that named delta for a PENDING build, so `--why` /
+`--explain` name WHICH keys of a changed input are about to move (`explain.rkt`/
+`decision->string` stay pure; this is the only IO seam) ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules,
 plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
