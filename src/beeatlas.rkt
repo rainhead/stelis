@@ -54,7 +54,9 @@
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
 ;; data/dbt/run.sh, which uvx-pins Python 3.13. Stelis delegates hermeticity to
 ;; those existing pins — it just launches the right command per task.
-(define BEEATLAS "/Users/rainhead/dev/beeatlas")
+;; Where the beeatlas case-study repo lives. Defaults to the author's checkout;
+;; override with BEEATLAS_DIR to run this graph on another host (maderas, CI).
+(define BEEATLAS (or (getenv "BEEATLAS_DIR") "/Users/rainhead/dev/beeatlas"))
 (define DATA (string-append BEEATLAS "/data"))
 
 ;; --- Deterministic build clock (ADR 0004, st-3mi) ---------------------------
