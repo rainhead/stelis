@@ -26,6 +26,7 @@
          shell-quote
          print-plan-commands
          run-task
+         prune-keys!
          blockers-of
          run-plan)
 
@@ -130,16 +131,26 @@
 ;; prefixed with the label (streaming per-task observability, st-d44.5) — so in a
 ;; multi-task build you can tell which task produced which line. Without a label,
 ;; the child inherits our stdio directly (simplest; used by single --run).
-(define (run-task g name runtimes #:env [extra-env '()] #:label [label #f])
+;; #:rebuild-keys, when a non-empty list, requests a PARTIAL rebuild (st-pd1): the
+;; keys are injected as STELIS_REBUILD_KEYS (newline-separated, since a key like a
+;; canonical_name contains spaces). An exporter that honors the var emits only
+;; those keys into the existing EXPORT_DIR (merge in place); one that ignores it
+;; rebuilds fully — so this is an opt-in HINT, never a correctness dependency.
+(define (run-task g name runtimes #:env [extra-env '()] #:label [label #f]
+                  #:rebuild-keys [rebuild-keys #f])
   (define rec (task-invoke (hash-ref (graph-tasks g) name)))
   (unless rec (error 'run-task "task ~a has no recipe" name))
   (define argv (recipe->argv rec runtimes))
   (define exe (or (find-executable-path (car argv))
                   (error 'run-task "executable not found on PATH: ~a" (car argv))))
+  (define env*
+    (if (and rebuild-keys (pair? rebuild-keys))
+        (cons (cons "STELIS_REBUILD_KEYS" (string-join rebuild-keys "\n")) extra-env)
+        extra-env))
   (flush-output) ; our buffered banner must land before the child's direct fd writes
   (parameterize ([current-environment-variables
                   (environment-variables-copy (current-environment-variables))])
-    (for ([kv (in-list extra-env)])
+    (for ([kv (in-list env*)])
       (putenv (car kv) (cdr kv)))
     (if label
         (run/streaming exe (cdr argv) label)
@@ -168,6 +179,16 @@
   (thread-wait t-out)
   (thread-wait t-err)
   (subprocess-status sp))
+
+;; prune-keys! : path-string (listof string) -> void
+;; The engine's half of a partial rebuild's RETRACTION (st-pd1): delete the files
+;; for `removed' keys (relative paths under `dir'). An exporter told "rebuild keys
+;; X" can't know key Z was removed, so the engine removes Z's file itself. Missing
+;; files are a no-op (idempotent); other keys' files are untouched (the merge).
+(define (prune-keys! dir removed)
+  (for ([rel (in-list removed)])
+    (define p (build-path dir rel))
+    (when (file-exists? p) (delete-file p))))
 
 ;; --- Ordered plan execution with partial success ----------------------------
 
