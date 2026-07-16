@@ -9,12 +9,15 @@ making predictable mistakes.
 - Read `DESIGN.md` and `ROADMAP.md` before starting work.
 - Treat `DESIGN.md`'s **settled commitments as decided** — don't relitigate them;
   raise a flag if one seems wrong, don't quietly work around it.
-- Treat `ROADMAP.md`'s **horizons as the scope guard.** We are in **Horizon 1**:
-  Horizon 0's exit condition (run.py retired for `occurrences.db`, reproducibly)
-  is met, and H1 items have shipped — provenance, early cutoff, and the start of
-  broader target coverage. If a request would build a **Horizon 2+** feature
-  (streaming/CRUD ingestion, delta propagation, compile-to-TS emission, anything
-  needing change-over-time or non-linear time), say so before building it.
+- Treat `ROADMAP.md`'s **horizons as the scope guard.** **Horizon 1 is delivered**
+  (2026-07-16): provenance, the observation history (`.stelis/`, with per-key and
+  per-column granularity), early cutoff, data-quality rules-as-nodes + the integrity
+  gate, and full target coverage all shipped and verified. **Horizon 2 is next** —
+  its natural entry point is **delta propagation (st-066)**, which folds over the H1
+  observation history. If a request would build an H2 feature (streaming/CRUD
+  ingestion, delta propagation, editorial data-quality flags, compile-to-TS
+  emission, anything needing change-over-time or non-linear time), it is now in
+  scope — but flag when a task crosses that line so the horizon move is deliberate.
 
 ## What this is (one line)
 

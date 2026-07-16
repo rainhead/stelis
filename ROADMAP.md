@@ -28,22 +28,31 @@ here.
 **Exit condition:** `run.py`'s linear sequence retired for the `occurrences.db`
 build; minimal-upstream rebuild proven reproducible.
 
-## Horizon 1 — Next
+## Horizon 1 — Delivered (2026-07-16)
 
 *Make it explain itself, remember, and rebuild incrementally. Still batch, still
 one repo, still linear time.*
 
-- **Provenance, first-class:** "why did this rebuild / why is this stale?" as a
-  queryable property. The build reasoning becomes inspectable.
-- **Trace/graph persistence:** move state from in-memory to a database / log,
-  using the representation Horizon 0 was designed to allow.
-- **Incremental rebuild via early cutoff:** content-addressed outputs; stop
-  propagation when a rebuild produces identical content.
-- **Data-quality Datalog** as rule-sets that run *as nodes within* the build
-  (duplicate sample IDs per collector-day, out-of-state samples, bee-vs-flower
-  misclassification). This is the second Datalog application, now that build
-  orchestration works.
-- Broaden target coverage beyond the single `occurrences.db` path.
+- ✓ **Provenance, first-class:** `--why` / `--explain`; staleness and blame as
+  Datalog (`provenance-datalog.rkt`). The build reasoning is inspectable.
+- ✓ **Trace/graph persistence:** an append-only observation history under
+  `.stelis/` (`history.rkt`) — per-build records with per-key (`'dir`) and
+  per-column (`'db-relation`) granularity, once-per-topology graph snapshots, a
+  `--history` browser, and a Datalog projection. Freshness stays content-hash +
+  graph, never the sequence (ADR 0005).
+- ✓ **Incremental rebuild via early cutoff:** content-addressed outputs; stop
+  propagation when a rebuild produces identical content (ADR 0003).
+- ✓ **Data-quality rules as build nodes:** in-process rule nodes (`exec.rkt`'s
+  `rule-check`), with the record-count **integrity gate** as the first rule
+  (`data-quality.rkt`, ADR 0006). The *editorial* half — flags for end users — is
+  *published derived data*, so it moved to Horizon 2 (see below).
+- ✓ **Broaden target coverage:** every terminal deliverable — not just
+  `occurrences.db` — now plans, builds, and verifies byte-identical.
+
+**Exit condition (met):** the build explains itself, remembers its observations
+across builds, and cuts off propagation on unchanged content — proven across all
+`beeatlas` targets. Horizon 2's substrate (the observation history) is built; the
+engine is host-portable (`BEEATLAS_DIR` / `NOTES_DB_PATH`).
 
 ## Horizon 2 — Later
 
@@ -54,7 +63,14 @@ batch→streaming arc completes and the browser gets fed.*
   content-addressed snapshots at the ingestion boundary; near-real-time
   incorporation of API data into artifacts.
 - **Delta-based propagation** (Z-sets / DBSP-shaped) where coarse over-rebuilding
-  hurts; retraction-clean incremental maintenance.
+  hurts; retraction-clean incremental maintenance. The H1 observation history
+  (content + basis per output, plus per-key/per-column granularity) is the
+  substrate this folds over — the natural entry point into this horizon (st-066).
+- **Editorial data-quality flags** (moved from H1): rules that flag records for
+  end **users** (dup collector-day, out-of-state, bee-vs-flower) and travel with
+  the data into published outputs — they annotate, never block (ADR 0006). Deferred
+  here because end-user-facing flags are *published derived data*, which reopens
+  the "transformations stay external" line — a dbt-vs-Stelis fork to settle first.
 - **Demand-directed evaluation** via magic sets, if/when goal-directedness is
   needed.
 - **Compile-to-TS emission:** specialized projections compiled to small
