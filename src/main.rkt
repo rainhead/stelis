@@ -108,6 +108,29 @@
   (list (cons "EXPORT_DIR" (path->string out))
         (cons "SOURCE_DATE_EPOCH" (beeatlas-source-date-epoch))))
 
+;; beeatlas-rebuild-keys-of : symbol
+;;   -> (or/c (cons (listof string) (listof string)) #f)
+;; The run-plan #:rebuild-keys-of hook (st-pd1): the (rebuild-keys . removed-relpaths)
+;; that makes a partial-capable task a TARGETED rebuild, or #f for a full one. For a
+;; partial-capable task about to rerun on a changed keyed input, fold the H1
+;; prospective delta into the canonical_names to re-harvest (added+changed) and the
+;; output files to prune (removed → "<name>.json"). #f (full) unless there is a real
+;; per-key delta; run-plan additionally requires a prior 'dir output to merge into.
+(define (beeatlas-rebuild-keys-of name)
+  (and (memq name beeatlas-partial-tasks)
+       (let-values ([(dec _snap) (decision+snapshot beeatlas-graph name benv)])
+         (and (eq? 'run (decision-verdict dec))
+              (eq? 'input-changed (decision-reason dec))
+              (let ([deltas (input-key-deltas beeatlas-graph dec benv stelis-state)])
+                (and (pair? deltas)
+                     (cons (remove-duplicates
+                            (append-map (lambda (d)
+                                          (append (key-delta-added d) (key-delta-changed d)))
+                                        deltas))
+                           (remove-duplicates
+                            (map (lambda (k) (string-append k ".json"))
+                                 (append-map key-delta-removed deltas))))))))))
+
 ;; verify-seeds (st-dtq): the (src . basename) files to copy into a --verify
 ;; suffix's fresh build dir. The suffix's EXTERNAL input artifacts — those not
 ;; produced by any task in the suffix — resolved in `ref-dir' (a populated
@@ -286,7 +309,8 @@
      (run-plan beeatlas-graph to-run beeatlas-runtimes
                #:env (task-env out)
                #:context benv
-               #:state-dir stelis-state))
+               #:state-dir stelis-state
+               #:rebuild-keys-of beeatlas-rebuild-keys-of))
    ;; st-sds: append this build to the history (retiring last-build.rktd). The
    ;; source-epoch is sequence metadata for browsing only — freshness never reads
    ;; it. The graph snapshot is written once per distinct topology.

@@ -50,9 +50,14 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner ·
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
-recipes, and the runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
+recipes, and the runtimes (incl. the `notes-harvest` → per-species `notes/` dir →
+`notes-assemble` → `notes.json` split, and `beeatlas-partial-tasks`, st-pd1) ·
+[`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus in-process `rule-check` nodes — a rule evaluated in
-Racket as a graph node, gating its downstream (st-0vz) · [`cache.rkt`](src/cache.rkt)
+Racket as a graph node, gating its downstream (st-0vz). `run-plan`'s
+`#:rebuild-keys-of` does TARGETED execution (st-pd1): a partial-capable task
+rebuilds only changed keys via `STELIS_REBUILD_KEYS`, `prune-keys!` retracts
+removed ones · [`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts ·
 [`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;
 first rule = the integrity gate (record-count swing vs. the previous build's

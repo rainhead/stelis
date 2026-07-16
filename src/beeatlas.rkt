@@ -50,6 +50,7 @@
          beeatlas-resolve-relation
          beeatlas-resolve-relation-columns
          beeatlas-resolve-store-keys
+         beeatlas-partial-tasks
          beeatlas-source-date-epoch)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
@@ -131,14 +132,17 @@
     places.json places.geojson place_details.json
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
     seasonality.json photos.json species_hosts.json higher_taxa.json
-    notes.json)) ; notes-harvest emits ASSETS_DIR(=EXPORT_DIR)/notes.json (st-msn)
+    notes.json)) ; assembled from the per-species notes/ dir by notes-assemble (st-pd1)
 
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
 ;; land as a directory of per-entity files under EXPORT_DIR — species_maps writes
 ;; EXPORT_DIR/species-maps/, places_maps EXPORT_DIR/place-maps/, feeds EXPORT_DIR/
 ;; feeds/. The directory name is the artifact name. Content-addressed as a whole by
 ;; an order-independent tree digest (tree-digest.rkt); SET completeness is st-tul.
-(define export-dir-dirs '(species-maps place-maps feeds))
+;; `notes' is the per-canonical_name notes SET (st-pd1): notes-harvest writes
+;; EXPORT_DIR/notes/<canonical_name>.json, one per approved species — the keyed unit
+;; a targeted rebuild touches (notes-assemble then rolls it into notes.json).
+(define export-dir-dirs '(species-maps place-maps feeds notes))
 
 ;; The authoritative notes STORE (st-msn): the SQLite file notes-harvest reads
 ;; read-only. A fixed absolute path OUTSIDE the beeatlas repo (D-15), from
@@ -238,6 +242,13 @@
 (define (beeatlas-resolve-store-keys artifact)
   (and (eq? artifact 'notes-store.db)
        (notes-store-keys notes-store-path)))
+
+;; beeatlas-partial-tasks : (listof symbol) — tasks whose exporter honors
+;; STELIS_REBUILD_KEYS, so the engine may run them as a PARTIAL rebuild (st-pd1).
+;; notes-harvest re-harvests only the canonical_names a note CRUD touched; every
+;; other task rebuilds whole. The engine still only goes partial when the task has
+;; an existing 'dir output and a real per-key delta on a keyed input.
+(define beeatlas-partial-tasks '(notes-harvest))
 
 ;; --- Integrity gate (st-0vz) ------------------------------------------------
 ;; The default fractional record-count swing that trips an integrity gate: a
@@ -346,12 +357,13 @@
    ;; pages.json is the compact sub-page sidecar written by the same invocation.
    (make-artifact 'collectors.events.json       'file)
    (make-artifact 'collector_event_pages.json   'file)
-   ;; notes.json is DERIVED (st-msn): notes-harvest reads the authoritative notes
-   ;; store read-only and emits notes.json, which is reproducible and safe to
-   ;; rebuild — so beeatlas's data/artifacts.toml 'authoritative' label was a
-   ;; mislabel for stelis's purposes (and marking it forward-only would block the
-   ;; near-term CRUD → targeted-rebuild goal, st-066). The authoritative thing is
-   ;; the INPUT store below, not this output.
+   ;; the per-canonical_name notes SET (st-pd1): notes-harvest writes one
+   ;; EXPORT_DIR/notes/<name>.json per approved species — the KEYED unit a targeted
+   ;; rebuild touches (a note edit rebuilds only that species' file). DERIVED.
+   (make-artifact 'notes                        'dir)
+   ;; notes.json is DERIVED: notes-assemble rolls the notes/ dir up into the
+   ;; monolithic Record _data/notes.js reads (st-pd1; was notes-harvest's direct
+   ;; output, st-msn). The authoritative thing is the INPUT store below, not this.
    (make-artifact 'notes.json                   'file)
    ;; the authoritative notes STORE — beeatlas's one piece of forward-only state on
    ;; this graph (user-authored notes; regenerable only by migration, never by the
@@ -575,11 +587,18 @@
               #:outputs '(collectors.events.json collector_event_pages.json)
               #:invoke (py "collectors_events_export" "export_collectors_events_step"))
    ;; notes-harvest reads the authoritative notes store (make_engine, NOTES_DB_PATH)
-   ;; for approved notes AND collectors.json (byline resolution, D-11/D-12) — the
-   ;; store was undeclared until st-msn. Emits the DERIVED notes.json.
+   ;; for approved notes AND collectors.json (byline resolution, D-11/D-12). Emits
+   ;; the per-species notes/ SET. PARTIAL-CAPABLE (st-pd1): honors STELIS_REBUILD_KEYS
+   ;; to re-harvest only the canonical_names a CRUD touched (beeatlas-partial-tasks).
    (make-task 'notes-harvest 'transform
-              #:inputs '(collectors.json notes-store.db) #:outputs '(notes.json)
+              #:inputs '(collectors.json notes-store.db) #:outputs '(notes)
               #:invoke (py "notes_harvest" "main"))
+   ;; notes-assemble rolls the per-species notes/ dir up into the monolithic
+   ;; notes.json _data/notes.js reads — full + cheap, and it runs AFTER any prune of
+   ;; retracted species, so notes.json reflects exactly the dir (st-pd1).
+   (make-task 'notes-assemble 'transform
+              #:inputs '(notes) #:outputs '(notes.json)
+              #:invoke (py "assemble_notes" "main"))
    ;; places_maps reads occurrences.parquet@export + the occurrence_places.parquet@
    ;; export bridge (grouping points per place_slug) and county GEOMETRY from the
    ;; geographies.us_counties db-relation — it never opens places.geojson, so the

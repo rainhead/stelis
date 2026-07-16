@@ -22,12 +22,13 @@
 (check-equal? (list->set pruned)
               (set 'dedup-candidates 'dedup-gate 'topology-postprocess
                    'species-export 'species-maps 'places-export
-                   'collectors-export 'collectors-events-export 'notes-harvest
+                   'collectors-export 'collectors-events-export
+                   'notes-harvest 'notes-assemble
                    'places-maps 'feeds 'place-marts)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
 (check-equal? (length ordered) 22 "22 tasks upstream of occurrences.db (+ the integrity gate, st-0vz)")
-(check-equal? (+ (length ordered) (set-count pruned)) 34 "34 tasks total")
+(check-equal? (+ (length ordered) (set-count pruned)) 35 "35 tasks total (notes split into harvest + assemble, st-pd1)")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download

@@ -43,13 +43,17 @@
 (define (notes-keys-query db)
   (string-append
    "ATTACH '" (sql-quote (path-string->string db)) "' AS s (TYPE sqlite, READ_ONLY);\n"
-   "SELECT canonical_name || chr(9) ||\n"
+   "SELECT n.canonical_name || chr(9) ||\n"
    "  coalesce(sum(md5_number_lower(to_json({"
-   "'id':id,'author_id':author_id,'html':body_html,"
-   "'created':created_at,'updated':updated_at})::VARCHAR))::VARCHAR, '0')\n"
+   "'id':n.id,'author':u.inat_login,'html':n.body_html,"
+   "'created':n.created_at,'updated':n.updated_at})::VARCHAR))::VARCHAR, '0')\n"
    "  || ':' || count(*)::VARCHAR\n"
-   "FROM s.notes WHERE status='approved'\n"
-   "GROUP BY canonical_name ORDER BY canonical_name;"))
+   ;; INNER JOIN users to MATCH notes_harvest exactly (it joins User; a note whose
+   ;; author has no user row is dropped, so it must not count toward a species' key
+   ;; either). inat_login is hashed because notes.json's byline is derived from it.
+   "FROM s.notes n JOIN s.users u ON n.author_id = u.id\n"
+   "WHERE n.status='approved'\n"
+   "GROUP BY n.canonical_name ORDER BY n.canonical_name;"))
 
 ;; parse-key-lines : string -> (listof (cons string string))
 ;; Each -list line is "<canonical_name>\t<digest>:<count>"; split on the first TAB

@@ -36,8 +36,11 @@
      (unless (eqv? 0 (subprocess-status sp))
        (error 'sql "sqlite3 failed for: ~a" stmt)))
 
-   ;; the notes table (a minimal shape of beeatlas notes_store/models.py).
+   ;; a minimal shape of beeatlas notes_store/models.py — notes + the users it
+   ;; INNER-JOINs (notes-store-keys mirrors notes_harvest's join, st-pd1).
    (sql! (string-append
+          "CREATE TABLE users (id INTEGER PRIMARY KEY, inat_login VARCHAR NOT NULL);"
+          "INSERT INTO users (id, inat_login) VALUES (100,'alice'),(101,'bob');"
           "CREATE TABLE notes (id INTEGER PRIMARY KEY, canonical_name VARCHAR NOT NULL,"
           " author_id INTEGER NOT NULL, body TEXT NOT NULL, body_html TEXT NOT NULL,"
           " status VARCHAR NOT NULL DEFAULT 'approved',"
@@ -51,6 +54,9 @@
    (add 2 "apis mellifera"      101 "<p>two</p>"   "approved" "2026-07-02 00:00:00")
    (add 3 "osmia lignaria"      100 "<p>three</p>" "approved" "2026-07-03 00:00:00")
    (add 4 "bombus vosnesenskii" 100 "<p>four</p>"  "removed"  "2026-07-04 00:00:00")
+   ;; author 404 has NO users row: notes_harvest INNER-JOINs users, so this note —
+   ;; and a species with only such notes — is excluded; the digest must match.
+   (add 6 "andrena orphan"      404 "<p>orphan</p>" "approved" "2026-07-06 00:00:00")
 
    (define (keys) (notes-store-keys db))
    (define (val k ks) (cond [(assoc k ks) => cdr] [else #f]))
@@ -59,6 +65,8 @@
    (define k0 (keys))
    (check-equal? (map car k0) '("apis mellifera" "osmia lignaria")
                  "keys are the approved-note species, sorted; removed-only absent")
+   (check-false (assoc "andrena orphan" k0)
+                "a species whose only note has an orphan author_id is absent (INNER JOIN users)")
    (check-regexp-match #px"^[0-9]+:2$" (val "apis mellifera" k0)
                        "apis mellifera: <digest>:<count>, count 2")
    (check-regexp-match #px"^[0-9]+:1$" (val "osmia lignaria" k0) "osmia: count 1")

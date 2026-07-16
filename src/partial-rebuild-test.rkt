@@ -17,11 +17,11 @@
 ;; writes the full set a/b/c. TAG varies content across builds so a rebuild shows.
 (define script #<<SH
 mkdir -p "$EXPORT_DIR/maps"
-if [ -n "$STELIS_REBUILD_KEYS" ]; then keys="$STELIS_REBUILD_KEYS"; else keys='a
+if [ -n "${STELIS_REBUILD_KEYS+set}" ]; then keys="$STELIS_REBUILD_KEYS"; else keys='a
 b
 c'; fi
 printf '%s\n' "$keys" | while IFS= read -r k; do
-  [ -n "$k" ] && printf '%s' "$k:$TAG" > "$EXPORT_DIR/maps/$k"
+  if [ -n "$k" ]; then printf '%s' "$k:$TAG" > "$EXPORT_DIR/maps/$k"; fi
 done
 SH
   )
@@ -63,6 +63,13 @@ SH
 (check-eqv? 0 (run-task g 'export runtimes #:env (env "v3")))
 (check-equal? (files) '("a" "b" "c") "a full rebuild (no keys) re-emits the whole set")
 (check-equal? (content "a") "a:v3" "full rebuild rewrites every key")
+
+;; 6. the empty-keys contract (st-pd1): #:rebuild-keys '() SETS the var (to "") ->
+;; partial-of-NOTHING, distinct from unset=full. A pure-retraction rerun writes no
+;; keys (the exporter honors set-vs-unset), leaving the prior build untouched.
+(check-eqv? 0 (run-task g 'export runtimes #:env (env "v4") #:rebuild-keys '()))
+(check-equal? (files) '("a" "b" "c") "empty rebuild-keys rebuilds nothing (merge preserved)")
+(check-equal? (content "a") "a:v3" "no key was rewritten — v3 content survives")
 
 (delete-directory/files out)
 
