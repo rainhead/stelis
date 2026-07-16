@@ -98,7 +98,8 @@
 ;; reaches the pre-dbt graph and not only the file edges around dbt-build.
 (define benv (make-build-env beeatlas-path (scratch-out-path) stelis-cache
                              #:resolve-relation beeatlas-resolve-relation
-                             #:resolve-relation-columns beeatlas-resolve-relation-columns))
+                             #:resolve-relation-columns beeatlas-resolve-relation-columns
+                             #:resolve-store-keys beeatlas-resolve-store-keys))
 
 ;; ADR 0004 (st-3mi): the deterministic build clock injected into every executed
 ;; task's hermetic env, so outputs that stamp a build time stay byte-stable.
@@ -218,7 +219,10 @@
          (define kind (let ([a (hash-ref (graph-artifacts beeatlas-graph) name #f)])
                         (and a (artifact-kind a))))
          (define noun (if (eq? kind 'db-relation) "column" "key"))
-         (define source (if (eq? kind 'db-relation) "db-relation" "fan-out 'dir"))
+         (define source (case kind
+                          [(db-relation) "db-relation"]
+                          [(file)        "keyed store"]
+                          [else          "fan-out 'dir"]))
          (printf "~a — ~a observation(s), per ~a (~a):\n" name (length kobs) noun source)
          (printf "  ✦ first seen · ≡ unchanged · ± ~as changed/added/removed\n\n" noun)
          (for ([o (in-list kobs)] [prev (in-list (cons #f kobs))])

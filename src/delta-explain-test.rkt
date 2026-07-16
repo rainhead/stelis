@@ -38,7 +38,8 @@
 (void (history-append! state 'maps g "0"
                        (list (trace-record 'mk #f #f 'ok '() #f
                                            (list (cons 'maps "dir-digest"))
-                                           (list (cons 'maps prev-keys))))))
+                                           (list (cons 'maps prev-keys))
+                                           '()))))
 
 ;; now MUTATE the live dir: a.svg unchanged, b.svg edited, c.svg added.
 (display-to-file "BB" (build-path live "b.svg") #:exists 'replace)
@@ -90,7 +91,8 @@
 (void (history-append! state2 'rel g2 "0"
                        (list (trace-record 'load #f #f 'ok '() #f
                                            (list (cons 'rel "rel-digest"))
-                                           (list (cons 'rel prev-cols))))))
+                                           (list (cons 'rel prev-cols))
+                                           '()))))
 
 ;; live columns: col_a's digest changed, col_b unchanged, col_c is new.
 (define live-cols (list (cons "col_a" "dX:11") (cons "col_b" "db:5") (cons "col_c" "dc:3")))
@@ -109,5 +111,45 @@
 (check-equal? (key-delta-total rd)   3          "3 live columns")
 (check-equal? (key-delta->string rd) "2 of 3 keys: +col_c ~col_a"
               "prose names moved columns, same +/~/- grammar as 'dir")
+
+;; --- the keyed-STORE path: a producerless 'file input (st-2k9) ----------------
+;; The notes-store case: an authoritative 'file leaf with NO producer, so its
+;; per-key map lives only as input-key-hashes recorded when its consumer ran (not
+;; as an output). Live keys come from the env's resolve-store-keys slot. This pins
+;; the full Step-2 path: input-key-hashes -> history-key-observations -> live diff.
+(define g3
+  (build-graph
+   (list (make-task 'harvest 'transform #:inputs '(store) #:outputs '(out)))
+   (list (make-artifact 'store 'file #:provenance 'authoritative)
+         (make-artifact 'out 'file))))
+
+(define state3 (build-path root ".stelis-store"))
+
+;; the store's per-key map recorded as an INPUT-key observation (not an output) —
+;; the ingestion-boundary snapshot taken when `harvest' consumed it last build.
+(define prev-store (list (cons "apis mellifera" "d1:2") (cons "osmia lignaria" "d2:1")))
+(void (history-append! state3 'store g3 "0"
+                       (list (trace-record 'harvest #f #f 'ok '() #f
+                                           (list (cons 'out "out-digest"))
+                                           '()                       ; no 'dir output keys
+                                           (list (cons 'store prev-store))))))
+
+;; live store: osmia's note edited (digest moves), a new species added.
+(define live-store (list (cons "apis mellifera" "d1:2")
+                         (cons "bombus mixtus" "d3:1")
+                         (cons "osmia lignaria" "dX:1")))
+(define env3 (make-build-env (lambda (_a _dir) #f)   ; the store resolves via keys, not a path
+                             root (build-path state3 "cache")
+                             #:resolve-store-keys
+                             (lambda (a) (if (eq? a 'store) live-store #f))))
+
+(define store-deltas (input-key-deltas g3 (decision 'run 'input-changed '(store)) env3 state3))
+(check-equal? (length store-deltas) 1 "one changed keyed store input -> one delta")
+(define sd (car store-deltas))
+(check-equal? (key-delta-artifact sd) 'store)
+(check-equal? (key-delta-changed sd) '("osmia lignaria") "edited species note -> changed")
+(check-equal? (key-delta-added sd)   '("bombus mixtus")  "new species -> added")
+(check-equal? (key-delta->string sd) "2 of 3 keys: +bombus mixtus ~osmia lignaria"
+              "names the moved species, same grammar as 'dir/db-relation")
 
 (delete-directory/files root)

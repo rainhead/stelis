@@ -29,6 +29,7 @@
                 (snapshot "recipe0" (hash 'raw input-hash))
                 'ok '() #f
                 (list (cons 'mid mid-hash))
+                '()
                 '()))
 
 (define build1 (list (rec-derive "r0" "m0")))
@@ -98,7 +99,8 @@
   (trace-record 'maps (decision 'run 'input-changed '(taxa))
                 (snapshot "r" (hash 'taxa taxa-h)) 'ok '() #f
                 (list (cons 'species-maps "dir-digest"))
-                (list (cons 'species-maps keys))))
+                (list (cons 'species-maps keys))
+                '()))
 (history-append! kd 'species-maps kg "1"
                  (list (rec-maps "t0" '(("genus/Bombus.svg" . "b0")
                                         ("genus/Apis.svg"   . "a0")))))

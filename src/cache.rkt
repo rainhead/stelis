@@ -30,6 +30,7 @@
          env-output-paths
          check-output-paths-resolvable
          input-snapshot
+         input-store-snapshot
          output-snapshot
          output-snapshot+keys
          compare-outputs
@@ -97,21 +98,33 @@
 ;;                      (the attribute-level refinement recorded on the trace); the
 ;;                      cache decision never consults it. #f slot = no per-column
 ;;                      layer (tests, callers that don't want it).
+;;   resolve-store-keys : (symbol -> (or/c (listof (cons string string)) #f))
+;;                      — a keyed 'file STORE's per-KEY observation (st-2k9): sorted
+;;                      (key -> "digest:count") pairs, or #f. The ingestion-boundary
+;;                      analog of resolve-relation-columns for an authoritative
+;;                      SQLite store (the notes store, keyed by canonical_name); #f
+;;                      for a plain file. Like the columns slot, the cache decision
+;;                      never consults it — it feeds the per-key delta/observation.
 (struct build-env
-  (resolve export-dir cache-dir resolve-relation resolve-relation-columns)
+  (resolve export-dir cache-dir
+   resolve-relation resolve-relation-columns resolve-store-keys)
   #:transparent)
 
 ;; make-build-env : (symbol export-dir -> path?) path-string path-string
 ;;                  [#:resolve-relation (or/c (symbol -> (or/c string #f)) #f)]
 ;;                  [#:resolve-relation-columns
 ;;                     (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)]
+;;                  [#:resolve-store-keys
+;;                     (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)]
 ;;                  -> build-env?
-;; Keyword constructor so callers that don't content-address relations (tests,
-;; the file-only paths) needn't mention the slots.
+;; Keyword constructor so callers that don't content-address relations/stores
+;; (tests, the file-only paths) needn't mention the slots.
 (define (make-build-env resolve export-dir cache-dir
                         #:resolve-relation [resolve-relation #f]
-                        #:resolve-relation-columns [resolve-relation-columns #f])
-  (build-env resolve export-dir cache-dir resolve-relation resolve-relation-columns))
+                        #:resolve-relation-columns [resolve-relation-columns #f]
+                        #:resolve-store-keys [resolve-store-keys #f])
+  (build-env resolve export-dir cache-dir
+             resolve-relation resolve-relation-columns resolve-store-keys))
 
 ;; env-resolve : build-env? symbol -> (or/c path-string #f)
 (define (env-resolve env a)
@@ -241,6 +254,26 @@
     [else
      (define p (env-resolve env out))
      (and p (file-exists? p) (cons (file-sha1 p) #f))]))
+
+;; input-store-snapshot : graph symbol build-env?
+;;   -> (listof (cons symbol (listof (cons string string))))
+;; The ingestion-boundary CRUD-snapshot (st-2k9): each KEYED STORE input of the
+;; task, as (artifact -> its per-key map), sorted. A store is a producerless
+;; authoritative 'file leaf whose per-key observation nothing else records (a
+;; 'dir/db-relation input is observed by its PRODUCER as an output). The env's
+;; resolve-store-keys returns #f for every non-store input, so only real stores
+;; contribute; '() when the env has no store resolver. Recorded on the trace so the
+;; store gains a per-key timeline — the `from' basis the prospective delta needs.
+(define (input-store-snapshot g name env)
+  (define t (hash-ref (graph-tasks g) name))
+  (define rsk (build-env-resolve-store-keys env))
+  (if rsk
+      (sort (for*/list ([in (in-list (task-inputs t))]
+                        [keys (in-value (rsk in))]
+                        #:when keys)
+              (cons in keys))
+            symbol<? #:key car)
+      '()))
 
 ;; output-snapshot : graph symbol build-env? -> (listof (cons symbol string))
 ;; The artifact-level digests alone — the cutoff basis and cache entry (role

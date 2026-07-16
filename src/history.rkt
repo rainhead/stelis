@@ -42,8 +42,9 @@
 
 ;; Bump when the envelope or record shape changes; older lines then read as
 ;; (skipped) misses, exactly like a stale cache sidecar. v2: records carry
-;; per-key observations (st-6dv).
-(define HISTORY-VERSION 2)
+;; per-key observations (st-6dv). v3: records carry input-key-hashes — the
+;; ingestion-boundary CRUD-snapshot of keyed store inputs (st-2k9).
+(define HISTORY-VERSION 3)
 
 ;; One build's persisted result.
 ;;   target     : symbol — the artifact this build was asked to produce
@@ -155,12 +156,22 @@
   (observe-timeline state-dir artifact trace-record-output-hashes observation))
 
 ;; history-key-observations : path-string symbol -> (listof key-observation)
-;; The per-KEY timeline for a 'dir artifact (or per-COLUMN for a db-relation):
-;; its full (part -> hash) map at each build that (re)produced it, in build order.
-;; Diffing consecutive maps yields exactly the parts that changed. '() for an
-;; artifact that never recorded a per-part layer.
+;; The per-KEY timeline for a keyed artifact — per-path for a 'dir output, per-
+;; column for a db-relation output, or per-key for a keyed STORE input (the notes
+;; store, st-2k9): its full (part -> hash) map at each build that observed it, in
+;; build order. Diffing consecutive maps yields exactly the parts that changed. '()
+;; for an artifact that never recorded a per-part layer.
 (define (history-key-observations state-dir artifact)
-  (observe-timeline state-dir artifact trace-record-output-key-hashes key-observation))
+  (observe-timeline state-dir artifact trace-record-keyed key-observation))
+
+;; trace-record-keyed : trace-record -> (listof (cons symbol (listof (cons string string))))
+;; A record's per-key observations from BOTH sides — outputs the task produced and
+;; keyed STORE inputs it consumed. An artifact is only ever one or the other (a
+;; store has no producer; an output has no store resolver), so the two never
+;; collide and a plain append is the union.
+(define (trace-record-keyed r)
+  (append (trace-record-output-key-hashes r)
+          (trace-record-input-key-hashes r)))
 
 ;; history-graph : path-string string -> (or/c list #f)
 ;; The persisted topology snapshot (graph->datum shape) for a graph-hash, or #f

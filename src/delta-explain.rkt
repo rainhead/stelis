@@ -45,6 +45,11 @@
     [(db-relation)
      (define rrc (build-env-resolve-relation-columns env))
      (and rrc (rrc a))]
+    [(file)
+     ;; a plain file has no per-key layer (rsk returns #f); an authoritative keyed
+     ;; STORE (the notes store, keyed by canonical_name — st-2k9) resolves here.
+     (define rsk (build-env-resolve-store-keys env))
+     (and rsk (rsk a))]
     [else #f]))
 
 ;; input-key-deltas : graph decision? build-env? path-string -> (listof key-delta)

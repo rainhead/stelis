@@ -43,8 +43,18 @@
 ;;                   which fan-out members changed, not only that the set did. '()
 ;;                   for a build that produced no 'dir output; empties naturally
 ;;                   whenever output-hashes does.
+;;   input-key-hashes : (listof (cons symbol (listof (cons string string)))) — the
+;;                   ingestion-boundary CRUD-snapshot (st-2k9): the per-key map of
+;;                   each KEYED STORE input this task consumed (the notes store,
+;;                   keyed by canonical_name). Unlike a 'dir/db-relation input —
+;;                   whose PRODUCER records its per-key observation as an output — a
+;;                   store is a producerless authoritative leaf, so nothing else
+;;                   would ever observe it; recording it here gives its per-key
+;;                   timeline (and the delta a `from' basis). '() for a task with no
+;;                   keyed-store input.
 (struct trace-record
-  (task decision snapshot outcome blockers delta output-hashes output-key-hashes)
+  (task decision snapshot outcome blockers delta
+   output-hashes output-key-hashes input-key-hashes)
   #:transparent)
 
 ;; outcome-glyph : symbol -> string — the one legend for actual outcomes.
@@ -84,7 +94,8 @@
         (trace-record-blockers r)
         (delta->datum (trace-record-delta r))
         (trace-record-output-hashes r)
-        (trace-record-output-key-hashes r)))
+        (trace-record-output-key-hashes r)
+        (trace-record-input-key-hashes r)))
 
 ;; datum->trace-record : any -> trace-record
 ;; Inverse of trace-record->datum. Assumes a well-formed datum (the caller —
@@ -97,4 +108,5 @@
                 (list-ref r 4)
                 (datum->delta (list-ref r 5))
                 (list-ref r 6)
-                (list-ref r 7)))
+                (list-ref r 7)
+                (list-ref r 8)))

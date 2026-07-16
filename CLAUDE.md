@@ -62,8 +62,15 @@ content-addresses db-relation inputs via a DuckDB order-independent digest (row-
 coherent = the skip signal), plus per-column digests + non-null counts and a
 per-table row `count(*)` as the attribute-level observation (`relation-columns`,
 `relation-row-count`, st-7vz/st-0vz) ·
+[`notes-digest.rkt`](src/notes-digest.rkt) content-addresses the authoritative
+notes STORE (a SQLite `'file` leaf) PER `canonical_name` over approved notes —
+the ingestion-boundary read that turns a CRUD on one note into a keyed delta
+(`notes-store-keys`, st-2k9); reuses duckdb.rkt's SQLite scanner + the count:sum
+idiom. Recorded across builds as a trace `input-key-hashes` snapshot (a
+producerless leaf nothing else observes), so `--why notes-harvest` names the
+changed species ·
 [`duckdb.rkt`](src/duckdb.rkt) the shared read-only DuckDB CLI runner (relation
-digests + parquet key extraction) ·
+digests + parquet key extraction + the notes-store SQLite scan) ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
 order-independent digest over its sorted (relative-path → content-hash) tree, and
 exposes those per-file pairs (`tree-hashes`) for per-key observations ·

@@ -19,18 +19,19 @@
 
 (define some-records
   (list (trace-record 'ingest (decision 'run 'boundary '()) #f 'ok '()
-                      (output-delta 'identical '(raw)) '((raw . "r0")) '())
+                      (output-delta 'identical '(raw)) '((raw . "r0")) '() '())
         (trace-record 'xform  (decision 'run 'input-changed '(raw))
                       (snapshot "r1" (hash 'raw "abc123")) 'failed '()
-                      (output-delta 'changed '(out)) '() '())
+                      (output-delta 'changed '(out)) '() '() '())
         ;; a 'dir-producing record carries its per-key layer alongside the digest
         (trace-record 'maps   (decision 'run 'input-changed '(taxa))
                       (snapshot "r2" (hash 'taxa "t0")) 'ok '() #f
                       '((species-maps . "d0"))
                       '((species-maps . (("genus/Bombus.svg" . "h1")
-                                         ("genus/Apis.svg"   . "h2")))))
-        (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform) #f '() '())
-        (trace-record 'no-cache #f #f 'ok '() #f '((out . "o9")) '())))
+                                         ("genus/Apis.svg"   . "h2"))))
+                      '())
+        (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform) #f '() '() '())
+        (trace-record 'no-cache #f #f 'ok '() #f '((out . "o9")) '() '())))
 
 ;; datum->trace-record ∘ trace-record->datum = identity, across every field
 ;; shape (decisions, snapshots, deltas, and #f alike, plus the observations)

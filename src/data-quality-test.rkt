@@ -48,7 +48,8 @@
 (define rec
   (trace-record 'load (decision 'run 'boundary '()) #f 'ok '() #f
                 '((R . "digest"))
-                '((R . (("s.R.*" . "100"))))))
+                '((R . (("s.R.*" . "100"))))
+                '()))
 (void (history-append! tmp 'R g "1000" (list rec)))
 
 ;; a check-context carrying that state-dir (graph/task/env unused by this rule)

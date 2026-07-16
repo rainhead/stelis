@@ -38,6 +38,7 @@
          "model.rkt"
          "exec.rkt"
          "relation-digest.rkt"
+         "notes-digest.rkt"
          "data-quality.rkt"
          "fan-out-key.rkt")
 
@@ -48,6 +49,7 @@
          beeatlas-relation-tables
          beeatlas-resolve-relation
          beeatlas-resolve-relation-columns
+         beeatlas-resolve-store-keys
          beeatlas-source-date-epoch)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
@@ -227,6 +229,15 @@
 (define (beeatlas-resolve-relation-columns artifact)
   (define tables (beeatlas-relation-tables artifact))
   (and tables (relation-columns beeatlas-db tables)))
+
+;; beeatlas-resolve-store-keys : symbol -> (or/c (listof (cons string string)) #f)
+;; The per-canonical_name observation (st-2k9) of the authoritative notes STORE —
+;; the build-env resolve-store-keys slot for beeatlas. Only notes-store.db is a
+;; keyed store here; every other 'file resolves to #f (no per-key layer). Read
+;; read-only from NOTES_DB_PATH; #f when the store isn't mounted (conservative).
+(define (beeatlas-resolve-store-keys artifact)
+  (and (eq? artifact 'notes-store.db)
+       (notes-store-keys notes-store-path)))
 
 ;; --- Integrity gate (st-0vz) ------------------------------------------------
 ;; The default fractional record-count swing that trips an integrity gate: a

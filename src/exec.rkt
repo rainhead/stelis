@@ -218,6 +218,9 @@
     ;; layer (st-6dv) rides alongside: (path→hash) pairs for each 'dir output.
     (define output-hashes '())
     (define output-key-hashes '())
+    ;; the ingestion-boundary CRUD-snapshot (st-2k9): keyed STORE inputs this task
+    ;; consumed, recorded when it actually ran (see the run branch). '() otherwise.
+    (define input-key-hashes '())
     (define outcome
       (cond
         [(pair? blockers)
@@ -255,6 +258,10 @@
            (define-values (out-hashes out-keys) (output-snapshot+keys g name env))
            (set! output-hashes out-hashes)
            (set! output-key-hashes out-keys)
+           ;; snapshot the store input's per-key map at the same point the outputs
+           ;; are observed — the store is read-only during the build, so this is its
+           ;; state for this build (st-2k9).
+           (set! input-key-hashes (input-store-snapshot g name env))
            (cache-store! (build-env-cache-dir env) name snap
                          (env-output-paths env t) out-hashes)
            (set! delta (compare-outputs prior out-hashes))
@@ -269,6 +276,6 @@
     (hash-set! status name outcome)
     (set! records
           (cons (trace-record name dec snap outcome blockers delta
-                              output-hashes output-key-hashes)
+                              output-hashes output-key-hashes input-key-hashes)
                 records)))
   (values status (reverse records)))
