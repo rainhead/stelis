@@ -8,6 +8,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The build clock (ADR 0004) normally reads the beeatlas checkout's git
+    # committer date, which CI has no checkout for. beeatlas-source-date-epoch
+    # short-circuits on a numeric SOURCE_DATE_EPOCH — the documented override for
+    # other hosts — so pin one and the graph never shells git.
+    env:
+      SOURCE_DATE_EPOCH: '1700000000'
     steps:
       - uses: actions/checkout@v4
 
