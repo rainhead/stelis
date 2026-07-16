@@ -6,6 +6,7 @@
 
 (require rackunit
          racket/file
+         file/sha1
          "tree-digest.rkt")
 
 (define tmp (make-temporary-file "stelis-tree-test-~a" 'directory))
@@ -47,5 +48,15 @@
 (make-directory (build-path c "genus"))
 (display-to-file "beta"  (build-path c "genus" "two.txt"))
 (check-not-equal? (tree-digest c) d0 "a moved/renamed file changes the tree digest")
+
+;; tree-hashes: the per-file layer under the digest (st-6dv) --------------------
+(check-false (tree-hashes (in "nope")) "no directory -> no per-file pairs")
+(check-equal? (tree-hashes a)
+              (list (cons "genus/two.txt" (sha1 (open-input-string "beta")))
+                    (cons "one.txt"       (sha1 (open-input-string "alpha"))))
+              "each file paired with its content hash, sorted by relative path")
+;; the digest is exactly the roll-up of the pairs — same walk, no divergence
+(check-equal? (digest-of-pairs (tree-hashes a)) (tree-digest a)
+              "tree-digest is digest-of-pairs over tree-hashes")
 
 (delete-directory/files tmp)

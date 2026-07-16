@@ -14,6 +14,8 @@
          "model.rkt"
          "cache.rkt"
          "explain.rkt"
+         "trace.rkt"
+         "history.rkt"
          "provenance-datalog.rkt"
          "beeatlas.rkt")
 
@@ -99,3 +101,45 @@
                     "/nonexistent-cache-dir"))
   (define exps (plan-explanations beeatlas-graph ordered env))
   (void (cross-check beeatlas-graph exps "beeatlas occurrences.db plan")))
+
+;; --- History projection (st-sds) ----------------------------------------------
+
+;; The history-as-facts projection: observations, basis edges, and runs come
+;; back exactly as recorded — the raw material for the delta substrate (st-066),
+;; with no freshness rule consuming the build sequence.
+(let ()
+  (define (rec in-h out-h)
+    (trace-record 'derive (decision 'run 'input-changed '(raw))
+                  (snapshot "recipe" (hash 'raw in-h))
+                  'ok '() #f (list (cons 'mid out-h)) '()))
+  (define b1 (build-record 'mid "g" "1000" (list (rec "r0" "m0"))))
+  ;; a cached build re-observes nothing (empty output-hashes) — no timeline point
+  (define b2 (build-record 'mid "g" "2000"
+                           (list (trace-record 'derive (decision 'skip 'cached '())
+                                               #f 'cached '() #f '() '()))))
+  (define b3 (build-record 'mid "g" "3000" (list (rec "r1" "m1"))))
+  (define thy (history->theory (list b1 b2 b3)))
+  (check-equal? (sort (datalog-observations thy 'mid) < #:key car)
+                '((1 . "m0") (3 . "m1"))
+                "mid observed only at the builds that (re)produced it")
+  (check-equal? (datalog-derived-from thy 'mid) (set 'raw)
+                "mid's basis edge: derived from raw")
+  (check-equal? (datalog-observations thy 'raw) '()
+                "an unproduced input has no observations"))
+
+;; the per-key refinement (st-6dv): observed-key/4 facts for fan-out members
+(let ()
+  (define (rec-maps b keys)
+    (build-record 'species-maps "g" (number->string b)
+                  (list (trace-record 'maps (decision 'run 'input-changed '(taxa))
+                                      (snapshot "r" (hash 'taxa "t")) 'ok '() #f
+                                      '((species-maps . "d"))
+                                      (list (cons 'species-maps keys))))))
+  (define thy (history->theory
+               (list (rec-maps 1 '(("genus/Bombus.svg" . "b0")))
+                     (rec-maps 2 '(("genus/Bombus.svg" . "b1"))))))
+  (check-equal? (sort (datalog-key-observations thy 'species-maps) < #:key car)
+                '((1 "genus/Bombus.svg" "b0") (2 "genus/Bombus.svg" "b1"))
+                "one per-key observation per producing build, keyed by path")
+  (check-equal? (datalog-key-observations thy 'nope) '()
+                "an artifact with no fan-out layer has no observed-key facts"))

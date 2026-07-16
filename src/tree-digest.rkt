@@ -28,7 +28,7 @@
          racket/string
          file/sha1)
 
-(provide tree-digest dir-relpaths)
+(provide tree-digest tree-hashes digest-of-pairs dir-relpaths)
 
 ;; dir-relpaths : path-string -> (listof string)
 ;; Every regular file under `dir', as a SORTED list of "/"-joined relative paths
@@ -42,16 +42,37 @@
                        "/"))
         string<?))
 
+;; tree-hashes : path-string -> (or/c (listof (cons string string)) #f)
+;; The per-file layer under the digest: each "/"-joined relative path paired with
+;; its content hash, sorted by path (so the list is order-independent, same as the
+;; digest). #f when `dir' isn't an existing directory. This is the (path -> hash)
+;; map the digest rolls up — exposed so per-KEY observations (st-6dv) can record
+;; which fan-out members changed, and H2 delta propagation can attribute change to
+;; one key rather than rebuilding the whole set.
+(define (tree-hashes dir)
+  (and (directory-exists? dir)
+       (for/list ([rel (in-list (dir-relpaths dir))])
+         (cons rel (call-with-input-file (rel->path dir rel) sha1)))))
+
 ;; tree-digest : path-string -> (or/c string #f)
 ;; The order-independent content hash of the directory tree rooted at `dir', or #f
 ;; when `dir' isn't an existing directory (the caller then treats it as absent —
 ;; e.g. an input that isn't content-addressable, forcing a conservative rerun).
+;; A roll-up of `tree-hashes': one "<rel>=<hash>" line per file, over the sorted
+;; walk — so the digest and the per-key pairs are guaranteed to agree.
 (define (tree-digest dir)
-  (and (directory-exists? dir)
-       (let ([lines (for/list ([rel (in-list (dir-relpaths dir))])
-                      (string-append
-                       rel "=" (call-with-input-file (rel->path dir rel) sha1)))])
-         (sha1 (open-input-string (string-join lines "\n"))))))
+  (define pairs (tree-hashes dir))
+  (and pairs (digest-of-pairs pairs)))
+
+;; digest-of-pairs : (listof (cons string string)) -> string
+;; The single point where a (path -> hash) list becomes one hash. Callers that
+;; already hold the pairs (a run that captured per-key observations) reuse this
+;; instead of re-walking the tree.
+(define (digest-of-pairs pairs)
+  (sha1 (open-input-string
+         (string-join (for/list ([p (in-list pairs)])
+                        (string-append (car p) "=" (cdr p)))
+                      "\n"))))
 
 ;; rebuild the on-disk path of a "/"-joined relative path under `dir'.
 (define (rel->path dir rel) (apply build-path dir (string-split rel "/")))

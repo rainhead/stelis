@@ -8,7 +8,8 @@
 ;; artifact with no producing task is an external/ingestion leaf.
 
 (require racket/list
-         racket/set)
+         racket/set
+         file/sha1)
 
 (provide (struct-out artifact)
          (struct-out task)
@@ -20,7 +21,10 @@
          producers-of-inputs
          required-tasks
          topo-sort
-         plan)
+         plan
+         GRAPH-SNAPSHOT-VERSION
+         graph->datum
+         graph-digest)
 
 ;; --- Node types -------------------------------------------------------------
 
@@ -158,3 +162,38 @@
   (define ordered (topo-sort g required))
   (define all-tasks (list->set (hash-keys (graph-tasks g))))
   (values ordered (set-subtract all-tasks required)))
+
+;; --- Graph snapshot + digest (st-sds) ---------------------------------------
+
+;; The topology snapshot's own shape version — INDEPENDENT of history.rkt's
+;; HISTORY-VERSION (which versions the build-record log). Decoupling them is
+;; deliberate: a change to the trace-record shape bumps HISTORY-VERSION but leaves
+;; topology snapshots (keyed by graph-hash, unchanged) perfectly readable. Bump
+;; this only when graph->datum's shape changes.
+(define GRAPH-SNAPSHOT-VERSION 1)
+
+;; graph->datum : graph -> list
+;; A `read'-able TOPOLOGY snapshot: nodes (artifact name/kind/provenance) and
+;; edges (each task's name/kind/inputs/outputs). This is the shape history
+;; persists once per distinct graph, so build N's topology can be reconstructed
+;; without re-running Racket, and topology drift between builds is detectable.
+;; Deliberately omits recipes (`invoke') and fan-out `keyed-by' branches — those
+;; aren't topology; recipe change is the cache's job (recipe-hash), and keyed-by
+;; holds opaque structs that don't round-trip through `read'. Artifacts and
+;; tasks sort by name so the datum is canonical; inputs/outputs keep their
+;; authored order (already deterministic) so the snapshot stays faithful.
+(define (graph->datum g)
+  (list 'stelis-graph GRAPH-SNAPSHOT-VERSION
+        (sort (for/list ([a (in-hash-values (graph-artifacts g))])
+                (list (artifact-name a) (artifact-kind a) (artifact-provenance a)))
+              symbol<? #:key car)
+        (sort (for/list ([t (in-hash-values (graph-tasks g))])
+                (list (task-name t) (task-kind t)
+                      (task-inputs t) (task-outputs t)))
+              symbol<? #:key car)))
+
+;; graph-digest : graph -> string
+;; Content hash of the topology snapshot — the graph's identity in history.
+;; Same topology twice ⇒ same digest (canonical datum, day-one determinism).
+(define (graph-digest g)
+  (sha1 (open-input-bytes (string->bytes/utf-8 (format "~s" (graph->datum g))))))

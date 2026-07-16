@@ -38,6 +38,7 @@
          "model.rkt"
          "exec.rkt"
          "relation-digest.rkt"
+         "data-quality.rkt"
          "fan-out-key.rkt")
 
 (provide beeatlas-graph
@@ -46,6 +47,7 @@
          beeatlas-db
          beeatlas-relation-tables
          beeatlas-resolve-relation
+         beeatlas-resolve-relation-columns
          beeatlas-source-date-epoch)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
@@ -124,7 +126,8 @@
     collectors.events.json collector_event_pages.json
     places.json places.geojson place_details.json
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
-    seasonality.json photos.json species_hosts.json higher_taxa.json))
+    seasonality.json photos.json species_hosts.json higher_taxa.json
+    notes.json)) ; notes-harvest emits ASSETS_DIR(=EXPORT_DIR)/notes.json (st-msn)
 
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
 ;; land as a directory of per-entity files under EXPORT_DIR — species_maps writes
@@ -215,6 +218,33 @@
   (define tables (beeatlas-relation-tables artifact))
   (and tables (relation-digest beeatlas-db tables)))
 
+;; beeatlas-resolve-relation-columns : symbol -> (or/c (listof (cons string string)) #f)
+;; The per-column observation (st-7vz) of a db-relation — the build-env
+;; resolve-relation-columns slot for beeatlas. Same table mapping as the digest;
+;; used only to record the attribute-level refinement, never for the skip decision.
+(define (beeatlas-resolve-relation-columns artifact)
+  (define tables (beeatlas-relation-tables artifact))
+  (and tables (relation-columns beeatlas-db tables)))
+
+;; --- Integrity gate (st-0vz) ------------------------------------------------
+;; The default fractional record-count swing that trips an integrity gate: a
+;; relation whose row count moves more than this vs. the previous build is a
+;; pipeline-integrity alarm (a source broke, a join exploded/collapsed) and blocks
+;; before the data is published. Per-relation overrides can join this later.
+(define INTEGRITY-THRESHOLD 1/2)
+
+;; integrity-gate : symbol -> rule-check
+;; The in-process rule node guarding `relation': its live record count (via
+;; DuckDB) against the previous build's (history), blocking downstream on a swing
+;; beyond INTEGRITY-THRESHOLD. The current-count thunk closes over beeatlas-db.
+(define (integrity-gate relation)
+  (rule-check "integrity"
+              (make-integrity-check
+               relation
+               (lambda () (relation-row-count beeatlas-db
+                                              (beeatlas-relation-tables relation)))
+               INTEGRITY-THRESHOLD)))
+
 ;; py: a uv/3.14 recipe that calls `module.fn()' the way run.py imports it.
 (define (py module fn)
   (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))))
@@ -258,6 +288,7 @@
    (make-artifact 'inactive-verified        'token)
    (make-artifact 'places-validated         'token)
    (make-artifact 'dedup-verified           'token)
+   (make-artifact 'inat-obs-count-verified  'token) ; integrity gate (st-0vz)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
    ;; topology-postprocess reads each raw region mart @export copy and writes a
@@ -376,6 +407,12 @@
               #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate"))
    (make-task 'inat-obs 'boundary #:outputs '(inat_obs_data)
               #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
+   ;; integrity gate (st-0vz): block publish if inat_obs_data's record count
+   ;; swings sharply vs. the previous build. An in-process rule node, not a
+   ;; subprocess — the first instance of data-quality rules running as nodes.
+   (make-task 'inat-obs-integrity 'gate
+              #:inputs '(inat_obs_data) #:outputs '(inat-obs-count-verified)
+              #:invoke (integrity-gate 'inat_obs_data))
    (make-task 'resolve-taxon-ids 'transform
               #:inputs '(inat_observations taxa.csv.gz) #:outputs '(canonical_to_taxon_id)
               #:invoke (py "resolve_taxon_ids" "resolve_taxon_ids"))
@@ -406,7 +443,8 @@
               #:inputs '(ecdysis_data ecdysis_links inat_observations inat_projects
                          waba_data anti-entropy-applied
                          checklist_resolved checklist-resolution-verified
-                         inat_obs_data canonical_to_taxon_id resolution-verified
+                         inat_obs_data inat-obs-count-verified
+                         canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
                          taxon_lineage_extended host_plant_lineage geographies_places)
               #:outputs sandbox-marts   ; exactly the nine sandbox marts (st-bft)

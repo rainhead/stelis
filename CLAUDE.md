@@ -40,6 +40,7 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
   `--explain <target>` (why would each task run or skip?; `--last` for what the
   last `--build` actually did) ·
   `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog) ·
+  `--history` (browse recorded builds; `--history <artifact>` for its hash timeline) ·
   `--run <task>` (execute one task in its hermetic runtime).
 - **Test:** `raco test src/*-test.rkt`.
 
@@ -47,20 +48,34 @@ Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planne
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the runtimes · [`exec.rkt`](src/exec.rkt) recipe/runtime types +
-subprocess executor · [`cache.rkt`](src/cache.rkt) input-addressed skip decisions +
-early-cutoff output receipts · [`relation-digest.rkt`](src/relation-digest.rkt)
-content-addresses db-relation inputs via a DuckDB order-independent digest ·
+subprocess executor, plus in-process `rule-check` nodes — a rule evaluated in
+Racket as a graph node, gating its downstream (st-0vz) · [`cache.rkt`](src/cache.rkt)
+input-addressed skip decisions + early-cutoff output receipts ·
+[`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;
+first rule = the integrity gate (record-count swing vs. the previous build's
+observation blocks publish — an OPERATOR alarm, distinct from editorial flags) ·
+[`relation-digest.rkt`](src/relation-digest.rkt)
+content-addresses db-relation inputs via a DuckDB order-independent digest (row-
+coherent = the skip signal), plus per-column digests + non-null counts and a
+per-table row `count(*)` as the attribute-level observation (`relation-columns`,
+`relation-row-count`, st-7vz/st-0vz) ·
 [`duckdb.rkt`](src/duckdb.rkt) the shared read-only DuckDB CLI runner (relation
 digests + parquet key extraction) ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
-order-independent digest over its sorted (relative-path → content-hash) tree ·
+order-independent digest over its sorted (relative-path → content-hash) tree, and
+exposes those per-file pairs (`tree-hashes`) for per-key observations ·
 [`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted
 manifest (soundness gated, completeness reported) ·
-[`trace.rkt`](src/trace.rkt) the last-build trace ·
+[`trace.rkt`](src/trace.rkt) the per-task build-record shape + its serialization ·
+[`history.rkt`](src/history.rkt) append-only, content-addressed build history under
+`.stelis/` — per-build observation records (artifact→hash, plus a per-PART
+refinement: path→hash for `'dir`, column→digest:count for `'db-relation`) + a
+once-per-topology graph snapshot; freshness never reads its sequence (ADR 0005) ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
-[`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules ·
+[`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules,
+plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
 runtime reality (declared inputs sufficient? outputs complete?) ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·

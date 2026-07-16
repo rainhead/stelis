@@ -11,6 +11,8 @@
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
+;;   racket src/main.rkt --history                         ; list every recorded build
+;;   racket src/main.rkt --history species-maps            ; one artifact's hash timeline
 
 (require racket/cmdline
          racket/set
@@ -25,9 +27,10 @@
          "explain.rkt"
          "provenance-datalog.rkt"
          "trace.rkt"
+         "history.rkt"
          "determinism.rkt")
 
-(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify
+(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 
@@ -47,6 +50,8 @@
                 (mode 'build)]
    [("--verify") "build TARGET twice and compare hashes (determinism harness)"
                  (mode 'verify)]
+   [("--history") "browse the build history: all builds, or one artifact's hash timeline"
+                  (mode 'history)]
    #:once-each
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
@@ -59,9 +64,40 @@
      [else (error 'stelis "expects at most one <name>, given: ~a"
                   (string-join names " "))])))
 
-;; every mode needs the positional name except reading back the trace
-(unless (or name (and (eq? (mode) 'explain) (last?)))
+;; every mode needs the positional name except reading back persisted state:
+;; --explain --last (the trace knows its target) and --history (no arg = all builds)
+(unless (or name (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
+
+;; short-hash : (or/c string #f) -> string — a hash's first 10 chars for display
+(define (short-hash h)
+  (cond [(not h) "?"]
+        [(<= (string-length h) 10) h]
+        [else (string-append (substring h 0 10) "…")]))
+
+;; key-diff : (or/c (listof (cons string string)) #f) (listof (cons string string))
+;;            -> (values (listof string) (listof string) (listof string))
+;; Added / removed / changed keys between two per-key maps (prev #f = first
+;; sight). Pure alist set-difference by path, with a hash compare for `changed'.
+(define (key-diff prev cur)
+  (define p (make-immutable-hash (or prev '())))
+  (define c (make-immutable-hash cur))
+  (values (sort (for/list ([k (in-hash-keys c)] #:unless (hash-has-key? p k)) k) string<?)
+          (sort (for/list ([k (in-hash-keys p)] #:unless (hash-has-key? c k)) k) string<?)
+          (sort (for/list ([k (in-hash-keys c)]
+                           #:when (and (hash-has-key? p k)
+                                       (not (equal? (hash-ref p k) (hash-ref c k)))))
+                  k)
+                string<?)))
+
+;; show-keys : string (listof string) -> void — a labelled key list, capped so a
+;; wide fan-out doesn't flood the terminal; the cap is REPORTED, never silent.
+(define (show-keys label names)
+  (unless (null? names)
+    (define shown (if (> (length names) 8) (take names 8) names))
+    (define extra (- (length names) (length shown)))
+    (printf "             ~a: ~a~a\n" label (string-join shown ", ")
+            (if (> extra 0) (format ", …(+~a more)" extra) ""))))
 
 ;; a stelis-controlled output destination (explicit, no hidden copies)
 (define (scratch-out-path) (build-path (find-system-path 'temp-dir) "stelis-out"))
@@ -74,7 +110,8 @@
 ;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
 ;; reaches the pre-dbt graph and not only the file edges around dbt-build.
 (define benv (make-build-env beeatlas-path (scratch-out-path) stelis-cache
-                             #:resolve-relation beeatlas-resolve-relation))
+                             #:resolve-relation beeatlas-resolve-relation
+                             #:resolve-relation-columns beeatlas-resolve-relation-columns))
 
 ;; ADR 0004 (st-3mi): the deterministic build clock injected into every executed
 ;; task's hermetic env, so outputs that stamp a build time stay byte-stable.
@@ -121,18 +158,19 @@
 
 (cond
   ;; --- what did the last real build decide and do? -----------------------
-  ;; Reads the persisted trace; nothing is re-fingerprinted (the world may
-  ;; have moved on since). Needs no positional name — the trace knows its target.
+  ;; Reads history's tail; nothing is re-fingerprinted (the world may have moved
+  ;; on since). Needs no positional name — the build record knows its target.
   [(and (eq? (mode) 'explain) (last?))
-   (define tr (trace-load stelis-state))
+   (define bld (history-last stelis-state))
    (cond
-     [(not tr)
-      (printf "No usable build trace under ~a/ — run --build first.\n"
+     [(not bld)
+      (printf "No usable build history under ~a/ — run --build first.\n"
               (path->string stelis-state))
       (exit 1)]
      [else
-      (define records (cdr tr))
-      (printf "Last build — target ~a, ~a task(s):\n" (car tr) (length records))
+      (define records (build-record-records bld))
+      (printf "Last build — target ~a, ~a task(s):\n"
+              (build-record-target bld) (length records))
       (printf "  ✓ ran · ≡ cached · ✗ failed · ⊘ skipped\n\n")
       (for ([r (in-list records)] [i (in-naturals 1)])
         (define why
@@ -156,6 +194,79 @@
                 (if (< i 10) " " "") i
                 (outcome-glyph (trace-record-outcome r)) (trace-record-task r)
                 why delta-note))])]
+
+  ;; --- browse the build history ------------------------------------------
+  ;; No name: the list of builds (append order — for BROWSING, not freshness).
+  ;; A name: that artifact's content-hash timeline, marking where it changed.
+  [(eq? (mode) 'history)
+   (define builds (history-load stelis-state))
+   (cond
+     [(null? builds)
+      (printf "No build history under ~a/ — run --build first.\n"
+              (path->string stelis-state))
+      (exit 1)]
+     [(not name)
+      (printf "Build history — ~a build(s), in append order:\n\n" (length builds))
+      (for ([b (in-list builds)] [i (in-naturals 1)] [prev (in-list (cons #f builds))])
+        (define h (build-record-graph-hash b))
+        ;; topology drift: flag a build whose graph differs from the one before
+        (define drift (and prev (not (equal? h (build-record-graph-hash prev)))))
+        (printf "~a~a. ~a   graph ~a~a   ~a task(s)   epoch ~a\n"
+                (if (< i 10) " " "") i
+                (build-record-target b) (short-hash h)
+                (if drift " (topology changed)" "")
+                (length (build-record-records b))
+                (build-record-epoch b)))]
+     [else
+      (define obs (history-observations stelis-state name))
+      (define kobs (history-key-observations stelis-state name))
+      (cond
+        [(null? obs)
+         (printf "~a — no observations in the history.\n" name)
+         (printf "  (an external input, a never-built or always-cached artifact, or a typo)\n")
+         (exit 1)]
+        ;; a fan-out 'dir OR a db-relation: refine each ± into WHICH parts moved —
+        ;; keys (paths) for a dir (st-6dv), columns for a relation (st-7vz)
+        [(pair? kobs)
+         (define kind (let ([a (hash-ref (graph-artifacts beeatlas-graph) name #f)])
+                        (and a (artifact-kind a))))
+         (define noun (if (eq? kind 'db-relation) "column" "key"))
+         (define source (if (eq? kind 'db-relation) "db-relation" "fan-out 'dir"))
+         (printf "~a — ~a observation(s), per ~a (~a):\n" name (length kobs) noun source)
+         (printf "  ✦ first seen · ≡ unchanged · ± ~as changed/added/removed\n\n" noun)
+         (for ([o (in-list kobs)] [prev (in-list (cons #f kobs))])
+           (define cur (key-observation-keys o))
+           (cond
+             [(not prev)
+              (printf "  build ~a  ✦ ~a ~a(s) first seen   (by ~a)\n"
+                      (key-observation-build o) (length cur) noun
+                      (trace-record-task (key-observation-record o)))]
+             [else
+              (define-values (added removed changed)
+                (key-diff (key-observation-keys prev) cur))
+              (cond
+                [(and (null? added) (null? removed) (null? changed))
+                 (printf "  build ~a  ≡ rebuilt, all ~a ~a(s) identical\n"
+                         (key-observation-build o) (length cur) noun)]
+                [else
+                 (printf "  build ~a  ± ~a changed, +~a added, -~a removed\n"
+                         (key-observation-build o)
+                         (length changed) (length added) (length removed))
+                 (show-keys "changed" changed)
+                 (show-keys "added" added)
+                 (show-keys "removed" removed)])]))]
+        [else
+         (printf "~a — ~a observation(s), in build order:\n" name (length obs))
+         (printf "  ✦ first seen · ≡ rebuilt to identical content · ± changed\n\n")
+         (for ([o (in-list obs)] [prev (in-list (cons #f obs))])
+           (define h (observation-hash o))
+           (define glyph
+             (cond [(not prev) "✦"]
+                   [(equal? h (observation-hash prev)) "≡"]
+                   [else "±"]))
+           (printf "  build ~a  ~a ~a   (by ~a)\n"
+                   (observation-build o) glyph (short-hash h)
+                   (trace-record-task (observation-record o))))])])]
 
   ;; --- execute a single task ---------------------------------------------
   [(eq? (mode) 'run)
@@ -183,8 +294,13 @@
    (define-values (status records)
      (run-plan beeatlas-graph to-run beeatlas-runtimes
                #:env (task-env out)
-               #:context benv))
-   (trace-store! stelis-state name records)
+               #:context benv
+               #:state-dir stelis-state))
+   ;; st-sds: append this build to the history (retiring last-build.rktd). The
+   ;; source-epoch is sequence metadata for browsing only — freshness never reads
+   ;; it. The graph snapshot is written once per distinct topology.
+   (history-append! stelis-state name beeatlas-graph
+                    (beeatlas-source-date-epoch) records)
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))

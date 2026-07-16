@@ -10,6 +10,7 @@
          racket/system
          racket/port
          racket/file
+         racket/string
          "model.rkt"
          "cache.rkt"
          "relation-digest.rkt")
@@ -59,6 +60,40 @@
    (ddl! db "UPDATE s.r SET v = 'CHANGED' WHERE k = 2;")
    (define d1 (relation-digest db '("s.r")))
    (test-true "a real value change changes the digest" (not (equal? d1 d0)))
+
+   ;; --- per-column digests (st-7vz): attribute-level refinement --------------
+   ;; a fresh table so these are independent of s.r's mutation history above.
+   (ddl! db (string-append
+             "CREATE TABLE s.c (_dlt_id VARCHAR, k INTEGER, v VARCHAR);"
+             "INSERT INTO s.c VALUES ('a',1,'x'),('b',2,'y'),('c',3,NULL);"))
+   (define c0 (relation-columns db '("s.c")))
+   (test-equal? "per-column parts + a distinguished .* row-count part, sorted, dlt dropped"
+                (map car c0) '("s.c.*" "s.c.k" "s.c.v"))
+   (test-equal? "the .* part carries count(*) (three rows)"
+                (cdr (assoc "s.c.*" c0)) "3")
+   (test-equal? "non-null count rides in each column's value (v has one NULL)"
+                (cdr (assoc "s.c.v" c0)) (string-append
+                                          (car (string-split (cdr (assoc "s.c.v" c0)) ":"))
+                                          ":2"))
+   (test-equal? "a fully-populated column counts every row"
+                (cadr (string-split (cdr (assoc "s.c.k" c0)) ":")) "3")
+
+   ;; order independence: reinsert the same rows in a different order
+   (ddl! db "DELETE FROM s.c;")
+   (ddl! db "INSERT INTO s.c VALUES ('c',3,NULL),('a',1,'x'),('b',2,'y');")
+   (test-equal? "row order does not change per-column digests"
+                (relation-columns db '("s.c")) c0)
+
+   ;; sensitivity is LOCAL: changing v leaves k's column digest untouched
+   (ddl! db "UPDATE s.c SET v = 'CHANGED' WHERE k = 2;")
+   (define c1 (relation-columns db '("s.c")))
+   (test-equal? "an untouched column keeps its digest"
+                (assoc "s.c.k" c1) (assoc "s.c.k" c0))
+   (test-true "the changed column's digest moves"
+              (not (equal? (assoc "s.c.v" c1) (assoc "s.c.v" c0))))
+
+   (test-false "an unreadable relation has no per-column digests"
+               (relation-columns db '("s.nope")))
 
    ;; --- unreadable relation -> #f (caller treats as unresolvable) -------------
    (test-false "missing table digests to #f"

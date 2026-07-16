@@ -31,10 +31,11 @@
 ;; slice; the single-table query is shaped so they can be added there.
 
 (require racket/string
+         racket/list
          file/sha1
          "duckdb.rkt")
 
-(provide relation-digest)
+(provide relation-digest relation-columns relation-row-count)
 
 ;; A qualified table name we are willing to interpolate into SQL (duckdb.rkt's
 ;; shared gate): the mapping in beeatlas.rkt is trusted, but a strict shape makes a
@@ -74,3 +75,118 @@
        (andmap (lambda (t) (regexp-match? qualified-name? t)) tables)
        (let ([out (duckdb-query db (relation-query tables))])
          (and out (sha1 (open-input-string out))))))
+
+;; --- Per-column digests (st-7vz) ----------------------------------------------
+;; The ATTRIBUTE-level refinement of relation-digest: each column's own
+;; order-independent multiset digest plus its non-null count. Recorded as an
+;; observation for downstream provenance queries ("which COLUMN changed?"); it is
+;; NOT the skip signal — per-column multiset digests alone false-skip on a
+;; cross-row value swap (two rows exchange a value: every column's multiset is
+;; unchanged, yet the relation changed). The row-coherent `relation-digest' stays
+;; the identity, exactly as st-d5d proved; this rides alongside it.
+;;
+;; A SEPARATE query from relation-digest — deliberately, so the proven combined
+;; digest is never perturbed. Column enumeration comes from information_schema;
+;; each column's value is the "<table>.<col>" part key, its content "<digest>:<count>"
+;; so a change to EITHER the values or the null-count shows as a changed part.
+
+;; relation-columns : path-string (listof string)
+;;   -> (or/c (listof (cons string string)) #f)
+;; Sorted ("<schema>.<table>.<column>" -> "<digest>:<count>") pairs across all
+;; `tables', or #f if the relation can't be read. Order-independent (sum per
+;; column, sorted part keys). Each table also contributes a distinguished
+;; "<schema>.<table>.*" part whose value is its row COUNT — the metric the
+;; integrity gate (st-0vz) reads across builds. "*" is not a legal column name,
+;; so the row-count part never collides with a real column.
+(define (relation-columns db tables)
+  (and (pair? tables)
+       (andmap (lambda (t) (regexp-match? qualified-name? t)) tables)
+       (let loop ([ts tables] [acc '()])
+         (cond
+           [(null? ts) (sort acc string<? #:key car)]
+           [else
+            (define qualified (car ts))
+            (define cols (table-columns db qualified))
+            (define rows (and cols (table-rowcount db qualified)))
+            (cond
+              [(not cols) #f]   ; a table we couldn't read -> whole relation #f
+              [(not rows) #f]   ; count(*) failed -> treat as unreadable
+              [else
+               (define col-out (and (pair? cols) (duckdb-query db (columns-query qualified cols))))
+               (cond
+                 [(and (pair? cols) (not col-out)) #f]  ; columns unreadable
+                 [else
+                  (define rowpart (cons (string-append qualified ".*") rows))
+                  (define colparts (if col-out (parse-column-lines col-out) '()))
+                  (loop (cdr ts) (cons rowpart (append colparts acc)))])])]))))
+
+;; table-rowcount : path-string string -> (or/c string #f)
+;; A table's count(*) as a decimal string, or #f if unreadable — the integrity
+;; gate's baseline metric, recorded per build alongside the per-column digests.
+(define (table-rowcount db qualified)
+  (define out (duckdb-query db (string-append "SELECT count(*) FROM " qualified ";")))
+  (and out (let ([s (string-trim out)])
+             (and (regexp-match? #px"^[0-9]+$" s) s))))
+
+;; relation-row-count : path-string (listof string) -> (or/c exact-nonnegative-integer #f)
+;; The relation's total record count NOW (sum of count(*) over its tables), or #f
+;; if any table can't be read. The integrity gate's live "current" reading, the
+;; twin of the ".*" parts recorded in history — both built on table-rowcount, so
+;; current and baseline are the same measurement.
+(define (relation-row-count db tables)
+  (and (pair? tables)
+       (andmap (lambda (t) (regexp-match? qualified-name? t)) tables)
+       (let ([counts (map (lambda (t) (table-rowcount db t)) tables)])
+         (and (andmap values counts)
+              (apply + (map string->number counts))))))
+
+;; table-columns : path-string string -> (or/c (listof string) #f)
+;; A table's provenance-eligible column names (non-dlt, safe to interpolate as a
+;; bare identifier), sorted; #f when the table can't be read. information_schema
+;; doesn't error on a missing table (unlike the digest query), so absence shows as
+;; an EMPTY raw column list — and a real table always has ≥1 column, so empty ⇒
+;; absent ⇒ #f, preserving relation-digest's #f-on-absence contract. Odd-named
+;; columns (not a bare identifier) are dropped from the refinement — metadata, not
+;; the correctness digest, so a rare exotic name costs a column here, never a build.
+(define (table-columns db qualified)
+  (define parts (string-split qualified "."))
+  (define schema (car parts))
+  (define table (cadr parts))
+  (define sql
+    (string-append
+     "SELECT column_name FROM information_schema.columns "
+     "WHERE table_schema = '" schema "' AND table_name = '" table "' "
+     "ORDER BY column_name;"))
+  (define out (duckdb-query db sql))
+  (and out
+       (let ([all (map string-trim
+                       (filter non-empty-string? (string-split out "\n")))])
+         (and (pair? all)   ; empty ⇒ no such table ⇒ #f
+              (filter (lambda (c) (and (not (string-prefix? c "_dlt_"))
+                                       (regexp-match? sql-identifier? c)))
+                      all)))))
+
+;; columns-query : string (listof string) -> string
+;; One "<table>.<col>=<digest>:<count>" row per column. Per column: the
+;; order-independent sum of md5 row hashes (coalesced to '0' for an all-null
+;; column) and count() (non-null count). Column names are pre-gated identifiers.
+(define (columns-query qualified cols)
+  (string-append
+   "SELECT c || '=' || d || ':' || n FROM (\n"
+   (string-join
+    (for/list ([col (in-list cols)])
+      (string-append
+       "  SELECT '" qualified "." col "' AS c, "
+       "coalesce(sum(md5_number_lower(to_json(" col ")::VARCHAR))::VARCHAR, '0') AS d, "
+       "count(" col ")::VARCHAR AS n FROM " qualified))
+    "\n  UNION ALL\n")
+   "\n) ORDER BY c;"))
+
+;; parse-column-lines : string -> (listof (cons string string))
+;; "<part>=<digest>:<count>" lines -> (part . "<digest>:<count>") pairs. Split on
+;; the FIRST '=' only (part keys are dotted identifiers, never contain '=').
+(define (parse-column-lines out)
+  (for/list ([line (in-list (string-split out "\n"))]
+             #:when (non-empty-string? (string-trim line)))
+    (define i (for/first ([ch (in-string line)] [k (in-naturals)] #:when (char=? ch #\=)) k))
+    (cons (substring line 0 i) (substring line (add1 i)))))

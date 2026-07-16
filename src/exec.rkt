@@ -20,6 +20,8 @@
 
 (provide (struct-out runtime)
          (struct-out recipe)
+         (struct-out rule-check)
+         (struct-out check-context)
          recipe->argv
          shell-quote
          print-plan-commands
@@ -46,6 +48,23 @@
 ;;   runtime : symbol
 ;;   args    : (listof string)
 (struct recipe (runtime args) #:transparent)
+
+;; An IN-PROCESS node (st-0vz): the "second Datalog application" runs a rule-set
+;; as a build node instead of shelling out. Its invoke is a `rule-check' whose
+;; `run' evaluates the rule (e.g. a Datalog data-quality check) in Racket and
+;; returns a verdict. A #f verdict FAILS the node — so, positioned as a 'gate, it
+;; blocks its downstream via the ordinary partial-success flow (blockers-of),
+;; exactly like a subprocess gate that exits non-zero. This is the modality the
+;; whole data-quality-Datalog line needs; the integrity gate is its first rule.
+;;   label : string — short display tag (e.g. "integrity")
+;;   run   : (check-context -> (values boolean string)) — verdict + a human note
+(struct rule-check (label run) #:transparent)
+
+;; What a rule node sees when it runs: the graph and its own task name, the
+;; build-env (resolve-relation etc. — the current data), and the state-dir (where
+;; the history it compares against lives). A rule reasons over data + memory; this
+;; is the handle to both, kept off build-env so that value doesn't grow again.
+(struct check-context (graph task env state-dir) #:transparent)
 
 ;; recipe->argv : recipe (hash symbol->runtime) -> (listof string)
 ;; The full command: the runtime's launch prefix followed by the recipe's args.
@@ -84,6 +103,9 @@
             [conditional?   "  ≈ conditional"]
             [else           "  ▶ would run"]))
     (cond
+      [(rule-check? rec)
+       (printf "~a. ~a  [rule: ~a]~a\n     (in-process rule — no command)\n"
+               (~i i) name (rule-check-label rec) tag)]
       [rec
        (define rt (hash-ref runtimes (recipe-runtime rec)))
        (printf "~a. ~a  [~a]~a\n     ~a\n"
@@ -178,7 +200,8 @@
 ;; the trace record), so the cutoff point can be named, not just enjoyed.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
-                  #:context [env #f])
+                  #:context [env #f]
+                  #:state-dir [state-dir #f])
   (define status (make-hash))
   (define records '())
   (for ([name (in-list ordered)])
@@ -189,6 +212,12 @@
     (define-values (dec snap)
       (if env (decision+snapshot g name env) (values #f #f)))
     (define delta #f)
+    ;; the observation (st-sds): each derived output's content hash after a run,
+    ;; recorded on the trace so history projects an artifact→hash timeline. '()
+    ;; unless the task actually (re)produced its outputs this build. The per-key
+    ;; layer (st-6dv) rides alongside: (path→hash) pairs for each 'dir output.
+    (define output-hashes '())
+    (define output-key-hashes '())
     (define outcome
       (cond
         [(pair? blockers)
@@ -198,6 +227,21 @@
         [(and dec (eq? 'skip (decision-verdict dec)))
          (printf "\n≡ ~a — cached (inputs unchanged)\n" name)
          'cached]
+        ;; an in-process rule node (st-0vz): evaluate the rule, no subprocess.
+        ;; A gate producing a token has no file outputs to hash, but we still
+        ;; store its input snapshot so an unchanged relation cache-skips the
+        ;; check next build (an unchanged relation cannot be anomalous vs. its
+        ;; own last observation).
+        [(rule-check? (task-invoke t))
+         (define rc (task-invoke t))
+         (printf "\n▶ ~a  [rule: ~a]\n" name (rule-check-label rc))
+         (define-values (ok? note)
+           ((rule-check-run rc) (check-context g name env state-dir)))
+         (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
+         (when (and ok? env)
+           (cache-store! (build-env-cache-dir env) name snap
+                         (env-output-paths env t) '()))
+         (if ok? 'ok 'failed)]
         [else
          (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
          (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
@@ -208,7 +252,9 @@
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
          (when (and ok? env)
-           (define out-hashes (output-snapshot g name env))
+           (define-values (out-hashes out-keys) (output-snapshot+keys g name env))
+           (set! output-hashes out-hashes)
+           (set! output-key-hashes out-keys)
            (cache-store! (build-env-cache-dir env) name snap
                          (env-output-paths env t) out-hashes)
            (set! delta (compare-outputs prior out-hashes))
@@ -221,5 +267,8 @@
                         (string-join (map symbol->string (output-delta-details delta)) ", "))])))
          (if ok? 'ok 'failed)]))
     (hash-set! status name outcome)
-    (set! records (cons (trace-record name dec snap outcome blockers delta) records)))
+    (set! records
+          (cons (trace-record name dec snap outcome blockers delta
+                              output-hashes output-key-hashes)
+                records)))
   (values status (reverse records)))

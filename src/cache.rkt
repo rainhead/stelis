@@ -31,6 +31,7 @@
          check-output-paths-resolvable
          input-snapshot
          output-snapshot
+         output-snapshot+keys
          compare-outputs
          read-versioned
          read-cache-entry
@@ -90,15 +91,27 @@
 ;;                      hash, or #f when it can't be read (st-d5d). #f (the whole
 ;;                      slot) means "no relation resolver": relations then read as
 ;;                      inputs-unresolvable, exactly the pre-st-d5d behaviour.
-(struct build-env (resolve export-dir cache-dir resolve-relation) #:transparent)
+;;   resolve-relation-columns : (symbol -> (or/c (listof (cons string string)) #f))
+;;                      — a db-relation's PER-COLUMN observation (st-7vz): sorted
+;;                      (part -> "digest:count") pairs, or #f. Output-side only
+;;                      (the attribute-level refinement recorded on the trace); the
+;;                      cache decision never consults it. #f slot = no per-column
+;;                      layer (tests, callers that don't want it).
+(struct build-env
+  (resolve export-dir cache-dir resolve-relation resolve-relation-columns)
+  #:transparent)
 
 ;; make-build-env : (symbol export-dir -> path?) path-string path-string
 ;;                  [#:resolve-relation (or/c (symbol -> (or/c string #f)) #f)]
+;;                  [#:resolve-relation-columns
+;;                     (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)]
 ;;                  -> build-env?
 ;; Keyword constructor so callers that don't content-address relations (tests,
-;; the file-only paths) needn't mention the slot.
-(define (make-build-env resolve export-dir cache-dir #:resolve-relation [resolve-relation #f])
-  (build-env resolve export-dir cache-dir resolve-relation))
+;; the file-only paths) needn't mention the slots.
+(define (make-build-env resolve export-dir cache-dir
+                        #:resolve-relation [resolve-relation #f]
+                        #:resolve-relation-columns [resolve-relation-columns #f])
+  (build-env resolve export-dir cache-dir resolve-relation resolve-relation-columns))
 
 ;; env-resolve : build-env? symbol -> (or/c path-string #f)
 (define (env-resolve env a)
@@ -174,27 +187,67 @@
      (define p (resolve in))
      (and p (file-exists? p) (file-sha1 p))]))
 
-;; output-snapshot : graph symbol build-env? -> (listof (cons symbol string))
-;; Content hashes of the task's cutoff-eligible outputs, taken after a run: the
-;; DERIVED artifacts that resolve to an existing file, as a sorted alist.
+;; output-snapshot+keys : graph symbol build-env?
+;;   -> (values (listof (cons symbol string))                        ; digests
+;;              (listof (cons symbol (listof (cons string string))))) ; per-'dir keys
+;; The task's cutoff-eligible outputs, hashed after a run, at two granularities in
+;; ONE walk. First value: each DERIVED artifact that resolves to existing content,
+;; as a sorted (artifact -> digest) alist — the cutoff/observation basis. Second
+;; value: for each 'dir output, its sorted (relative-path -> hash) pairs — the
+;; per-KEY observations (st-6dv). A 'dir's digest is the roll-up of exactly those
+;; pairs (digest-of-pairs), so the two granularities can never disagree; a 'file
+;; has a digest but no keys, and tokens/relations have no path and drop out.
 ;; Authoritative outputs are excluded — cutoff applies only to derived state
-;; (forward-only writes are effects; "rebuilt to identical bytes" is not a
-;; claim we make about them). A 'dir output is hashed by its tree digest (st-cly),
-;; a 'file by its bytes; tokens/relations have no path to hash and drop out, so a
-;; task like dbt-build is judged on the outputs we CAN verify.
-(define (output-snapshot g name env)
+;; (forward-only writes are effects; "rebuilt to identical bytes" isn't a claim we
+;; make about them).
+(define (output-snapshot+keys g name env)
   (define t (hash-ref (graph-tasks g) name))
-  (sort
-   (for*/list ([out (in-list (task-outputs t))]
-               [a (in-value (hash-ref (graph-artifacts g) out #f))]
-               #:when (and a (eq? 'derived (artifact-provenance a)))
-               [p (in-value (env-resolve env out))]
-               [h (in-value (and p (if (eq? (artifact-kind a) 'dir)
-                                       (tree-digest p)
-                                       (and (file-exists? p) (file-sha1 p)))))]
-               #:when h)
-     (cons out h))
-   symbol<? #:key car))
+  (define observed
+    (for*/list ([out (in-list (task-outputs t))]
+                [a (in-value (hash-ref (graph-artifacts g) out #f))]
+                #:when (and a (eq? 'derived (artifact-provenance a)))
+                [obs (in-value (observe-output a out env))]
+                #:when obs)
+      (list out (car obs) (cdr obs))))
+  (values
+   (sort (for/list ([o (in-list observed)]) (cons (car o) (cadr o)))
+         symbol<? #:key car)
+   (sort (for/list ([o (in-list observed)] #:when (caddr o)) (cons (car o) (caddr o)))
+         symbol<? #:key car)))
+
+;; observe-output : artifact symbol build-env?
+;;   -> (or/c (cons string (or/c (listof (cons string string)) #f)) #f)
+;; One derived output's observation: (digest . parts), or #f when there's nothing
+;; to hash. `parts' is the artifact's attribute-level refinement (#f when it has
+;; none). By kind:
+;;   'file        bytes -> (hash . #f)                       — no parts
+;;   'dir         tree-hashes -> (digest-of-pairs . pairs)   — per-key (path->hash)
+;;   'db-relation resolve-relation -> (hash . columns)       — per-column (st-7vz),
+;;                columns from resolve-relation-columns (#f if that slot is unset);
+;;                the digest is the row-coherent one the cache also uses, taken here
+;;                AFTER the producer released the db lock
+;;   else (token/external) -> #f
+(define (observe-output a out env)
+  (case (artifact-kind a)
+    [(dir)
+     (define p (env-resolve env out))
+     (define pairs (and p (tree-hashes p)))
+     (and pairs (cons (digest-of-pairs pairs) pairs))]
+    [(db-relation)
+     (define rr (build-env-resolve-relation env))
+     (define h (and rr (rr out)))
+     (and h (cons h (let ([rrc (build-env-resolve-relation-columns env)])
+                      (and rrc (rrc out)))))]
+    [else
+     (define p (env-resolve env out))
+     (and p (file-exists? p) (cons (file-sha1 p) #f))]))
+
+;; output-snapshot : graph symbol build-env? -> (listof (cons symbol string))
+;; The artifact-level digests alone — the cutoff basis and cache entry (role
+;; UNCHANGED by st-6dv). The per-key layer rides only on the trace/history.
+(define (output-snapshot g name env)
+  (define-values (digests _keys) (output-snapshot+keys g name env))
+  digests)
 
 ;; compare-outputs : (or/c hash? #f) (listof (cons symbol string))
 ;;                   -> (or/c output-delta? #f)
