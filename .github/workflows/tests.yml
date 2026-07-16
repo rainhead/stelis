@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Racket + datalog
+        uses: Bogdanp/setup-racket@v1
+        with:
+          version: '9.2'
+          variant: 'CS'
+          packages: 'datalog'
+
+      # The suite is hermetic and undemanding: pure-core units over synthetic
+      # graphs plus integration checks against the in-repo beeatlas graph. No
+      # network and no external checkout. The DuckDB-backed tests (relation
+      # digests, the fan-out manifest check) self-skip when the `duckdb` CLI or a
+      # populated reference dir is absent — as it is here — so they no-op rather
+      # than fail. Install the DuckDB CLI in this job if that coverage is wanted.
+      - name: Run tests
+        run: raco test src/*-test.rkt

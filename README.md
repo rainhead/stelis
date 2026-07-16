@@ -1,5 +1,7 @@
 # Stelis
 
+[![tests](https://github.com/rainhead/stelis/actions/workflows/tests.yml/badge.svg)](https://github.com/rainhead/stelis/actions/workflows/tests.yml)
+
 A build system for data pipelines, written in Racket. The build is a bipartite
 graph — tasks consume and produce artifacts — and change is measured by content
 hash, not timestamp. Datalog serves as a metadata language *about* the build
@@ -14,6 +16,18 @@ is not part of it. A second pipeline,
 [salishsea-io](https://github.com/salish-sea/salishsea-io), is the Horizon 2
 (streaming / CRUD) test bed. Both are sister projects and case studies, not part
 of stelis.
+
+## Status
+
+This is a private project developed in the open, driven by my own particular
+goals — the shape of the design is set by what my projects (the sister pipelines
+above) actually need. The near-term aim is to prove out its value there. Once it
+has earned its keep on my own work, I'll turn to making it useful for a general
+audience; until then, expect rough edges and assumptions that suit my setup
+(a local `~/dev/beeatlas` checkout, specific runtimes).
+
+Feedback and pointers are very welcome all the same — please
+[open an issue](https://github.com/rainhead/stelis/issues).
 
 ## Prerequisites
 
