@@ -11,6 +11,7 @@
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
+;;   racket src/main.rkt --build --from notes-harvest --export-dir DIR notes.json  ; CRUD: targeted notes into a served dir
 ;;   racket src/main.rkt --history                         ; list every recorded build
 ;;   racket src/main.rkt --history species-maps            ; one artifact's hash timeline
 
@@ -35,6 +36,7 @@
 (define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
+(define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
 
 (define name
   (command-line
@@ -59,6 +61,8 @@
                (from-task (string->symbol ft))]
    [("--last") "with --explain: report what the last real --build decided and did"
                (last? #t)]
+   [("--export-dir") dir "with --build/--run: write outputs to DIR (an explicit, served destination — e.g. a CRUD rebuild into the site's data dir) instead of the scratch dir"
+                     (export-dir-arg dir)]
    #:args names
    (cond
      [(null? names) #f]
@@ -86,8 +90,12 @@
     (printf "             ~a: ~a~a\n" label (string-join shown ", ")
             (if (> extra 0) (format ", …(+~a more)" extra) ""))))
 
-;; a stelis-controlled output destination (explicit, no hidden copies)
-(define (scratch-out-path) (build-path (find-system-path 'temp-dir) "stelis-out"))
+;; a stelis-controlled output destination (explicit, no hidden copies). --export-dir
+;; overrides the scratch default so a CRUD rebuild can land in the served data dir.
+(define (scratch-out-path)
+  (if (export-dir-arg)
+      (path->complete-path (export-dir-arg))
+      (build-path (find-system-path 'temp-dir) "stelis-out")))
 (define (scratch-out) (define out (scratch-out-path)) (make-directory* out) out)
 
 (define stelis-state (build-path ".stelis"))
