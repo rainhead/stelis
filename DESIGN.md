@@ -18,8 +18,10 @@ for their own sake.
 
 Greenfield project. Its purposes, in the order they matter:
 
-1. **Solve real problems** in existing projects — starting with `~/dev/beeatlas`
-   and `~/dev/salishsea-io`.
+1. **Solve real problems** in existing projects — starting with
+   [`beeatlas`](https://github.com/rainhead/beeatlas) (`~/dev/beeatlas`) and
+   [`salishsea-io`](https://github.com/salish-sea/salishsea-io)
+   (`~/dev/salishsea-io`).
 2. **Learn** Racket (and eventually Rhombus), and learn to model real problems in
    Datalog, by building something real rather than by study alone.
 3. **Explore the substrate vision** — the longer-term declarative computing

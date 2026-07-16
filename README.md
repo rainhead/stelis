@@ -8,15 +8,19 @@ their own tools (dlt, dbt, exporters), each invoked in its own hermetic runtime.
 
 The *why* lives in [`DESIGN.md`](DESIGN.md); the plan of record in
 [`ROADMAP.md`](ROADMAP.md). The current test bed is the
-[beeatlas](../beeatlas) pipeline, whose graph is authored in
-[`src/beeatlas.rkt`](src/beeatlas.rkt) — stelis orchestrates it, it is not part
-of it.
+[beeatlas](https://github.com/rainhead/beeatlas) pipeline, whose graph is
+authored in [`src/beeatlas.rkt`](src/beeatlas.rkt) — stelis orchestrates it, it
+is not part of it. A second pipeline,
+[salishsea-io](https://github.com/salish-sea/salishsea-io), is the Horizon 2
+(streaming / CRUD) test bed. Both are sister projects and case studies, not part
+of stelis.
 
 ## Prerequisites
 
 - **Racket v9.2 CS** on `PATH`, plus the Datalog package:
   `raco pkg install datalog`. No build step — Racket compiles on demand.
-- A checkout of **beeatlas** at `~/dev/beeatlas` (the graph shells into it).
+- A checkout of **[beeatlas](https://github.com/rainhead/beeatlas)** at
+  `~/dev/beeatlas` (the graph shells into it).
 - **uv**, which provides both hermetic Python runtimes declared in
   [`src/beeatlas.rkt`](src/beeatlas.rkt): uv/Python 3.14 for loaders and
   exporters, uvx/Python 3.13 for dbt. (Two interpreters on purpose — dbt
