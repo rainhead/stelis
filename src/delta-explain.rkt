@@ -19,38 +19,22 @@
 ;; `to` (delta.rkt prospective-delta). Same diff core, different `to` source.
 
 (require racket/list
-         racket/string
          "model.rkt"
-         "cache.rkt"        ; decision accessors, build-env, env-resolve
+         "cache.rkt"        ; decision accessors, artifact-key-parts (the kind dispatch)
          "explain.rkt"      ; decision->string (the pure base this decorates)
          "history.rkt"      ; history-key-observations
-         "tree-digest.rkt"  ; tree-hashes — a live 'dir key map
          "delta.rkt")
 
 (provide input-key-deltas
          make-reason->string)
 
 ;; live-key-map : graph symbol build-env? -> (or/c (listof (cons string string)) #f)
-;; A keyed artifact's CURRENT on-disk key map, by kind — the same two sources the
-;; observation history records, read live: a 'dir's (path -> hash) via tree-hashes,
-;; a db-relation's (column -> "digest:count") via the env's column resolver. #f for
-;; anything without a per-key layer (a plain 'file, a token, an unresolvable/absent
-;; path), which simply yields no delta.
+;; A keyed artifact's CURRENT per-key map, read live — the same layer the history
+;; records, via the shared kind dispatch (cache.rkt artifact-key-parts, st-lg0). #f
+;; for anything without a per-key layer (a plain 'file, a token, an absent path).
 (define (live-key-map g a env)
   (define art (hash-ref (graph-artifacts g) a #f))
-  (case (and art (artifact-kind art))
-    [(dir)
-     (define p (env-resolve env a))
-     (and p (tree-hashes p))]
-    [(db-relation)
-     (define rrc (build-env-resolve-relation-columns env))
-     (and rrc (rrc a))]
-    [(file)
-     ;; a plain file has no per-key layer (rsk returns #f); an authoritative keyed
-     ;; STORE (the notes store, keyed by canonical_name — st-2k9) resolves here.
-     (define rsk (build-env-resolve-store-keys env))
-     (and rsk (rsk a))]
-    [else #f]))
+  (and art (artifact-key-parts a (artifact-kind art) env)))
 
 ;; input-key-deltas : graph decision? build-env? path-string -> (listof key-delta)
 ;; The changed keyed inputs of a task about to run, each as a prospective

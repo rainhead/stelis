@@ -31,6 +31,7 @@
          check-output-paths-resolvable
          input-snapshot
          input-store-snapshot
+         artifact-key-parts
          output-snapshot
          output-snapshot+keys
          compare-outputs
@@ -228,52 +229,65 @@
    (sort (for/list ([o (in-list observed)] #:when (caddr o)) (cons (car o) (caddr o)))
          symbol<? #:key car)))
 
+;; artifact-key-parts : symbol symbol build-env? -> (or/c (listof (cons string string)) #f)
+;; The ONE kind -> per-key-layer dispatch (st-lg0): an artifact's live per-key
+;; (part -> value) map, or #f when it has none / can't be read. Every reader — the
+;; live delta side (delta-explain live-key-map), the recorded output observation
+;; (observe-output), the boundary input snapshot (input-store-snapshot) — goes
+;; through here, so a new keyed kind is added in exactly one place.
+;;   'dir         (path -> content-hash)     via tree-hashes
+;;   'db-relation (column -> "digest:count") via resolve-relation-columns
+;;   'file        (key -> "digest:count")    via resolve-store-keys — a keyed store;
+;;                #f for a plain file (no per-key layer)
+;;   else (token/external) -> #f
+(define (artifact-key-parts a kind env)
+  (case kind
+    [(dir) (let ([p (env-resolve env a)]) (and p (tree-hashes p)))]
+    [(db-relation) (let ([rrc (build-env-resolve-relation-columns env)]) (and rrc (rrc a)))]
+    [(file) (let ([rsk (build-env-resolve-store-keys env)]) (and rsk (rsk a)))]
+    [else #f]))
+
 ;; observe-output : artifact symbol build-env?
 ;;   -> (or/c (cons string (or/c (listof (cons string string)) #f)) #f)
 ;; One derived output's observation: (digest . parts), or #f when there's nothing
-;; to hash. `parts' is the artifact's attribute-level refinement (#f when it has
-;; none). By kind:
-;;   'file        bytes -> (hash . #f)                       — no parts
-;;   'dir         tree-hashes -> (digest-of-pairs . pairs)   — per-key (path->hash)
-;;   'db-relation resolve-relation -> (hash . columns)       — per-column (st-7vz),
-;;                columns from resolve-relation-columns (#f if that slot is unset);
-;;                the digest is the row-coherent one the cache also uses, taken here
+;; to hash. The PARTS come from the shared artifact-key-parts; the DIGEST stays
+;; kind-specific here because it is NOT always a roll-up of the parts:
+;;   'dir         digest-of-pairs over its parts (they agree by construction)
+;;   'db-relation the row-coherent resolve-relation digest — per-column parts alone
+;;                CANNOT reconstruct it (a cross-row value swap, st-d5d); taken here
 ;;                AFTER the producer released the db lock
+;;   'file        the bytes hash (a plain file has no parts)
 ;;   else (token/external) -> #f
 (define (observe-output a out env)
+  (define parts (artifact-key-parts out (artifact-kind a) env))
   (case (artifact-kind a)
-    [(dir)
-     (define p (env-resolve env out))
-     (define pairs (and p (tree-hashes p)))
-     (and pairs (cons (digest-of-pairs pairs) pairs))]
+    [(dir) (and parts (cons (digest-of-pairs parts) parts))]
     [(db-relation)
      (define rr (build-env-resolve-relation env))
      (define h (and rr (rr out)))
-     (and h (cons h (let ([rrc (build-env-resolve-relation-columns env)])
-                      (and rrc (rrc out)))))]
+     (and h (cons h parts))]
     [else
      (define p (env-resolve env out))
-     (and p (file-exists? p) (cons (file-sha1 p) #f))]))
+     (and p (file-exists? p) (cons (file-sha1 p) parts))]))
 
 ;; input-store-snapshot : graph symbol build-env?
 ;;   -> (listof (cons symbol (listof (cons string string))))
-;; The ingestion-boundary CRUD-snapshot (st-2k9): each KEYED STORE input of the
-;; task, as (artifact -> its per-key map), sorted. A store is a producerless
-;; authoritative 'file leaf whose per-key observation nothing else records (a
-;; 'dir/db-relation input is observed by its PRODUCER as an output). The env's
-;; resolve-store-keys returns #f for every non-store input, so only real stores
-;; contribute; '() when the env has no store resolver. Recorded on the trace so the
-;; store gains a per-key timeline — the `from' basis the prospective delta needs.
+;; The ingestion-boundary CRUD-snapshot (st-2k9): each PRODUCERLESS keyed leaf the
+;; task consumes, as (artifact -> its per-key map), sorted. Such a leaf (the notes
+;; store — an authoritative 'file keyed by canonical_name) is observed by nobody
+;; else: a 'dir/db-relation input is recorded by its PRODUCER as an output, so we
+;; skip anything with a producer to avoid double-observing. Parts come from the
+;; shared artifact-key-parts (st-lg0), so this covers any future producerless keyed
+;; kind, not just stores; '() when nothing qualifies.
 (define (input-store-snapshot g name env)
   (define t (hash-ref (graph-tasks g) name))
-  (define rsk (build-env-resolve-store-keys env))
-  (if rsk
-      (sort (for*/list ([in (in-list (task-inputs t))]
-                        [keys (in-value (rsk in))]
-                        #:when keys)
-              (cons in keys))
-            symbol<? #:key car)
-      '()))
+  (sort (for*/list ([in (in-list (task-inputs t))]
+                    #:unless (producer-of g in)
+                    [a (in-value (hash-ref (graph-artifacts g) in #f))]
+                    [parts (in-value (and a (artifact-key-parts in (artifact-kind a) env)))]
+                    #:when parts)
+          (cons in parts))
+        symbol<? #:key car))
 
 ;; output-snapshot : graph symbol build-env? -> (listof (cons symbol string))
 ;; The artifact-level digests alone — the cutoff basis and cache entry (role
