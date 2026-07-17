@@ -54,11 +54,19 @@ across builds, and cuts off propagation on unchanged content — proven across a
 `beeatlas` targets. Horizon 2's substrate (the observation history) is built; the
 engine is host-portable (`BEEATLAS_DIR` / `NOTES_DB_PATH`).
 
-## Horizon 2 — Later
+## Horizon 2 — Now
 
 *Fold in change-over-time and cross the file/value boundary. This is where the
 batch→streaming arc completes and the browser gets fed.*
 
+- **Serve from the build host (ADR 0007)** — the active arc: the 11ty render
+  becomes a Stelis `site` task (st-ak1); beeatlas.net moves to an Apache vhost
+  on maderas serving a directory Stelis owns, retiring S3/CloudFront from
+  serving (st-bgy); a note write commits, then synchronously rebuilds the site
+  before responding — reload-sees-it as a build property (st-nee); post-soak
+  teardown deletes the `/api/notes` kludge and the AWS serving stack (st-vjd).
+  The measured write-path latency is the forcing function that prices any
+  targeted-render work.
 - **Streaming / CRUD ingestion** — `salishsea`'s model: small frequent
   content-addressed snapshots at the ingestion boundary; near-real-time
   incorporation of API data into artifacts.
@@ -84,6 +92,11 @@ batch→streaming arc completes and the browser gets fed.*
 *Named so features have a home, not scheduled. Each entry has a "why deferred" in
 `DESIGN.md`.*
 
+- **Sentential-Datalog render substrate** (the server pivot's deferred half,
+  ADR 0007): pages rendered by querying a fact database, replacing 11ty. Why
+  deferred: required by nothing shipped so far — it must re-enter through a
+  concrete value prop a near-term Stelis would serve. First candidate under
+  exploration: editorial data-quality flags (st-650).
 - **Non-linear time:** git-like branching and grafting of database-programs;
   distribution. The hard problem; everything else assumes it away.
 - **Review / staleness workflow layer:** human and LLM review nodes; three-valued

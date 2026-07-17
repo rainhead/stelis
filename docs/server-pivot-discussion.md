@@ -1,6 +1,13 @@
 # Server pivot — pending design discussion (2026-07-16)
 
-**Status:** OPEN. Captured mid-conversation to feed a Fable-led grilling of the
+**Status:** RESOLVED by [ADR 0007](adr/0007-serve-from-build-host.md)
+(2026-07-17, Fable-led grilling). The pivot split: local-origin serving +
+synchronous burned-in publish is the target now; the sentential-Datalog render
+substrate is deferred pending a concrete value prop (first candidate: editorial
+data-quality flags, st-650). This document is kept as the historical record of
+the fork. Original status text follows.
+
+Captured mid-conversation to feed a Fable-led grilling of the
 pivot and a roadmap re-baseline. Nothing here is decided except where marked
 **[DECIDED]**. Do not enact — the north star must be interrogated first (it sits
 squarely in DESIGN.md's named failure mode: substrate-for-its-own-sake / the
