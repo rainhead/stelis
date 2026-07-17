@@ -167,6 +167,11 @@
   (define s (~a artifact))
   (cond
     [(hash-ref raw-file-paths artifact #f)]
+    ;; a curator-review CSV checklist_dedup writes to data/ at a FIXED path (and a
+    ;; different basename, `_pairs`) — a derived output the dedup-gate reads, not an
+    ;; EXPORT_DIR artifact. Surfaced by --build --all (dedup-candidates is pruned for
+    ;; occurrences.db); the st-6qc guard needs a resolvable path to verify it.
+    [(eq? artifact 'dedup_candidates.csv) (build-path DATA "dedup_candidate_pairs.csv")]
     [(memq artifact sandbox-marts) (build-path SANDBOX s)]
     ;; @export copies (place-marts' verbatim copies + species-export's enriched
     ;; parquet): the placed sibling lives under export-dir at the un-suffixed name.

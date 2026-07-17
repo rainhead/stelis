@@ -199,20 +199,24 @@
 
 ;; 12. Fail-loud guard (st-6qc). A 'file or 'dir output that resolves to #f drops
 ;;     silently out of env-output-paths (never verified, never hashed); the guard
-;;     turns that into a hard error. A built+verified target's whole plan resolves;
-;;     an unwired terminal (dedup_candidates.csv — no beeatlas-path entry yet)
-;;     raises, naming it.
+;;     turns that into a hard error. A built+verified target's whole plan resolves.
 (define guard-env (make-build-env beeatlas-path (build-path "/tmp/guard-out")
                                   (build-path "/tmp/guard-cache")))
 (let-values ([(pl-ordered _p) (plan beeatlas-graph 'places.json)])
   (check-not-exn
    (lambda () (check-output-paths-resolvable beeatlas-graph pl-ordered guard-env))
    "places.json's plan has no unresolvable file outputs"))
-(let-values ([(dc-ordered _p) (plan beeatlas-graph 'dedup_candidates.csv)])
+;; the guard itself, on a SYNTHETIC unresolvable output — every beeatlas 'file/'dir
+;; output now resolves (dedup_candidates.csv gained a path so --build --all works),
+;; so the fail-loud path needs a stand-in whose resolver returns #f.
+(let ([g (build-graph (list (make-task 'mk 'transform #:outputs '(ghost)))
+                      (list (make-artifact 'ghost 'file)))]
+      [nil-env (make-build-env (lambda (_a _d) #f)
+                               (build-path "/tmp/guard-out") (build-path "/tmp/guard-cache"))])
   (check-exn
    #rx"unresolvable file/dir output"
-   (lambda () (check-output-paths-resolvable beeatlas-graph dc-ordered guard-env))
-   "an unwired terminal (dedup_candidates.csv) is rejected loudly, not skipped"))
+   (lambda () (check-output-paths-resolvable g '(mk) nil-env))
+   "a 'file output that resolves to #f is rejected loudly, not skipped"))
 ;; slice-4 terminals must have EVERY output resolvable, incl. the multi-output
 ;; siblings (topology's 3 .clean.geojson; collectors-events' enriched file AND its
 ;; collector_event_pages.json sidecar — the latter was missing from the resolver
