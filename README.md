@@ -51,6 +51,7 @@ racket src/main.rkt --commands occurrences.db   # dry run: the exact command per
 racket src/main.rkt --explain occurrences.db    # why would each task run or be skipped?
 racket src/main.rkt --why occurrences.db        # why is it stale? (a task or artifact; transitive chain)
 racket src/main.rkt --build occurrences.db      # execute the plan (partial success)
+racket src/main.rkt --build --all --export-dir DIR  # build EVERY target into DIR — the run.py replacement
 racket src/main.rkt --explain --last            # what did the last build actually do?
 racket src/main.rkt --run generate-sqlite       # execute a single task
 racket src/main.rkt --verify occurrences.db     # determinism: build twice, compare hashes

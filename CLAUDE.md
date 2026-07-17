@@ -44,7 +44,10 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
   last `--build` actually did) ·
   `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog) ·
   `--history` (browse recorded builds; `--history <artifact>` for its hash timeline) ·
-  `--run <task>` (execute one task in its hermetic runtime).
+  `--run <task>` (execute one task in its hermetic runtime) ·
+  `--build --all --export-dir <dir>` (build EVERY target into `<dir>` — the run.py
+  replacement: covers all of run.py's steps, but content-addressed-skips current
+  work and is partial-success rather than fail-fast).
 - **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner ·

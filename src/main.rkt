@@ -10,6 +10,7 @@
 ;;   racket src/main.rkt --explain --last                  ; what did the last build do?
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
+;;   racket src/main.rkt --build --all --export-dir DIR    ; build EVERY target (the run.py replacement)
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
 ;;   racket src/main.rkt --build --from notes-harvest --export-dir DIR notes.json  ; CRUD: targeted notes into a served dir
 ;;   racket src/main.rkt --history                         ; list every recorded build
@@ -37,6 +38,7 @@
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
+(define all? (make-parameter #f))           ; --all: build the whole graph (replaces run.py)
 
 (define name
   (command-line
@@ -63,6 +65,8 @@
                (last? #t)]
    [("--export-dir") dir "with --build/--run: write outputs to DIR (an explicit, served destination — e.g. a CRUD rebuild into the site's data dir) instead of the scratch dir"
                      (export-dir-arg dir)]
+   [("--all") "with --build/--commands/--explain: the WHOLE graph (every task, topo-ordered) — the run.py replacement; no <target> needed"
+              (all? #t)]
    #:args names
    (cond
      [(null? names) #f]
@@ -70,9 +74,9 @@
      [else (error 'stelis "expects at most one <name>, given: ~a"
                   (string-join names " "))])))
 
-;; every mode needs the positional name except reading back persisted state:
-;; --explain --last (the trace knows its target) and --history (no arg = all builds)
-(unless (or name (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history))
+;; every mode needs the positional name except: reading back persisted state
+;; (--explain --last, --history), and --all (the whole graph — no target).
+(unless (or name (all?) (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
 
 ;; short-hash : (or/c string #f) -> string — a hash's first 10 chars for display
@@ -164,6 +168,16 @@
                           ;; only EXPORT_DIR-relative inputs need seeding
                           (equal? (path-only p) (path->directory-path ref-dir))))
     (cons p (path->string (file-name-from-path p)))))
+
+;; plan-for : (values (listof symbol) set) — the plan for this invocation. With
+;; --all it is the WHOLE graph (every task, topo-ordered; nothing pruned) — the
+;; run.py replacement. Otherwise the target's minimal-upstream plan.
+(define (plan-for)
+  (if (all?)
+      (values (topo-sort beeatlas-graph
+                         (list->set (hash-keys (graph-tasks beeatlas-graph))))
+              (set))
+      (plan beeatlas-graph name)))
 
 ;; Restrict a plan to the suffix beginning at --from, when given. Used by both
 ;; --build (what runs) and --commands (what the dry run previews), so the preview
@@ -304,13 +318,13 @@
 
   ;; --- execute an ordered plan (partial success) -------------------------
   [(eq? (mode) 'build)
-   (define-values (ordered pruned) (plan beeatlas-graph name))
+   (define-values (ordered pruned) (plan-for))
    (define to-run (plan-suffix ordered))
    ;; st-6qc: refuse to build a plan whose file/dir outputs can't be verified.
    (check-output-paths-resolvable beeatlas-graph to-run benv)
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
-           name (length to-run)
+           (or name "the whole graph") (length to-run)
            (if (from-task) (format ", from ~a" (from-task)) "")
            out)
    (define-values (status records)
@@ -322,7 +336,7 @@
    ;; st-sds: append this build to the history (retiring last-build.rktd). The
    ;; source-epoch is sequence metadata for browsing only — freshness never reads
    ;; it. The graph snapshot is written once per distinct topology.
-   (history-append! stelis-state name beeatlas-graph
+   (history-append! stelis-state (or name 'all) beeatlas-graph
                     (beeatlas-source-date-epoch) records)
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
@@ -401,8 +415,8 @@
 
   ;; --- plan / dry-run for a target artifact ------------------------------
   [else
-   (define-values (ordered pruned) (plan beeatlas-graph name))
-   (printf "Target: ~a\n\n" name)
+   (define-values (ordered pruned) (plan-for))
+   (printf "Target: ~a\n\n" (or name "the whole graph (--all)"))
    (cond
      [(eq? (mode) 'explain)
       (define to-run (plan-suffix ordered))
@@ -422,4 +436,4 @@
       (for ([t (in-list ordered)] [i (in-naturals 1)])
         (printf "  ~a. ~a  [~a]\n" i t (task-kind (hash-ref (graph-tasks beeatlas-graph) t))))])
    (printf "\nPruned — ~a task(s) not upstream of ~a:\n  ~a\n"
-           (set-count pruned) name (sort (set->list pruned) symbol<?))])
+           (set-count pruned) (or name "the target") (sort (set->list pruned) symbol<?))])
