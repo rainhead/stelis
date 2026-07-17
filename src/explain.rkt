@@ -69,6 +69,7 @@
     [(recipe-changed)      "recipe changed"]
     [(input-changed)       (format "inputs changed: ~a" (names))]
     [(output-missing)      (format "outputs missing: ~a" (names))]
+    [(output-stale)        (format "db-relation output(s) stale in the current DuckDB: ~a" (names))]
     [(cached)              "cached — inputs unchanged, outputs present"]
     [else                  (format "~a" (decision-reason d))]))
 

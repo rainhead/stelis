@@ -38,6 +38,7 @@
          read-versioned
          read-cache-entry
          decide
+         stale-relation-outputs
          decision+snapshot
          task-decision
          cache-hit?
@@ -63,6 +64,9 @@
 ;;           | 'recipe-changed       the command itself changed
 ;;           | 'input-changed        details name the changed/added/removed inputs
 ;;           | 'output-missing       details name the missing output paths
+;;           | 'output-stale         details name db-relation outputs whose table no
+;;                                   longer matches what this task built (DuckDB
+;;                                   swapped/mutated under the cache, st-84u)
 ;;           | 'cached               (verdict 'skip) inputs unchanged, outputs exist
 ;;   details : reason-specific list; '() when there is nothing to name
 (struct decision (verdict reason details) #:transparent)
@@ -352,12 +356,15 @@
 
 ;; --- The decision core ----------------------------------------------------------
 
-;; decide : snapshot? (or/c hash? #f) (listof path-string) -> decision?
+;; decide : snapshot? (or/c hash? #f) (listof path-string) [(listof symbol)]
+;;          -> decision?
 ;; The pure core: compare a fresh snapshot against the recorded entry (#f = no
-;; usable entry), given which recorded outputs are missing on disk. The first
-;; applicable reason wins; 'output-missing is checked after the content reasons
-;; so a content change is always reported as the content change.
-(define (decide snap entry missing-outputs)
+;; usable entry), given which recorded outputs are missing on disk (`missing-outputs`)
+;; and which db-relation outputs no longer match what this task last produced
+;; (`stale-outputs`, st-84u). The first applicable reason wins; the output reasons
+;; are checked after the content reasons so a content change is always reported as
+;; the content change.
+(define (decide snap entry missing-outputs [stale-outputs '()])
   (cond
     [(not entry) (decision 'run 'no-cache-entry '())]
     [(not (equal? (hash-ref entry 'recipe-hash #f) (snapshot-recipe-hash snap)))
@@ -369,7 +376,30 @@
      (cond
        [(pair? changed)          (decision 'run 'input-changed changed)]
        [(pair? missing-outputs)  (decision 'run 'output-missing missing-outputs)]
+       ;; a db-relation output whose table is gone/mutated in the current DuckDB —
+       ;; the db was swapped out from under a content-addressed skip (st-84u). Rerun
+       ;; to re-materialise it, or a downstream dbt read of it silently empties.
+       [(pair? stale-outputs)    (decision 'run 'output-stale stale-outputs)]
        [else                     (decision 'skip 'cached '())])]))
+
+;; stale-relation-outputs : graph symbol build-env? (or/c hash? #f) -> (listof symbol)
+;; A task's db-relation OUTPUTS whose CURRENT digest (the table now in the DuckDB at
+;; DB_PATH) differs from the digest this task recorded last build — i.e. the table is
+;; missing or was mutated since (a fresh S3 pull swaps the whole db each nightly).
+;; The ordinary missing-output check can't see these: a db-relation has no path, so
+;; it never appears in env-output-paths (st-84u). '() with no relation resolver, no
+;; entry, or no db-relation outputs.
+(define (stale-relation-outputs g name env entry)
+  (define rr (build-env-resolve-relation env))
+  (cond
+    [(not (and rr entry)) '()]
+    [else
+     (define recorded (make-immutable-hash (hash-ref entry 'output-hashes '())))
+     (for/list ([out (in-list (task-outputs (hash-ref (graph-tasks g) name)))]
+                #:when (let ([a (hash-ref (graph-artifacts g) out #f)])
+                         (and a (eq? 'db-relation (artifact-kind a))))
+                #:unless (equal? (rr out) (hash-ref recorded out #f)))
+       out)]))
 
 ;; names whose hash differs between the two maps, or that exist in only one
 (define (changed-names old new)
@@ -390,9 +420,11 @@
                                (build-env-resolve-relation env)))
   (if (decision? snap)
       (values snap #f)
-      (values (decide snap (read-cache-entry (build-env-cache-dir env) name)
-                      (missing (env-output-paths env t)))
-              snap)))
+      (let ([entry (read-cache-entry (build-env-cache-dir env) name)])
+        (values (decide snap entry
+                        (missing (env-output-paths env t))
+                        (stale-relation-outputs g name env entry))
+                snap))))
 
 ;; task-decision : graph symbol build-env? -> decision?
 (define (task-decision g name env)

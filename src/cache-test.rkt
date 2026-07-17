@@ -46,6 +46,40 @@
               'input-changed
               "content change outranks missing output as the reason")
 
+;; stale db-relation outputs (st-84u): unchanged inputs, but a recorded db-relation
+;; output no longer matches the current DuckDB -> rerun, not skip.
+(check-equal? (decide snap-a (entry) '() '(rel))
+              (decision 'run 'output-stale '(rel))
+              "a stale db-relation output forces a rerun")
+(check-equal? (reason (decide snap-a (entry) '("out.db") '(rel)))
+              'output-missing
+              "a missing file output outranks a stale relation")
+(check-equal? (reason (decide snap-a (entry #:inputs '((x . "OLD") (y . "hy"))) '() '(rel)))
+              'input-changed
+              "a content change still outranks a stale relation")
+
+;; stale-relation-outputs: which db-relation outputs no longer match the DuckDB.
+(let* ([dummy (build-path "/tmp/cache-test-x")]
+       [g (build-graph (list (make-task 'load 'transform #:outputs '(rel)))
+                       (list (make-artifact 'rel 'db-relation)))]
+       [env-now (make-build-env (lambda (_a _d) #f) dummy dummy
+                                #:resolve-relation (lambda (a) (and (eq? a 'rel) "NOW")))]
+       [env-gone (make-build-env (lambda (_a _d) #f) dummy dummy
+                                 #:resolve-relation (lambda (_a) #f))]
+       [env-none (make-build-env (lambda (_a _d) #f) dummy dummy)])
+  (check-equal? (stale-relation-outputs g 'load env-now (entry #:out-hashes '((rel . "NOW")))) '()
+                "current digest matches recorded -> not stale")
+  (check-equal? (stale-relation-outputs g 'load env-now (entry #:out-hashes '((rel . "OLD")))) '(rel)
+                "current digest differs (db mutated/swapped) -> stale")
+  (check-equal? (stale-relation-outputs g 'load env-now (entry #:out-hashes '())) '(rel)
+                "no recorded digest -> stale")
+  (check-equal? (stale-relation-outputs g 'load env-gone (entry #:out-hashes '((rel . "NOW")))) '(rel)
+                "table gone from the current db -> stale")
+  (check-equal? (stale-relation-outputs g 'load env-none (entry #:out-hashes '((rel . "OLD")))) '()
+                "no relation resolver -> nothing to check")
+  (check-equal? (stale-relation-outputs g 'load env-now #f) '()
+                "no cache entry -> nothing to check"))
+
 ;; --- compare-outputs: the pure cutoff question (st-8ig) -----------------------
 
 (check-false (compare-outputs #f '((out . "h1")))
