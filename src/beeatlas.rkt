@@ -434,7 +434,14 @@
               #:inputs '(ecdysis_data inat_observations waba_data)
               #:outputs '(anti-entropy-applied)
               #:invoke (py "anti_entropy_pipeline" "run_anti_entropy"))
-   (make-task 'checklist 'boundary #:outputs '(checklist_raw)
+   ;; load_checklist also materializes canonical_name onto ecdysis_data.occurrences
+   ;; (checklist_pipeline._update_occurrences_canonical_name). The ecdysis loader uses
+   ;; write_disposition='replace', which drops that column every run, so checklist MUST
+   ;; run after `ecdysis` — matching run.py's linear order (…ecdysis…→checklist). The
+   ;; ecdysis_data input declares that edge; without it the planner scheduled checklist
+   ;; first and the subsequent replace wiped canonical_name, emptying
+   ;; int_species_host_plants and failing species-export (st-84u).
+   (make-task 'checklist 'boundary #:inputs '(ecdysis_data) #:outputs '(checklist_raw)
               #:invoke (py "checklist_pipeline" "load_checklist"))
    (make-task 'resolve-checklist-names 'transform
               #:inputs '(checklist_raw) #:outputs '(checklist_resolved)
