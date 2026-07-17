@@ -192,7 +192,14 @@
 ;; there). They therefore share one digest and co-vary. That is coarse but SAFE:
 ;; any change to the table changes all three hashes, so a stale input can never
 ;; read as unchanged — the failure is at worst an over-rebuild, never a false skip.
-(define beeatlas-db (build-path DATA "beeatlas.duckdb"))
+;; The DuckDB Stelis content-addresses (relation digests, the integrity gate).
+;; Honors DB_PATH — the same env var run.py's pipeline reads — so under nightly.sh
+;; (DB_PATH=/tmp/beeatlas.duckdb, pulled from S3) Stelis reads the SAME db the
+;; pipeline writes, not the local-dev checkout copy. Defaults to the checkout db
+;; for local runs (mirrors BEEATLAS_DIR / NOTES_DB_PATH).
+(define beeatlas-db
+  (let ([p (getenv "DB_PATH")])
+    (if p (string->path p) (build-path DATA "beeatlas.duckdb"))))
 
 ;; beeatlas-relation-tables : symbol -> (or/c (listof string) #f)
 ;; The qualified physical tables a db-relation artifact occupies, or #f for an
