@@ -1,6 +1,7 @@
 # ADR 0007 — Serve from the build host; synchronous burned-in publish (st-nee)
 
 **Status:** accepted · **Horizon:** 2 · **Date:** 2026-07-17
+**Amended:** 2026-07-17 (Model Y — see Amendment below; revises decision #2).
 
 Resolves the open server pivot (`docs/server-pivot-discussion.md`) by splitting
 it: the **serving substrate moves to the build host now** (beeatlas.net served by
@@ -82,3 +83,61 @@ AWS, so they survive the move unchanged.
   work that must be priced by real latency numbers from this design.
 - `docs/server-pivot-discussion.md` is resolved by this ADR and kept as the
   historical record of the fork.
+
+## Amendment — Model Y: Stelis is the data engine, the site build owns the render (2026-07-17)
+
+Grilled the same day st-ak1 landed. Decision #2 ("the 11ty render is a Stelis
+task") is **revised**: putting the render in the graph, on reflection, cut
+against this project's own stated line (`DESIGN.md` / the pivot doc: "the build
+system's role narrows to the heavy derived pipeline… **not the site render**").
+Now that AWS is out of the serving path, the CDN-era coupling that the `site`
+task papered over (a build export dir of unhashed artifacts vs. a served root of
+hashed artifacts + `manifest.json`) can be dissolved instead of bridged.
+
+**Model Y (adopted):**
+
+1. **Stelis narrows to the data engine.** `site` LEAVES the graph (reverting
+   st-ak1's node; the `EXPORT_DIR`-honoring reader seam `lib/build-data-dir.js`
+   is kept). Stelis produces the raw (unhashed) data artifacts; the 11ty/Vite
+   site build is top-level and consumes them via `npm run fetch-data`
+   (= `stelis --build <data> --export-dir DIR`). Provisional — Stelis may
+   reclaim the render later if a reason appears.
+
+2. **The site build owns asset tagging.** Build-time-baked artifacts
+   (`species.json`, `notes.json`, …) stop being hashed/manifested — 11ty inlines
+   them. The ~5 runtime-fetched binaries (`occurrences.db`/`.parquet`, the
+   geojsons, `places_meta`) stay content-hashed/immutable, tagged by a
+   **site-repo postbuild step** that writes a **slim manifest** =
+   `{runtime-binary → hashed-name, generated_at}`. The client's `resolveDataUrl`
+   / PWA offline model is unchanged, just a shorter manifest.
+
+3. **Publish flow:** `fetch-data → build (11ty inline + Vite hash) → postbuild
+   (hash runtime binaries + slim manifest) → merge-swap into the served root`
+   (rsync: hashed assets/data first no-`--delete`, pages with `--delete`,
+   `manifest.json` `mv`'d atomically last, age-prune). `nightly.sh` collapses to
+   sync + fetch-data + build + place; the S3 push, CloudFront invalidation,
+   GH-dispatch, and bash `artifacts.py manifest` block all delete.
+
+4. **DuckDB persistence.** The working duckdb moves from an S3-pull-to-`/tmp` to
+   a **persistent maderas path** (the `/var/www` htdocs+var convention); the
+   offsite backup is KEPT (same-host is not a backup) but relocates out of the
+   doomed site bucket into a dedicated bucket — which also unblocks st-vjd's
+   site-bucket teardown. AWS leaves the hot paths (serve/build/ingest); DR
+   backups stay offsite by design (AWS now, Akamai object storage a later
+   single-vendor option).
+
+5. **st-nee write path (reshaped):** commit → shared flock → `npm run fetch-data`
+   notes-only (`--from notes-harvest … notes.json`, `STELIS_REBUILD_KEYS=<name>`)
+   → `npm run build` → merge-swap → `live` / `saved; publish pending`. Same
+   build+place the nightly runs, scoped to notes. Commit-first / flock /
+   never-roll-back are unchanged.
+
+**Cost accepted:** the render runs unconditionally (~18s) per note write AND per
+nightly — Stelis's content-addressed early-cutoff render-skip is gone. It only
+ever helped a no-change build (a note write always changes `notes.json`), so the
+loss is ~18s on a rare no-op nightly. Fine single-user, for now.
+
+**Work:** (A) `site` out of graph + `fetch-data`; (B) site build tagging
+(postbuild + slim manifest, slim `manifest.ts`); (C) `nightly.sh` shrink +
+duckdb-local; (D) CDK duckdb-backup relocation; (E) st-nee write path. st-vjd
+teardown last (now also depends on D).
