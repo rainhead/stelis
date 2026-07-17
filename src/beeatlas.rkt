@@ -142,26 +142,12 @@
 ;; `notes' is the per-canonical_name notes SET (st-pd1): notes-harvest writes
 ;; EXPORT_DIR/notes/<canonical_name>.json, one per approved species — the keyed unit
 ;; a targeted rebuild touches (notes-assemble then rolls it into notes.json).
-;; `site' is the rendered 11ty site itself (st-ak1, ADR 0007): the `site` task
-;; runs `npm run build` in the beeatlas checkout and places `_site/` at
-;; EXPORT_DIR/site — the tree an Apache vhost on the build host serves.
-(define export-dir-dirs '(species-maps place-maps feeds notes site))
-
-;; --- Site source (st-ak1, ADR 0007) ------------------------------------------
-;; The 11ty render's source tree, as producerless leaves: each entry is a
-;; repo-relative path under BEEATLAS, content-addressed like any other input
-;; ('dir via tree-digest, 'file by bytes). Scoped to exactly what `npm run
-;; build` reads — NOT the repo root, which would drag node_modules/.git/
-;; public/data into the digest. node_modules is provisioned OUTSIDE the graph
-;; (nightly.sh's lock-hash-cached `npm ci`); package-lock.json being an input
-;; here is what makes that sound — a dependency bump changes the digest.
-(define site-src-dirs
-  '("_data" "_includes" "_layouts" "_pages" "content" "src" "lib" "scripts"
-    "public/app"))
-(define site-src-files
-  '("eleventy.config.js" "package.json" "package-lock.json" "tsconfig.json"
-    "vite.config.ts" "vite-plugin-preload.ts"))
-(define (site-src-name rel) (string->symbol (string-append "site-src:" rel)))
+;; The 11ty render is NOT a Stelis task (ADR 0007 Amendment / Model Y, st-5em):
+;; Stelis narrows to the DATA engine, and the site build (11ty/Vite) is
+;; top-level, consuming these artifacts via `npm run fetch-data`. The `site`
+;; task + site-src leaves that briefly lived here (st-ak1) were reverted; the
+;; EXPORT_DIR reader seam (beeatlas lib/build-data-dir.js) is what survives.
+(define export-dir-dirs '(species-maps place-maps feeds notes))
 
 ;; The authoritative notes STORE (st-msn): the SQLite file notes-harvest reads
 ;; read-only. A fixed absolute path OUTSIDE the beeatlas repo (D-15), from
@@ -199,9 +185,6 @@
     [(memq artifact export-dir-files) (build-path export-dir s)]
     ;; 'dir outputs: a directory named for the artifact, directly under export-dir.
     [(memq artifact export-dir-dirs) (build-path export-dir s)]
-    ;; site-source leaves (st-ak1): repo-relative paths under the beeatlas checkout.
-    [(regexp-match #rx"^site-src:(.+)$" s)
-     => (lambda (m) (build-path BEEATLAS (cadr m)))]
     [else #f]))
 
 ;; --- db-relation content-addressing (st-d5d) --------------------------------
@@ -315,19 +298,6 @@
   (string-append "set -e; for f in " (string-join (map ~a placed-marts) " ")
                  "; do cp \"" SANDBOX "/$f\" \"$EXPORT_DIR/$f\"; done"))
 
-;; The `site` render (st-ak1, ADR 0007): `npm run build` in the beeatlas checkout
-;; (validate-species && validate-db && typecheck && eleventy && bundle-size), then
-;; PLACE the _site tree at $EXPORT_DIR/site — the same build-then-place split as
-;; dbt-build/place-marts, collapsed into one node because _site's location is
-;; baked into eleventy.config.js/vite in several spots. The renderer reads its
-;; data from $EXPORT_DIR (the _data/*.js readers honor it, falling back to
-;; public/data for `npm run dev`/CI); the executor injects EXPORT_DIR + the
-;; ADR-0004 SOURCE_DATE_EPOCH clock. node comes from PATH (nightly.sh sources
-;; nvm before invoking stelis); node_modules from its lock-cached `npm ci`.
-(define site-build-script
-  (string-append "set -e; cd \"" BEEATLAS "\"; npm run build; "
-                 "rm -rf \"$EXPORT_DIR/site\"; cp -R _site \"$EXPORT_DIR/site\""))
-
 ;; --- Artifacts --------------------------------------------------------------
 ;; kinds: 'file  'db-relation (a schema/table in the shared beeatlas.duckdb)
 ;;        'external (loaded outside the nightly graph)  'token (a gate result)
@@ -336,15 +306,7 @@
    ;; the nine dbt sandbox marts — one 'file artifact each, derived from the
    ;; placement list so the mart set lives in exactly one place (st-bft).
    (for/list ([m (in-list sandbox-marts)]) (make-artifact m 'file))
-   ;; site-source leaves (st-ak1): the 11ty render's inputs, from the two scoped
-   ;; lists above — producerless, content-addressed checkout state.
-   (for/list ([d (in-list site-src-dirs)]) (make-artifact (site-src-name d) 'dir))
-   (for/list ([f (in-list site-src-files)]) (make-artifact (site-src-name f) 'file))
    (list
-   ;; the rendered site (st-ak1, ADR 0007): 11ty's _site tree, placed at
-   ;; EXPORT_DIR/site — the directory the build host serves. DERIVED; opaque
-   ;; 'dir (no fan-out key — its file set is the render's business).
-   (make-artifact 'site                     'dir)
    (make-artifact 'taxa.csv.gz              'file)
    (make-artifact 'ecdysis_data             'db-relation)
    (make-artifact 'ecdysis_links            'db-relation)
@@ -683,21 +645,6 @@
    ;; <updated> (was wall-clock), so two builds of a snapshot are byte-identical.
    (make-task 'feeds 'transform
               #:inputs '(ecdysis_data) #:outputs '(feeds)
-              #:invoke (py "feeds" "main"))
-   ;; the 11ty render as a graph node (st-ak1, ADR 0007). Inputs are exactly what
-   ;; `npm run build` reads: the build-time data artifacts (_data/*.js +
-   ;; validate-species/validate-db, all loading from $EXPORT_DIR) and the scoped
-   ;; site-source leaves. Early cutoff is the payoff: a note write whose upstream
-   ;; rebuild produces an identical notes.json (and unchanged templates) skips
-   ;; this multi-minute render entirely — the substance of the st-nee write path.
-   (make-task 'site 'transform
-              #:inputs (append '(species.json seasonality.json higher_taxa.json
-                                 species_hosts.json notes.json
-                                 collectors.events.json collector_event_pages.json
-                                 places.json place_details.json)
-                               (map site-src-name site-src-dirs)
-                               (map site-src-name site-src-files))
-              #:outputs '(site)
-              #:invoke (recipe 'sh (list site-build-script)))))
+              #:invoke (py "feeds" "main"))))
 
 (define beeatlas-graph (build-graph tasks (append artifacts mart-export-artifacts)))
