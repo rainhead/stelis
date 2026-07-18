@@ -54,10 +54,10 @@ Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planne
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the runtimes (incl. the `notes-harvest` → per-species `notes/` dir →
-`notes-assemble` → `notes.json` split, `beeatlas-partial-tasks` (st-pd1), and the
-`site` task — the 11ty render as a graph node placing `_site` at
-`EXPORT_DIR/site`, with the site source tree as scoped `site-src:` leaves,
-st-ak1/ADR 0007) ·
+`notes-assemble` → `notes.json` split, and `beeatlas-partial-tasks` (st-pd1)).
+Data only — the 11ty render left the graph in Model Y (ADR 0007 Amendment,
+st-5em): the site build is top-level in beeatlas and consumes the export via
+`npm run fetch-data` ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus in-process `rule-check` nodes — a rule evaluated in
 Racket as a graph node, gating its downstream (st-0vz). `run-plan`'s
