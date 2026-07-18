@@ -33,9 +33,9 @@ st-nee, st-28p **closed**; st-066 unblocked.
 
 ## What remains (beads carry the detail)
 
-- **ProxyTimeout** — `ProxyTimeout 300` on the `api.beeatlas.net` vhost
-  (sudo). Only matters for a CONTENDED write (up to 60s lock wait + 26s
-  build > the 60s default); an uncontended publish fits under the default.
+- ~~ProxyTimeout~~ — done 2026-07-17: `ProxyTimeout 300` set on the
+  `api.beeatlas.net` vhost (covers the contended-write case: up to 60s lock
+  wait + 26s build exceeds Apache's 60s default).
 - **D — `st-pry` code DONE, deploy pending** (user only, local `rainhead`
   identity): `npx cdk diff BeeAtlasStack` (expect only the
   `PipelineBackupBucket` + two pipeline-user statements + an output),
