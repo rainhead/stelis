@@ -17,23 +17,25 @@ baseline snapshotted; offsite backup trap ran) → cron re-enabled. The slim
 manifest + hashed artifacts serve 200 over HTTPS. **Tonight's 03:00 nightly is
 the soak start.**
 
-**E is enabled in production**: `NOTE_PUBLISH_ENABLED=true` in the
-`beeatlas-api` systemd user unit. Verified on maderas: a hand-run
-`data/publish-notes.sh` completes in **~26s** (scoped stelis → 22s render →
-2s merge-swap — under Apache's default 60s proxy timeout), and a held
-`publish.lock` produces the bounded-wait → exit 75 tempfail with no build
-work. Beads: st-5em, st-mfb, st-jeu **closed**; st-bgy was already closed.
+**E is live and round-tripped**: `NOTE_PUBLISH_ENABLED=true` in the
+`beeatlas-api` systemd user unit; a hand-run `data/publish-notes.sh` takes
+**~26s** (scoped stelis → 22s render → 2s merge-swap), and a held
+`publish.lock` gives the bounded-wait → exit 75 tempfail with no build work.
+**The first production write found a real stelis bug (st-28p, fixed same
+night, stelis 52c7276):** the keyed notes store was input-addressed by file
+BYTES, which SQLite WAL freezes while a long-running writer holds the store —
+so notes-harvest read "unchanged" and the POST published a stale harvest as
+"live". Keyed stores are now addressed by the roll-up of their per-key
+digests (the same boundary read the observation layer records); the stranded
+note re-harvested targeted (1 key) and is verified burned into
+`species/Bombus/fervidus/` over HTTPS. Beads: st-5em, st-mfb, st-jeu,
+st-nee, st-28p **closed**; st-066 unblocked.
 
 ## What remains (beads carry the detail)
 
-- **E — `st-nee` (in progress, nearly done).** Two items before close:
-  1. The human round-trip: sign in as an author, POST a note, see
-     `"publish": "live"` (~30s POST), reload the species page — the note is
-     burned in. (The live island shows `@login` immediately; full display
-     name upgrades at the next bake — expected.)
-  2. `ProxyTimeout 300` on the `api.beeatlas.net` vhost (sudo). Only matters
-     for a CONTENDED write (up to 60s lock wait + 26s build > the 60s
-     default); an uncontended publish fits under the default.
+- **ProxyTimeout** — `ProxyTimeout 300` on the `api.beeatlas.net` vhost
+  (sudo). Only matters for a CONTENDED write (up to 60s lock wait + 26s
+  build > the 60s default); an uncontended publish fits under the default.
 - **D — `st-pry` code DONE, deploy pending** (user only, local `rainhead`
   identity): `npx cdk diff BeeAtlasStack` (expect only the
   `PipelineBackupBucket` + two pipeline-user statements + an output),
