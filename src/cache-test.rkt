@@ -224,4 +224,66 @@
               (decision 'run 'output-missing (list dir-out))
               "a 'dir output gone entirely -> run, output-missing")
 
+;; --- a keyed 'file store input: addressed by key digests, NOT bytes (st-2k9) --
+;; The WAL regression (found live, 2026-07-17): a long-running writer keeps the
+;; SQLite store's committed rows in the -wal, so the main db file's bytes freeze
+;; at the last checkpoint. If the decision hashed bytes, a committed note would
+;; read "inputs unchanged" forever while the per-key observation layer saw the
+;; change — the two layers must read the same boundary (like 'dir: tree-digest is
+;; the roll-up of tree-hashes).
+(define store-path (build-path tmp "store.db"))
+(define store-out  (build-path tmp "notes.json"))
+(display-to-file "frozen-main-file-bytes" store-path)
+(display-to-file "{}" store-out)
+(define store-keys (box '(("apis mellifera" . "d1:1"))))
+(define (store-resolve a)
+  (case a [(store) store-path] [(notes-out) store-out] [else #f]))
+(define store-env
+  (make-build-env (lambda (a _e) (store-resolve a)) tmp cache-dir
+                  #:resolve-store-keys
+                  (lambda (a) (and (eq? a 'store) (unbox store-keys)))))
+(define gstore
+  (build-graph
+   (list (make-task 'harvest 'transform #:inputs '(store) #:outputs '(notes-out)
+                    #:invoke "v1"))
+   (list (make-artifact 'store 'file #:provenance 'authoritative)
+         (make-artifact 'notes-out 'file))))
+
+(define-values (dec-s0 snap-s0) (decision+snapshot gstore 'harvest store-env))
+(cache-store! cache-dir 'harvest snap-s0 (list store-out)
+              (output-snapshot gstore 'harvest store-env))
+(check-equal? (task-decision gstore 'harvest store-env)
+              (decision 'skip 'cached '())
+              "keyed store stored + unchanged -> cached")
+
+;; the WAL shape: file bytes untouched, a committed write adds a key
+(set-box! store-keys '(("apis mellifera" . "d1:1") ("bombus fervidus" . "d9:1")))
+(check-equal? (task-decision gstore 'harvest store-env)
+              (decision 'run 'input-changed '(store))
+              "a key change with frozen file bytes IS an input change (the WAL bug)")
+
+;; converse: bytes churn (e.g. a checkpoint rewrites the file) with keys constant
+(define-values (dec-s1 snap-s1) (decision+snapshot gstore 'harvest store-env))
+(cache-store! cache-dir 'harvest snap-s1 (list store-out)
+              (output-snapshot gstore 'harvest store-env))
+(display-to-file "checkpoint-rewrote-these-bytes" store-path #:exists 'replace)
+(check-equal? (task-decision gstore 'harvest store-env)
+              (decision 'skip 'cached '())
+              "byte churn with unchanged keys does NOT dirty the harvest")
+
+;; a plain file (resolve-store-keys returns #f for it) still hashes by bytes:
+;; xform's raw input has no key layer, and byte edits keep being attributed (the
+;; earlier sections above already pin that behavior under a #f slot; this pins it
+;; under a PRESENT slot that just doesn't know the artifact)
+(define plain-env
+  (make-build-env (lambda (a _e) (resolve a)) tmp cache-dir
+                  #:resolve-store-keys (lambda (_a) #f)))
+(define-values (dec-p0 snap-p0) (decision+snapshot g 'xform plain-env))
+(cache-store! cache-dir 'xform snap-p0 (list out-path)
+              (output-snapshot g 'xform plain-env))
+(display-to-file "a,b\n5,5\n" raw-path #:exists 'replace)
+(check-equal? (task-decision g 'xform plain-env)
+              (decision 'run 'input-changed '(raw))
+              "a plain file under a present-but-#f key slot hashes by bytes")
+
 (delete-directory/files tmp)

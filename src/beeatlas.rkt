@@ -152,9 +152,12 @@
 ;; The authoritative notes STORE (st-msn): the SQLite file notes-harvest reads
 ;; read-only. A fixed absolute path OUTSIDE the beeatlas repo (D-15), from
 ;; NOTES_DB_PATH — resolved the same way beeatlas does, and the subprocess inherits
-;; stelis's NOTES_DB_PATH unchanged, so both see the same file. Content-hashed like
-;; any file input when present; absent (not mounted locally) it reads unresolvable,
-;; which only forces a conservative rerun.
+;; stelis's NOTES_DB_PATH unchanged, so both see the same file. Input-addressed by
+;; the roll-up of its per-key digests (notes-store-keys), NOT its file bytes: a
+;; long-running writer keeps committed rows in the SQLite -wal, freezing the main
+;; file's bytes at the last checkpoint (cache.rkt's build-env docstring has the
+;; full story). Absent (not mounted locally) it reads unresolvable, which only
+;; forces a conservative rerun.
 (define notes-store-path
   (string->path (or (getenv "NOTES_DB_PATH") "/opt/beeatlas-store/notes.db")))
 

@@ -104,12 +104,21 @@
 ;;                      cache decision never consults it. #f slot = no per-column
 ;;                      layer (tests, callers that don't want it).
 ;;   resolve-store-keys : (symbol -> (or/c (listof (cons string string)) #f))
-;;                      — a keyed 'file STORE's per-KEY observation (st-2k9): sorted
+;;                      — a keyed 'file STORE's per-KEY read (st-2k9): sorted
 ;;                      (key -> "digest:count") pairs, or #f. The ingestion-boundary
-;;                      analog of resolve-relation-columns for an authoritative
-;;                      SQLite store (the notes store, keyed by canonical_name); #f
-;;                      for a plain file. Like the columns slot, the cache decision
-;;                      never consults it — it feeds the per-key delta/observation.
+;;                      analog of resolve-relation for an authoritative SQLite
+;;                      store (the notes store, keyed by canonical_name); #f for a
+;;                      plain file. UNLIKE the columns slot, the cache decision DOES
+;;                      consult it: a keyed store's input address is the roll-up of
+;;                      these pairs, NOT its raw file bytes — under SQLite WAL the
+;;                      main db file's bytes freeze at the last checkpoint while
+;;                      committed rows live in the -wal, so byte-hashing reads
+;;                      "unchanged" forever and the decision layer would contradict
+;;                      the per-key delta/observation layer this slot also feeds
+;;                      (found live: the st-nee write path's first production note,
+;;                      2026-07-17). Same coherence rule as 'dir (tree-digest is the
+;;                      roll-up of tree-hashes) and db-relation (decision digest and
+;;                      column observation read the same database).
 (struct build-env
   (resolve export-dir cache-dir
    resolve-relation resolve-relation-columns resolve-store-keys)
@@ -165,22 +174,25 @@
 
 ;; input-snapshot : graph symbol (symbol -> (or/c path-string #f))
 ;;                  [(or/c (symbol -> (or/c string #f)) #f)]
+;;                  [(or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)]
 ;;                  -> (or/c snapshot? decision?)
 ;; Hash the task's recipe and each input's content. Each input is hashed by its
-;; artifact KIND: a file by its bytes; a db-relation by `resolve-relation' (its
-;; DuckDB digest, st-d5d); anything else (tokens, externals) has no content hash.
-;; Returns a 'run decision instead of a snapshot when the task can never be
+;; artifact KIND: a keyed 'file store by the roll-up of its per-key digests
+;; (`resolve-store-keys', st-2k9 — see the build-env slot for why bytes are wrong
+;; under WAL); any other file by its bytes; a db-relation by `resolve-relation'
+;; (its DuckDB digest, st-d5d); anything else (tokens, externals) has no content
+;; hash. Returns a 'run decision instead of a snapshot when the task can never be
 ;; content-skipped: 'boundary tasks (ingestion must re-run), and tasks with an
 ;; input that isn't content-addressable here ('inputs-unresolvable). With
 ;; resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
-(define (input-snapshot g name resolve [resolve-relation #f])
+(define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f])
   (define t (hash-ref (graph-tasks g) name))
   (cond
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
     [else
      (define pairs
        (for/list ([in (in-list (task-inputs t))])
-         (cons in (input-hash g in resolve resolve-relation))))
+         (cons in (input-hash g in resolve resolve-relation resolve-store-keys))))
      (define unresolvable
        (sort (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv)) symbol<?))
      (if (pair? unresolvable)
@@ -189,11 +201,16 @@
                    (make-immutable-hash pairs)))]))
 
 ;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)
+;;              (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)
 ;;              -> (or/c string #f)
 ;; One input's content hash, by artifact kind, or #f if not content-addressable:
-;; a file by its bytes; a dir by its order-independent tree digest (st-cly); a
-;; db-relation by `resolve-relation'. #f (absent/unresolvable) forces a rerun.
-(define (input-hash g in resolve resolve-relation)
+;; a keyed 'file store by digest-of-pairs over its per-key digests (the same
+;; boundary read the observation layer records — decision and delta can never
+;; disagree); any other file by its bytes; a dir by its order-independent tree
+;; digest (st-cly); a db-relation by `resolve-relation'. #f (absent/unresolvable)
+;; forces a rerun — a keyed store whose scan fails falls back to file bytes, and
+;; an absent file to #f, so unreadable stays conservative.
+(define (input-hash g in resolve resolve-relation resolve-store-keys)
   (define a (hash-ref (graph-artifacts g) in #f))
   (cond
     [(and a (eq? (artifact-kind a) 'db-relation))
@@ -202,8 +219,12 @@
      (define p (resolve in))
      (and p (tree-digest p))]
     [else
-     (define p (resolve in))
-     (and p (file-exists? p) (file-sha1 p))]))
+     (define keys (and resolve-store-keys (resolve-store-keys in)))
+     (cond
+       [keys (digest-of-pairs keys)]
+       [else
+        (define p (resolve in))
+        (and p (file-exists? p) (file-sha1 p))])]))
 
 ;; output-snapshot+keys : graph symbol build-env?
 ;;   -> (values (listof (cons symbol string))                        ; digests
@@ -417,7 +438,8 @@
 (define (decision+snapshot g name env)
   (define t (hash-ref (graph-tasks g) name))
   (define snap (input-snapshot g name (lambda (a) (env-resolve env a))
-                               (build-env-resolve-relation env)))
+                               (build-env-resolve-relation env)
+                               (build-env-resolve-store-keys env)))
   (if (decision? snap)
       (values snap #f)
       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])
