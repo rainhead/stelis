@@ -36,12 +36,12 @@ st-nee, st-28p **closed**; st-066 unblocked.
 - ~~ProxyTimeout~~ — done 2026-07-17: `ProxyTimeout 300` set on the
   `api.beeatlas.net` vhost (covers the contended-write case: up to 60s lock
   wait + 26s build exceeds Apache's 60s default).
-- **D — `st-pry` code DONE, deploy pending** (user only, local `rainhead`
-  identity): `npx cdk diff BeeAtlasStack` (expect only the
-  `PipelineBackupBucket` + two pipeline-user statements + an output),
-  `npm run deploy`, then set `PIPELINE_BACKUP_BUCKET` in the maderas crontab
-  from the stack output. Until then the trap falls back to the site bucket —
-  backups never lapse. Unblocks `st-vjd`.
+- ~~D — `st-pry`~~ — deployed 2026-07-17. `PipelineBackupBucket` live,
+  crontab carries the RESOLVED bucket name (gotcha: `cdk diff` prints the
+  output as `{Ref: logical-id}`; the real name only exists post-deploy in
+  the stack outputs — `aws cloudformation describe-stacks`). Pipeline-user
+  List+Put verified from maderas. First full DuckDB backup lands with
+  tonight's nightly trap. `st-vjd` is now blocked only by the soak.
 - **`st-vjd`** teardown (after soak + D): site bucket, distribution, deploy
   IAM, `artifacts.py`'s now-vestigial verbs (`publish-plan`, `manifest`,
   `build-time-fetch`), and `pull-published`'s S3 dependence (repoint at
