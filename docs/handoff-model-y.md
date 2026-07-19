@@ -42,15 +42,21 @@ st-nee, st-28p **closed**; st-066 unblocked.
   the stack outputs — `aws cloudformation describe-stacks`). Pipeline-user
   List+Put verified from maderas. First full DuckDB backup lands with
   tonight's nightly trap. `st-vjd` is now blocked only by the soak.
-- **`st-vjd`** teardown (after soak + D): site bucket, distribution, deploy
-  IAM, `artifacts.py`'s now-vestigial verbs (`publish-plan`, `manifest`,
-  `build-time-fetch`), and `pull-published`'s S3 dependence (repoint at
-  `https://beeatlas.net/data/` + the live slim manifest — note the slim
-  manifest no longer names the baked artifacts it pulls today).
-- **`st-29z`** (P3): the surviving `js-tests.yml` CI leg is red on main from
-  17 PRE-EXISTING prime/sw env failures (no Cache API in CI jsdom — same
-  count locally at clean HEAD). Fix the env or quarantine so the leg means
-  something.
+- ~~**`st-vjd`** teardown~~ — done 2026-07-19 after a 2-night green soak:
+  site bucket + site distribution + GitHub OIDC deployer deleted (CDK);
+  `GET /api/notes` live-read + the island's D-02 re-fetch replaced by
+  reload-sees-it (`publish:"live"` → `location.reload()`; the harvest now
+  bakes `body_md` so the editor prefills from the page); `artifacts.py`
+  verbs pruned (`pull-plan` replaces `baseline-pull-plan` for the slim
+  manifest); `pull-published.sh` is credential-free HTTPS; `nightly.sh`
+  fails loud (EX_CONFIG) if `PIPELINE_BACKUP_BUCKET` is unset. On AWS now:
+  DNS, the .com→.net redirect (origin swapped off the dead bucket), two
+  backup buckets.
+- ~~**`st-29z`**~~ — closed 2026-07-19: misdiagnosed. The CI red was 2-3
+  data-dependent test files (ENOENT on gitignored `public/data`), fixed by
+  the beeatlas test split (86f82021); the "17 env failures" were a
+  wrong-Node artifact (v26 gates `localStorage` behind a flag — the pinned
+  24.18 is green). Test-log stderr noise silenced separately (e50473a1).
 
 ## Soak watch (first nights)
 
