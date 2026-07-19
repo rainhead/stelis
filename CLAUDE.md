@@ -50,7 +50,9 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
   work and is partial-success rather than fail-fast).
 - **Test:** `raco test src/*-test.rkt`.
 
-Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner ·
+Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner,
+plus the recipe/runtime TYPES (st-top: the cache hashes a recipe's named code
+files into the task's input address) ·
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the runtimes (incl. the `notes-harvest` → per-species `notes/` dir →
@@ -168,6 +170,6 @@ bd close <id>           # Complete work
   go in the file-based memory (see the memory section of the global CLAUDE.md), not
   `bd remember` — the two don't overlap.
 - **Commit and push only when asked** (global rule). Beads' default "mandatory
-  push" session protocol does **not** apply here; there is no git remote yet, and
-  the user drives commits. `bd`'s local DB works fully offline.
+  push" session protocol does **not** apply here; the user drives commits and
+  pushes. `bd`'s local DB works fully offline.
 <!-- END BEADS INTEGRATION -->

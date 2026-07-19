@@ -111,7 +111,10 @@
 (define benv (make-build-env beeatlas-path (scratch-out-path) stelis-cache
                              #:resolve-relation beeatlas-resolve-relation
                              #:resolve-relation-columns beeatlas-resolve-relation-columns
-                             #:resolve-store-keys beeatlas-resolve-store-keys))
+                             #:resolve-store-keys beeatlas-resolve-store-keys
+                             ;; st-top: recipe hashes cover the resolved argv +
+                             ;; named code files, so script/pin edits invalidate
+                             #:runtimes beeatlas-runtimes))
 
 ;; ADR 0004 (st-3mi): the deterministic build clock injected into every executed
 ;; task's hermetic env, so outputs that stamp a build time stay byte-stable.

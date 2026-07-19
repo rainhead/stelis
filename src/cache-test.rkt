@@ -30,6 +30,20 @@
 (check-equal? (decide snap-a (entry #:recipe "r0") '())
               (decision 'run 'recipe-changed '())
               "the command itself changed -> run")
+;; task code (st-top): a changed script file is its own reason, 'code-changed,
+;; with the file named; an entry from before the code layer reads as empty.
+(check-equal? (decide (snapshot "r1" (hash 'x "hx" 'y "hy") (hash "s.py" "c2"))
+                      (entry) '())
+              (decision 'run 'code-changed '("s.py"))
+              "a changed code file is named")
+(check-equal? (reason (decide (snapshot "r1" (hash 'x "OLD" 'y "hy") (hash "s.py" "c2"))
+                              (entry) '()))
+              'code-changed
+              "a code change outranks a data-input change as the reason")
+(check-equal? (decide (snapshot "r9" (hash 'x "hx" 'y "hy") (hash "s.py" "c2"))
+                      (entry) '())
+              (decision 'run 'code-changed '("s.py"))
+              "command + code changed together: the file is still named")
 (check-equal? (decide snap-a (entry #:inputs '((x . "OLD") (y . "hy"))) '())
               (decision 'run 'input-changed '(x))
               "a changed input is named")
@@ -177,6 +191,51 @@
 (check-equal? (task-decision (graph-with-invoke "v2") 'xform env)
               (decision 'run 'recipe-changed '())
               "editing the recipe invalidates the entry")
+
+;; --- task code in the input address (st-top) ----------------------------------
+;; A recipe's named script is hashed like an input: store, edit the script ->
+;; rerun with the file named; delete it -> conservative (not addressable, named).
+(define script-path (build-path tmp "script.py"))
+(define script-str (path->string script-path))
+(display-to-file "print('v1')" script-path)
+(define gc
+  (build-graph
+   (list (make-task 'codegen 'transform #:inputs '(raw) #:outputs '(out)
+                    #:invoke (recipe 'uv '("-c" "run()") (list script-str))))
+   (list (make-artifact 'raw 'file) (make-artifact 'out 'file))))
+(define snap-c (input-snapshot gc 'codegen resolve))
+(check-pred snapshot? snap-c "a present script file resolves like any input")
+(cache-store! cache-dir 'codegen snap-c (list out-path)
+              (output-snapshot gc 'codegen env))
+(check-equal? (task-decision gc 'codegen env)
+              (decision 'skip 'cached '())
+              "unchanged code + unchanged inputs -> cached")
+(display-to-file "print('v2')" script-path #:exists 'replace)
+(check-equal? (task-decision gc 'codegen env)
+              (decision 'run 'code-changed (list script-str))
+              "editing the script invalidates the cache, the file named (st-top)")
+(delete-file script-path)
+(check-equal? (task-decision gc 'codegen env)
+              (decision 'run 'inputs-unresolvable (list script-str))
+              "a missing script is conservative: not addressable, named")
+(display-to-file "print('v2')" script-path)
+
+;; runtime identity (st-top): with a runtimes map on the env, the recipe hash
+;; covers the RESOLVED argv, so a launch/pin change invalidates — with '()
+;; details (the command moved, not the code).
+(define (env-with rts)
+  (make-build-env (lambda (a _d) (resolve a)) tmp cache-dir #:runtimes rts))
+(define rts-314 (hash 'uv (runtime 'uv '("uv" "run" "python3.14") "uv/3.14")))
+(define rts-315 (hash 'uv (runtime 'uv '("uv" "run" "python3.15") "uv/3.15")))
+(define-values (dec-rt snap-rt) (decision+snapshot gc 'codegen (env-with rts-314)))
+(cache-store! cache-dir 'codegen snap-rt (list out-path)
+              (output-snapshot gc 'codegen (env-with rts-314)))
+(check-equal? (task-decision gc 'codegen (env-with rts-314))
+              (decision 'skip 'cached '())
+              "same runtimes -> still a hit")
+(check-equal? (task-decision gc 'codegen (env-with rts-315))
+              (decision 'run 'recipe-changed '())
+              "a runtime pin change invalidates like an args change")
 
 ;; an old-format (v1) entry is a miss, never an error
 (call-with-output-file (build-path cache-dir "xform.rktd") #:exists 'replace

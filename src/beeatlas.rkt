@@ -290,8 +290,15 @@
                INTEGRITY-THRESHOLD)))
 
 ;; py: a uv/3.14 recipe that calls `module.fn()' the way run.py imports it.
-(define (py module fn)
-  (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))))
+;; The module's FILE is the recipe's code (st-top): its content joins the task's
+;; input address, so editing e.g. notes_harvest.py invalidates the cache the way
+;; editing its data would. Named files only — imports are not traced; #:code
+;; names ADDITIONAL data/ files a task is known to lean on (the manual escape
+;; hatch for shared helpers like domain.py or canonical_name.py).
+(define (data-file rel) (string-append DATA "/" rel))
+(define (py module fn #:code [extra '()])
+  (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))
+          (map data-file (cons (string-append module ".py") extra))))
 
 ;; place-marts copies each dbt mart from the sandbox to $EXPORT_DIR (injected by
 ;; the executor). `set -e' so a missing mart fails the task rather than a partial
@@ -441,7 +448,7 @@
    (make-task 'anti-entropy 'transform
               #:inputs '(ecdysis_data inat_observations waba_data)
               #:outputs '(anti-entropy-applied)
-              #:invoke (py "anti_entropy_pipeline" "run_anti_entropy"))
+              #:invoke (py "anti_entropy_pipeline" "run_anti_entropy" #:code '("inaturalist_pipeline.py")))
    ;; load_checklist also materializes canonical_name onto ecdysis_data.occurrences
    ;; (checklist_pipeline._update_occurrences_canonical_name). The ecdysis loader uses
    ;; write_disposition='replace', which drops that column every run, so checklist MUST
@@ -450,15 +457,15 @@
    ;; first and the subsequent replace wiped canonical_name, emptying
    ;; int_species_host_plants and failing species-export (st-84u).
    (make-task 'checklist 'boundary #:inputs '(ecdysis_data) #:outputs '(checklist_raw)
-              #:invoke (py "checklist_pipeline" "load_checklist"))
+              #:invoke (py "checklist_pipeline" "load_checklist" #:code '("canonical_name.py")))
    (make-task 'resolve-checklist-names 'transform
               #:inputs '(checklist_raw) #:outputs '(checklist_resolved)
-              #:invoke (py "resolve_checklist_names" "resolve_checklist_names"))
+              #:invoke (py "resolve_checklist_names" "resolve_checklist_names" #:code '("canonical_name.py" "inaturalist_pipeline.py" "resolve_taxon_ids.py")))
    (make-task 'checklist-resolution-gate 'gate
               #:inputs '(checklist_resolved) #:outputs '(checklist-resolution-verified)
-              #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate"))
+              #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate" #:code '("canonical_name.py" "inaturalist_pipeline.py" "resolve_taxon_ids.py")))
    (make-task 'inat-obs 'boundary #:outputs '(inat_obs_data)
-              #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
+              #:invoke (py "inat_obs_pipeline" "load_inat_obs" #:code '("canonical_name.py")))
    ;; integrity gate (st-0vz): block publish if inat_obs_data's record count
    ;; swings sharply vs. the previous build. An in-process rule node, not a
    ;; subprocess — the first instance of data-quality rules running as nodes.
@@ -467,16 +474,16 @@
               #:invoke (integrity-gate 'inat_obs_data))
    (make-task 'resolve-taxon-ids 'transform
               #:inputs '(inat_observations taxa.csv.gz) #:outputs '(canonical_to_taxon_id)
-              #:invoke (py "resolve_taxon_ids" "resolve_taxon_ids"))
+              #:invoke (py "resolve_taxon_ids" "resolve_taxon_ids" #:code '("inaturalist_pipeline.py")))
    (make-task 'resolution-gate 'gate
               #:inputs '(canonical_to_taxon_id) #:outputs '(resolution-verified)
-              #:invoke (py "resolve_taxon_ids" "check_resolution_gate"))
+              #:invoke (py "resolve_taxon_ids" "check_resolution_gate" #:code '("inaturalist_pipeline.py")))
    (make-task 'inactive-remap 'transform
               #:inputs '(canonical_to_taxon_id) #:outputs '(inactive_remaps)
-              #:invoke (py "resolve_taxon_ids" "generate_inactive_remaps"))
+              #:invoke (py "resolve_taxon_ids" "generate_inactive_remaps" #:code '("inaturalist_pipeline.py")))
    (make-task 'inactive-gate 'gate
               #:inputs '(inactive_remaps) #:outputs '(inactive-verified)
-              #:invoke (py "resolve_taxon_ids" "check_inactive_gate"))
+              #:invoke (py "resolve_taxon_ids" "check_inactive_gate" #:code '("inaturalist_pipeline.py")))
    (make-task 'taxon-lineage-extended 'transform
               #:inputs '(taxa.csv.gz) #:outputs '(taxon_lineage_extended)
               #:invoke (py "taxa_pipeline" "load_taxon_lineage_extended"))
@@ -511,7 +518,8 @@
    ;; --- the target producer (has a __main__; run as a script) ---
    (make-task 'generate-sqlite 'transform
               #:inputs '(occurrences.parquet taxa.csv.gz) #:outputs '(occurrences.db)
-              #:invoke (recipe 'uv (list "sqlite_export.py")))
+              #:invoke (recipe 'uv (list "sqlite_export.py")
+                               (list (data-file "sqlite_export.py"))))
 
    ;; --- mart placement: dbt outputs -> EXPORT_DIR, where post-dbt exports read
    ;; them (st-4cm). run.py folds this copy into dbt-build; here it is an explicit
@@ -560,7 +568,7 @@
               ;; caught the other four as undeclared writes.
               #:outputs '(species.json species.parquet@export
                           seasonality.json photos.json species_hosts.json higher_taxa.json)
-              #:invoke (py "species_export" "main"))
+              #:invoke (py "species_export" "main" #:code '("domain.py")))
    ;; species_maps reads THREE EXPORT_DIR @export parquets — it never opens
    ;; species.json, so the slice-1 edge (declaring species.json) was wrong (st-4cm):
    ;;   species.parquet@export     enriched slug + genus/subgenus/tribe/subfamily membership
@@ -575,7 +583,7 @@
               #:inputs '(species.parquet@export occurrences.parquet@export
                          checklist.parquet@export geographies_us_counties)
               #:outputs '(species-maps)
-              #:invoke (py "species_maps" "main"))
+              #:invoke (py "species_maps" "main" #:code '("config.py")))
    ;; places_export reads its parquets from EXPORT_DIR (ASSETS_DIR), not the dbt
    ;; sandbox — the occurrence_places bridge, the occurrences mart (specimen/sample
    ;; counts), and species-export's enriched species.parquet are all @export copies,
@@ -597,7 +605,7 @@
    (make-task 'collectors-export 'transform
               #:inputs '(occurrences.parquet@export species.parquet@export)
               #:outputs '(collectors.json)
-              #:invoke (py "collectors_export" "export_collectors_step"))
+              #:invoke (py "collectors_export" "export_collectors_step" #:code '("domain.py")))
    ;; collectors_events_export reads base collectors.json (read-only) for the
    ;; records to enrich, occurrences.parquet@export for the event query, and
    ;; species.json + higher_taxa.json for slug resolution (all from EXPORT_DIR).
@@ -637,7 +645,7 @@
               #:inputs '(occurrences.parquet@export occurrence_places.parquet@export
                          geographies_us_counties)
               #:outputs '(place-maps)
-              #:invoke (py "places_maps" "main"))
+              #:invoke (py "places_maps" "main" #:code '("species_maps.py")))
    ;; feeds queries the ecdysis_data db-relation (identifications JOIN occurrences)
    ;; STRAIGHT from the duckdb and reads no @export file — so the slice-1 edge
    ;; (occurrences.parquet + species.json) was wrong on both inputs, and feeds does
@@ -648,6 +656,6 @@
    ;; <updated> (was wall-clock), so two builds of a snapshot are byte-identical.
    (make-task 'feeds 'transform
               #:inputs '(ecdysis_data) #:outputs '(feeds)
-              #:invoke (py "feeds" "main"))))
+              #:invoke (py "feeds" "main" #:code '("domain.py")))))
 
 (define beeatlas-graph (build-graph tasks (append artifacts mart-export-artifacts)))

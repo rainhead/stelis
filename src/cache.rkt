@@ -22,7 +22,8 @@
          "tree-digest.rkt")
 
 (provide (struct-out decision)
-         (struct-out snapshot)
+         snapshot snapshot? snapshot-recipe-hash snapshot-input-hashes
+         snapshot-code-hashes
          (struct-out output-delta)
          (struct-out build-env)
          make-build-env
@@ -46,7 +47,10 @@
 
 ;; v3: output hashes recorded per artifact (st-8ig, early cutoff), so a rerun
 ;; can say whether it rebuilt to identical content. v2 entries read as misses.
-(define CACHE-VERSION 3)
+;; v4: task CODE joins the input address (st-top) — per-file content hashes of
+;; the recipe's named script(s), so editing a script invalidates the cache. v3
+;; entries read as misses (one full rebuild on upgrade, by design).
+(define CACHE-VERSION 4)
 
 (define (file-sha1 path) (call-with-input-file path sha1))
 (define (string-sha1 s) (sha1 (open-input-bytes (string->bytes/utf-8 s))))
@@ -59,9 +63,13 @@
 ;;   reason  : 'boundary             ingestion — its real input is the external
 ;;                                   world, never content-skipped
 ;;           | 'inputs-unresolvable  not content-addressable; details name the
-;;                                   artifacts (e.g. duckdb relations, tokens)
+;;                                   artifacts (e.g. duckdb relations, tokens) —
+;;                                   or, as path strings, code files the recipe
+;;                                   names that don't exist on disk (st-top)
 ;;           | 'no-cache-entry       never built here (or unreadable/old entry)
-;;           | 'recipe-changed       the command itself changed
+;;           | 'code-changed         the task's CODE changed (st-top) — details
+;;                                   name the changed script file(s)
+;;           | 'recipe-changed       the command/runtime changed
 ;;           | 'input-changed        details name the changed/added/removed inputs
 ;;           | 'output-missing       details name the missing output paths
 ;;           | 'output-stale         details name db-relation outputs whose table no
@@ -72,9 +80,17 @@
 (struct decision (verdict reason details) #:transparent)
 
 ;; What the cache compares: the task's recipe plus each input's content hash.
-;;   recipe-hash  : string
+;;   recipe-hash  : string — the COMMAND identity: the resolved argv (launch
+;;                  prefix included, so a runtime pin change invalidates too)
+;;                  when a runtimes map is at hand, else the raw invoke value
 ;;   input-hashes : immutable hash, artifact name -> content hash
-(struct snapshot (recipe-hash input-hashes) #:transparent)
+;;   code-hashes  : immutable hash, code path (string) -> content hash — the
+;;                  recipe's named script file(s) (st-top). Task code is an
+;;                  input; it just lives on the recipe, not in the graph.
+(struct snapshot (recipe-hash input-hashes code-hashes) #:transparent
+  #:omit-define-syntaxes #:constructor-name make-snapshot)
+(define (snapshot recipe-hash input-hashes [code-hashes (hash)])
+  (make-snapshot recipe-hash input-hashes code-hashes))
 
 ;; What early cutoff observed (st-8ig): after a task reran, how its rebuilt
 ;; outputs compare to the previous build's recorded hashes. 'identical is the
@@ -119,9 +135,14 @@
 ;;                      2026-07-17). Same coherence rule as 'dir (tree-digest is the
 ;;                      roll-up of tree-hashes) and db-relation (decision digest and
 ;;                      column observation read the same database).
+;;   runtimes         : (or/c (hash symbol -> runtime) #f) — how recipes resolve
+;;                      to commands (st-top): with it, a recipe's hash covers the
+;;                      RESOLVED argv, so a runtime pin change invalidates like an
+;;                      args change. #f (tests) falls back to the raw invoke value —
+;;                      consistent within any env, so no thrash either way.
 (struct build-env
   (resolve export-dir cache-dir
-   resolve-relation resolve-relation-columns resolve-store-keys)
+   resolve-relation resolve-relation-columns resolve-store-keys runtimes)
   #:transparent)
 
 ;; make-build-env : (symbol export-dir -> path?) path-string path-string
@@ -136,9 +157,11 @@
 (define (make-build-env resolve export-dir cache-dir
                         #:resolve-relation [resolve-relation #f]
                         #:resolve-relation-columns [resolve-relation-columns #f]
-                        #:resolve-store-keys [resolve-store-keys #f])
+                        #:resolve-store-keys [resolve-store-keys #f]
+                        #:runtimes [runtimes #f])
   (build-env resolve export-dir cache-dir
-             resolve-relation resolve-relation-columns resolve-store-keys))
+             resolve-relation resolve-relation-columns resolve-store-keys
+             runtimes))
 
 ;; env-resolve : build-env? symbol -> (or/c path-string #f)
 (define (env-resolve env a)
@@ -175,30 +198,53 @@
 ;; input-snapshot : graph symbol (symbol -> (or/c path-string #f))
 ;;                  [(or/c (symbol -> (or/c string #f)) #f)]
 ;;                  [(or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)]
+;;                  [(or/c (hash symbol -> runtime) #f)]
 ;;                  -> (or/c snapshot? decision?)
 ;; Hash the task's recipe and each input's content. Each input is hashed by its
 ;; artifact KIND: a keyed 'file store by the roll-up of its per-key digests
 ;; (`resolve-store-keys', st-2k9 — see the build-env slot for why bytes are wrong
 ;; under WAL); any other file by its bytes; a db-relation by `resolve-relation'
 ;; (its DuckDB digest, st-d5d); anything else (tokens, externals) has no content
-;; hash. Returns a 'run decision instead of a snapshot when the task can never be
+;; hash. The recipe's CODE files (st-top) are hashed alongside, each by its bytes.
+;; Returns a 'run decision instead of a snapshot when the task can never be
 ;; content-skipped: 'boundary tasks (ingestion must re-run), and tasks with an
-;; input that isn't content-addressable here ('inputs-unresolvable). With
-;; resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
-(define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f])
+;; input that isn't content-addressable here ('inputs-unresolvable) — including a
+;; named code file missing on disk (conservative: unreadable code forces a run).
+;; With resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
+(define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f]
+                        [runtimes #f])
   (define t (hash-ref (graph-tasks g) name))
   (cond
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
     [else
+     (define inv (task-invoke t))
      (define pairs
        (for/list ([in (in-list (task-inputs t))])
          (cons in (input-hash g in resolve resolve-relation resolve-store-keys))))
+     (define code-pairs
+       (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
+         (cons (~a p) (and (file-exists? p) (file-sha1 p)))))
      (define unresolvable
        (sort (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv)) symbol<?))
-     (if (pair? unresolvable)
-         (decision 'run 'inputs-unresolvable unresolvable)
-         (snapshot (string-sha1 (~s (task-invoke t)))
-                   (make-immutable-hash pairs)))]))
+     (define missing-code
+       (sort (for/list ([kv (in-list code-pairs)] #:unless (cdr kv)) (car kv)) string<?))
+     (if (or (pair? unresolvable) (pair? missing-code))
+         (decision 'run 'inputs-unresolvable (append unresolvable missing-code))
+         (snapshot (string-sha1 (invoke-basis inv runtimes))
+                   (make-immutable-hash pairs)
+                   (make-immutable-hash code-pairs)))]))
+
+;; invoke-basis : any (or/c hash #f) -> string
+;; What recipe-hash fingerprints. With a runtimes map that knows the recipe's
+;; runtime: the RESOLVED argv — launch prefix included, so a runtime pin change
+;; (say, a Python bump in beeatlas-runtimes) invalidates like an args change
+;; (st-top's "runtime identity"). Otherwise the raw invoke value, as before.
+;; Code file CONTENTS ride separately in snapshot-code-hashes; the code path
+;; LIST is visible there too (as keys), so membership changes are always caught.
+(define (invoke-basis inv runtimes)
+  (if (and (recipe? inv) runtimes (hash-ref runtimes (recipe-runtime inv) #f))
+      (~s (recipe->argv inv runtimes))
+      (~s inv)))
 
 ;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)
 ;;              (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)
@@ -370,6 +416,10 @@
                                      (sort (hash->list (snapshot-input-hashes snap))
                                            symbol<? #:key car)
                                      '())
+                   'code-hashes (if snap
+                                    (sort (hash->list (snapshot-code-hashes snap))
+                                          string<? #:key car)
+                                    '())
                    'outputs (map (lambda (p) (if (path? p) (path->string p) p))
                                  output-paths)
                    'output-hashes out-hashes) ; output-snapshot: already sorted
@@ -388,13 +438,22 @@
 (define (decide snap entry missing-outputs [stale-outputs '()])
   (cond
     [(not entry) (decision 'run 'no-cache-entry '())]
-    [(not (equal? (hash-ref entry 'recipe-hash #f) (snapshot-recipe-hash snap)))
-     (decision 'run 'recipe-changed '())]
     [else
+     ;; the task's CODE (st-top): named script files, compared per file so the
+     ;; decision can say WHICH script changed. Checked before the recipe hash
+     ;; AND the data inputs: when a script moved along with either, naming the
+     ;; file is the sharper report (the incident class is a script edit).
+     (define changed-code
+       (changed-names (make-immutable-hash (hash-ref entry 'code-hashes '()))
+                      (snapshot-code-hashes snap)
+                      string<?))
      (define changed
        (changed-names (make-immutable-hash (hash-ref entry 'input-hashes '()))
                       (snapshot-input-hashes snap)))
      (cond
+       [(pair? changed-code)     (decision 'run 'code-changed changed-code)]
+       [(not (equal? (hash-ref entry 'recipe-hash #f) (snapshot-recipe-hash snap)))
+        (decision 'run 'recipe-changed '())]
        [(pair? changed)          (decision 'run 'input-changed changed)]
        [(pair? missing-outputs)  (decision 'run 'output-missing missing-outputs)]
        ;; a db-relation output whose table is gone/mutated in the current DuckDB —
@@ -422,13 +481,14 @@
                 #:unless (equal? (rr out) (hash-ref recorded out #f)))
        out)]))
 
-;; names whose hash differs between the two maps, or that exist in only one
-(define (changed-names old new)
+;; names whose hash differs between the two maps, or that exist in only one.
+;; Keys are artifact symbols by default; code maps pass string<? (path keys).
+(define (changed-names old new [<? symbol<?])
   (sort (for/list ([name (in-set (set-union (list->set (hash-keys old))
                                             (list->set (hash-keys new))))]
                    #:unless (equal? (hash-ref old name #f) (hash-ref new name #f)))
           name)
-        symbol<?))
+        <?))
 
 ;; decision+snapshot : graph symbol build-env?
 ;;                     -> (values decision? (or/c snapshot? #f))
@@ -439,7 +499,8 @@
   (define t (hash-ref (graph-tasks g) name))
   (define snap (input-snapshot g name (lambda (a) (env-resolve env a))
                                (build-env-resolve-relation env)
-                               (build-env-resolve-store-keys env)))
+                               (build-env-resolve-store-keys env)
+                               (build-env-runtimes env)))
   (if (decision? snap)
       (values snap #f)
       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])

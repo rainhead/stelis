@@ -74,10 +74,18 @@
 
 (define (snapshot->datum s)
   (and s (list (snapshot-recipe-hash s)
-               (sort (hash->list (snapshot-input-hashes s)) symbol<? #:key car))))
+               (sort (hash->list (snapshot-input-hashes s)) symbol<? #:key car)
+               (sort (hash->list (snapshot-code-hashes s)) string<? #:key car))))
 (define (datum->snapshot v)
-  (and (list? v) (= 2 (length v))
-       (snapshot (car v) (make-immutable-hash (cadr v)))))
+  (cond
+    [(and (list? v) (= 3 (length v)))
+     (snapshot (car v) (make-immutable-hash (cadr v))
+               (make-immutable-hash (caddr v)))]
+    ;; pre-st-top record: no code layer — read it as an empty one, so old
+    ;; history builds keep their snapshots (and their derived-from facts)
+    [(and (list? v) (= 2 (length v)))
+     (snapshot (car v) (make-immutable-hash (cadr v)))]
+    [else #f]))
 
 (define (delta->datum d)
   (and d (list (output-delta-status d) (output-delta-details d))))

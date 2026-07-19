@@ -66,7 +66,8 @@ racket src/main.rkt --build --from generate-sqlite occurrences.db
 ```
 
 Reading the annotations: `▶` runs (the reason says why — a named changed
-input, a changed recipe, no cache entry, a missing output, or a boundary/
+input, changed task code (the file named), a changed recipe, no cache entry,
+a missing output, or a boundary/
 non-content-addressable task) · `≡` skips (inputs unchanged, outputs present)
 · `≈` conditional (a cache hit today, but an upstream will run first and may
 change its inputs).
@@ -82,6 +83,12 @@ an order-independent DuckDB digest of its rows (dlt bookkeeping columns
 excluded), so a loader that re-lands identical content lets its downstream
 transforms cache-skip — cutoff reaches the pre-dbt graph, not just the file
 edges around `dbt-build`. See [`relation-digest.rkt`](src/relation-digest.rkt).
+
+A task's **code is an input too**: each recipe's named script file(s) are
+hashed into its input address alongside the resolved command line, so editing
+a loader/exporter (or a runtime pin) invalidates its cache and the decision
+names the changed file. Named files only — Python imports are not traced; a
+task known to lean on a shared helper declares it on its recipe explicitly.
 Only inputs with no content to hash — gate tokens, externals — stay
 non-addressable and force a conservative rerun.
 

@@ -18,9 +18,9 @@
          "cache.rkt"
          "trace.rkt")
 
-(provide (struct-out runtime)
-         (struct-out recipe)
-         (struct-out rule-check)
+(provide (struct-out runtime)                       ; re-provided from model.rkt
+         recipe recipe? recipe-runtime recipe-args recipe-code ; (st-top: types
+         (struct-out rule-check)                    ;  moved there for cache.rkt)
          (struct-out check-context)
          recipe->argv
          shell-quote
@@ -39,16 +39,9 @@
       s
       (string-append "'" (string-replace s "'" "'\\''") "'")))
 
-;; A hermetic runtime: how to launch a task in a pinned interpreter/env.
-;;   name   : symbol
-;;   launch : (listof string)  argv prefix, e.g. '("uv" "run" "--directory" D "python")
-;;   label  : string           short display tag, e.g. "uv/3.14"
-(struct runtime (name launch label) #:transparent)
-
-;; A task's invocation: a runtime (by name) + the task-specific argv tail.
-;;   runtime : symbol
-;;   args    : (listof string)
-(struct recipe (runtime args) #:transparent)
+;; The `runtime' and `recipe' TYPES now live in model.rkt (st-top: the cache
+;; layer content-addresses a recipe's code files, and exec.rkt requires cache.rkt,
+;; so the types had to sit below both). Re-provided above; behavior stays here.
 
 ;; An IN-PROCESS node (st-0vz): the "second Datalog application" runs a rule-set
 ;; as a build node instead of shelling out. Its invoke is a `rule-check' whose
@@ -66,14 +59,6 @@
 ;; the history it compares against lives). A rule reasons over data + memory; this
 ;; is the handle to both, kept off build-env so that value doesn't grow again.
 (struct check-context (graph task env state-dir) #:transparent)
-
-;; recipe->argv : recipe (hash symbol->runtime) -> (listof string)
-;; The full command: the runtime's launch prefix followed by the recipe's args.
-(define (recipe->argv rec runtimes)
-  (define rt (hash-ref runtimes (recipe-runtime rec)
-                       (lambda ()
-                         (error 'recipe->argv "unknown runtime: ~a" (recipe-runtime rec)))))
-  (append (runtime-launch rt) (recipe-args rec)))
 
 ;; print-plan-commands : graph (listof symbol) (hash symbol->runtime)
 ;;   [#:context (or/c build-env? #f)] -> void

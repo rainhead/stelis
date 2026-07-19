@@ -14,6 +14,9 @@
 (provide (struct-out artifact)
          (struct-out task)
          (struct-out graph)
+         (struct-out runtime)
+         recipe recipe? recipe-runtime recipe-args recipe-code
+         recipe->argv
          make-artifact
          make-task
          build-graph
@@ -63,6 +66,41 @@
                    #:outputs [outputs '()]
                    #:invoke [invoke #f])
   (task name kind inputs outputs invoke))
+
+;; --- Execution recipe types ---------------------------------------------------
+;; The TYPES behind a task's `invoke' slot live here rather than exec.rkt so the
+;; cache layer can content-address a recipe without depending on the executor
+;; (exec.rkt requires cache.rkt). The BEHAVIOR — launching subprocesses — stays
+;; in exec.rkt, which re-provides these names for its existing callers.
+
+;; A hermetic runtime: how to launch a task in a pinned interpreter/env.
+;;   name   : symbol
+;;   launch : (listof string)  argv prefix, e.g. '("uv" "run" "--directory" D "python")
+;;   label  : string           short display tag, e.g. "uv/3.14"
+(struct runtime (name launch label) #:transparent)
+
+;; A task's invocation: a runtime (by name) + the task-specific argv tail, plus
+;; the CODE behind the command (st-top) — the named script file(s) it executes,
+;; as resolved paths. Task code is an input to the task's output, so the cache
+;; hashes each file's content into the input address: editing a script
+;; invalidates its cache exactly like editing data would. Named files only —
+;; transitive imports are deliberately not traced; a task known to lean on a
+;; shared helper declares it in `code' explicitly.
+;;   runtime : symbol
+;;   args    : (listof string)
+;;   code    : (listof path-string), '() when the command carries no script file
+;;             (an inline sh script, dbt)
+(struct recipe (runtime args code) #:transparent
+  #:omit-define-syntaxes #:constructor-name make-recipe)
+(define (recipe runtime args [code '()]) (make-recipe runtime args code))
+
+;; recipe->argv : recipe (hash symbol->runtime) -> (listof string)
+;; The full command: the runtime's launch prefix followed by the recipe's args.
+(define (recipe->argv rec runtimes)
+  (define rt (hash-ref runtimes (recipe-runtime rec)
+                       (lambda ()
+                         (error 'recipe->argv "unknown runtime: ~a" (recipe-runtime rec)))))
+  (append (runtime-launch rt) (recipe-args rec)))
 
 ;; --- The graph --------------------------------------------------------------
 
