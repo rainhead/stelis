@@ -3,6 +3,7 @@
 ;; Tests for the Python import extractor (st-6ga).
 
 (require rackunit
+         racket/file
          racket/set
          "py-imports.rkt")
 
@@ -78,3 +79,33 @@
 
 (test-case "a missing module reads as importing nothing"
   (check-equal? (import-closure (lambda (n) #f) (set "a" "b") "a") '()))
+
+;; --- make-data-import-scan: direct (edges) vs closure (flattened), one read ---
+;; st-whi authors task→helper inputs and helper→helper `imports' edges from the
+;; DIRECT lookup; the closure half stays for flattened-list callers. Same fake
+;; two-hop chain as above, on a real scratch directory.
+
+(define scan-dir (make-temporary-file "stelis-py-scan-~a" 'directory))
+(display-to-file "from species_maps import render\n" (build-path scan-dir "places_maps.py"))
+(display-to-file "from config import STATE_FIPS\n"   (build-path scan-dir "species_maps.py"))
+(display-to-file "import tomllib\n"                  (build-path scan-dir "config.py"))
+(define-values (scan-direct scan-closure) (make-data-import-scan scan-dir))
+
+(test-case "direct stops at the first hop; closure reaches the second"
+  (check-equal? (scan-direct "places_maps") '("species_maps.py"))
+  (check-equal? (scan-closure "places_maps") '("config.py" "species_maps.py")))
+
+(test-case "a module with no local imports has no edges"
+  (check-equal? (scan-direct "config") '())
+  (check-equal? (scan-closure "config") '()))
+
+(test-case "an unknown entry reads as importing nothing"
+  (check-equal? (scan-direct "nope") '())
+  (check-equal? (scan-closure "nope") '()))
+
+(delete-directory/files scan-dir)
+
+(test-case "an absent directory degrades to empty lookups (the CI shape)"
+  (define-values (d c) (make-data-import-scan (build-path scan-dir "gone")))
+  (check-equal? (d "places_maps") '())
+  (check-equal? (c "places_maps") '()))

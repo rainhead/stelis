@@ -382,6 +382,67 @@
               (decision 'run 'input-changed '(raw))
               "a plain file under a present-but-#f key slot hashes by bytes")
 
+;; --- 'code inputs: the reason partition + the import closure (st-whi) ---------
+;; Shared helpers promoted from flattened recipe-code lists to producerless
+;; 'code artifacts with `imports' edges. The task consumes only its DIRECT
+;; import; the second hop must still be part of its input address (via
+;; code-closure), and BOTH must report as 'code-changed naming the file —
+;; while a data input keeps reporting 'input-changed. That partition is the
+;; whole point: reasons are interface, layers are implementation.
+(define helper-a (build-path tmp "helper_a.py"))   ; direct import
+(define helper-b (build-path tmp "helper_b.py"))   ; second hop: a imports b
+(display-to-file "A1" helper-a)
+(display-to-file "B1" helper-b)
+(define (h-resolve a)
+  (case a [(raw) raw-path] [(out) out-path]
+          [(helper_a.py) helper-a] [(helper_b.py) helper-b] [else #f]))
+(define henv (make-build-env (lambda (a _e) (h-resolve a)) tmp cache-dir))
+(define gh
+  (build-graph
+   (list (make-task 'expo 'transform #:inputs '(raw helper_a.py) #:outputs '(out)
+                    #:invoke "v1"))
+   (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
+         (make-artifact 'helper_a.py 'code #:imports '(helper_b.py))
+         (make-artifact 'helper_b.py 'code))))
+
+(define snap-h (input-snapshot gh 'expo h-resolve))
+(check-pred snapshot? snap-h "code inputs + their closure all resolve")
+(check-equal? (sort (hash-keys (snapshot-code-hashes snap-h)) string<?)
+              (list (path->string helper-a) (path->string helper-b))
+              "the DIRECT input and its imports-edge hop both land on the code side")
+(check-equal? (hash-keys (snapshot-input-hashes snap-h)) '(raw)
+              "code inputs stay off the data side of the snapshot")
+(cache-store! cache-dir 'expo snap-h (list out-path) (output-snapshot gh 'expo henv))
+(check-equal? (task-decision gh 'expo henv)
+              (decision 'skip 'cached '())
+              "unchanged helpers + unchanged data -> cached")
+(display-to-file "A2" helper-a #:exists 'replace)
+(check-equal? (task-decision gh 'expo henv)
+              (decision 'run 'code-changed (list (path->string helper-a)))
+              "editing the direct helper is 'code-changed, the file named")
+(display-to-file "A1" helper-a #:exists 'replace)
+(display-to-file "B2" helper-b #:exists 'replace)
+(check-equal? (task-decision gh 'expo henv)
+              (decision 'run 'code-changed (list (path->string helper-b)))
+              "editing the SECOND-HOP helper reaches the address via the imports edge")
+(display-to-file "B1" helper-b #:exists 'replace)
+(display-to-file "a,b\n7,7\n" raw-path #:exists 'replace)
+(check-equal? (task-decision gh 'expo henv)
+              (decision 'run 'input-changed '(raw))
+              "a data input still reports 'input-changed — the partition holds")
+(display-to-file "a,b\n1,2\n" raw-path #:exists 'replace)
+;; conservative degradations: a helper file gone names its PATH; a code artifact
+;; the resolver doesn't know names its ARTIFACT — both 'inputs-unresolvable.
+(delete-file helper-b)
+(check-equal? (task-decision gh 'expo henv)
+              (decision 'run 'inputs-unresolvable (list (path->string helper-b)))
+              "a missing helper file is conservative, named by path")
+(display-to-file "B1" helper-b)
+(define (h-resolve/no-b a) (and (not (eq? a 'helper_b.py)) (h-resolve a)))
+(check-equal? (input-snapshot gh 'expo h-resolve/no-b)
+              (decision 'run 'inputs-unresolvable '(helper_b.py))
+              "an unresolvable code artifact is conservative, named by artifact")
+
 ;; --- gate tokens (st-ysf): addressed by the gate's recorded input address -----
 ;; A token hashes as a digest of its producer's cache entry (recipe + inputs +
 ;; code of the last PASS), so a consumer (dbt-build) skips exactly when nothing

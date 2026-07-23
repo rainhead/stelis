@@ -52,7 +52,10 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner,
 plus the recipe/runtime TYPES (st-top: the cache hashes a recipe's named code
-files into the task's input address) ·
+files into the task's input address) and `'code` artifacts with `imports` edges +
+`code-closure` (st-whi: shared helpers are producerless graph nodes, helper→helper
+import edges are topology, and transitive code dependence is a walk, never a
+stored flattened list) ·
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
 recipes, and the runtimes (incl. the `notes-harvest` → per-species `notes/` dir →
@@ -88,13 +91,15 @@ live in the -wal); the per-key pairs are also recorded across builds as a trace
 species ·
 [`duckdb.rkt`](src/duckdb.rkt) the shared read-only DuckDB CLI runner (relation
 digests + parquet key extraction + the notes-store SQLite scan) ·
-[`py-imports.rkt`](src/py-imports.rkt) derives a `py` recipe's `code` list at
-graph-authoring time (st-6ga): a regex scan of a script's transitive LOCAL imports
-(basename-set membership rejects installed packages + docstring prose), so the
-shared-helper code files are computed, not hand-transcribed — reproduces the old
-`#:code` lists and fixes their drift (the places_maps→species_maps→config second
-hop). `#:code` survives only as the escape hatch for imports a scan can't see
-(dynamic/importlib, baked-in data files) ·
+[`py-imports.rkt`](src/py-imports.rkt) scans a script's LOCAL imports at
+graph-authoring time (st-6ga: a regex line scan; basename-set membership rejects
+installed packages + docstring prose). Its DIRECT lookup authors the st-whi
+edges — a `py` task consumes its entry's direct imports as `'code` inputs, each
+helper artifact carries its own — so the shared-helper dependence is computed,
+not hand-transcribed (fixes the places_maps→species_maps→config drift); the
+cache partitions inputs by kind, so a helper edit still reports `'code-changed`
+naming the file. `#:code` survives only as the escape hatch for imports a scan
+can't see (dynamic/importlib, baked-in data files) ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
 order-independent digest over its sorted (relative-path → content-hash) tree, and
 exposes those per-file pairs (`tree-hashes`) for per-key observations ·

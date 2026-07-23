@@ -22,6 +22,7 @@
          build-graph
          producer-of
          producers-of-inputs
+         code-closure
          required-tasks
          topo-sort
          plan
@@ -33,9 +34,13 @@
 
 ;; An artifact node: a logical dataset.
 ;;   name        : symbol
-;;   kind        : 'file | 'dir | 'db-relation | 'external | 'token
+;;   kind        : 'file | 'dir | 'db-relation | 'external | 'token | 'code
 ;;                 'dir is a directory TREE — a data-dependent output SET, content-
-;;                 addressed by an order-independent tree digest (tree-digest.rkt)
+;;                 addressed by an order-independent tree digest (tree-digest.rkt).
+;;                 'code is a source FILE consumed as an input (a shared Python
+;;                 helper, st-whi): hashed by its bytes like a 'file, but the
+;;                 cache reports a change to it as 'code-changed, not
+;;                 'input-changed — the kind IS the reason partition.
 ;;   fingerprint : content/version fingerprint; #f until computed (see cache.rkt)
 ;;   provenance  : 'derived (safe to destroy and rebuild) | 'authoritative
 ;;                 (forward-only; never rebuilt from scratch — migrations only)
@@ -46,7 +51,12 @@
 ;;                 (a keyed store's exact keyset, st-243). Opaque here —
 ;;                 interpreted by fan-out-key.rkt; it lets the SET be verified,
 ;;                 not just the tree hashed.
-(struct artifact (name kind fingerprint provenance keyed-by) #:transparent)
+;;   imports     : ('code only) the code artifacts this file DIRECTLY imports —
+;;                 the helper→helper edges (st-whi). Task→helper edges are
+;;                 ordinary task inputs; transitive dependence is the walk over
+;;                 these (code-closure below / plan-datalog's imports rule), so
+;;                 nothing flattens the closure into a stored list. '() otherwise.
+(struct artifact (name kind fingerprint provenance keyed-by imports) #:transparent)
 
 ;; A task node.
 ;;   name    : symbol  (matches the run.py step name)
@@ -61,8 +71,9 @@
 (define (make-artifact name kind
                        #:fingerprint [fingerprint #f]
                        #:provenance [provenance 'derived]
-                       #:keyed-by [keyed-by #f])
-  (artifact name kind fingerprint provenance keyed-by))
+                       #:keyed-by [keyed-by #f]
+                       #:imports [imports '()])
+  (artifact name kind fingerprint provenance keyed-by imports))
 
 (define (make-task name kind
                    #:inputs [inputs '()]
@@ -148,6 +159,24 @@
                #:when (and p (keep? p)))
      p)))
 
+;; code-closure : graph (listof symbol) -> (listof symbol)
+;; The transitive import closure of `seeds' (code-artifact names — typically a
+;; task's 'code inputs) over the artifacts' `imports' edges, sorted, seeds
+;; included. This is the plain-Racket twin of plan-datalog's imports rule (the
+;; same two-planner parity as required-tasks): the cache walks it to address a
+;; task's full code dependence without any layer flattening the closure into a
+;; stored list. A name with no artifact record is kept but not traversed — the
+;; cache then fails to resolve it and stays conservative.
+(define (code-closure g seeds)
+  (let loop ([frontier seeds] [seen (set)])
+    (cond
+      [(null? frontier) (sort (set->list seen) symbol<?)]
+      [(set-member? seen (car frontier)) (loop (cdr frontier) seen)]
+      [else
+       (define a (hash-ref (graph-artifacts g) (car frontier) #f))
+       (loop (append (if a (artifact-imports a) '()) (cdr frontier))
+             (set-add seen (car frontier)))])))
+
 ;; --- Plan: minimal upstream + topological order -----------------------------
 
 ;; required-tasks : graph symbol -> (setof symbol)
@@ -212,22 +241,27 @@
 ;; deliberate: a change to the trace-record shape bumps HISTORY-VERSION but leaves
 ;; topology snapshots (keyed by graph-hash, unchanged) perfectly readable. Bump
 ;; this only when graph->datum's shape changes.
-(define GRAPH-SNAPSHOT-VERSION 1)
+;; v2 (st-whi): artifact entries gained a fourth element, the `imports' edge
+;; list — helper→helper import edges ARE topology (a new import changes what a
+;; task transitively depends on), so they must move the graph digest.
+(define GRAPH-SNAPSHOT-VERSION 2)
 
 ;; graph->datum : graph -> list
-;; A `read'-able TOPOLOGY snapshot: nodes (artifact name/kind/provenance) and
-;; edges (each task's name/kind/inputs/outputs). This is the shape history
+;; A `read'-able TOPOLOGY snapshot: nodes (artifact name/kind/provenance/imports)
+;; and edges (each task's name/kind/inputs/outputs). This is the shape history
 ;; persists once per distinct graph, so build N's topology can be reconstructed
 ;; without re-running Racket, and topology drift between builds is detectable.
 ;; Deliberately omits recipes (`invoke') and fan-out `keyed-by' branches — those
 ;; aren't topology; recipe change is the cache's job (recipe-hash), and keyed-by
 ;; holds opaque structs that don't round-trip through `read'. Artifacts and
-;; tasks sort by name so the datum is canonical; inputs/outputs keep their
-;; authored order (already deterministic) so the snapshot stays faithful.
+;; tasks sort by name so the datum is canonical; inputs/outputs — and an
+;; artifact's imports, already sorted by the authoring scan — keep their
+;; authored order (deterministic) so the snapshot stays faithful.
 (define (graph->datum g)
   (list 'stelis-graph GRAPH-SNAPSHOT-VERSION
         (sort (for/list ([a (in-hash-values (graph-artifacts g))])
-                (list (artifact-name a) (artifact-kind a) (artifact-provenance a)))
+                (list (artifact-name a) (artifact-kind a) (artifact-provenance a)
+                      (artifact-imports a)))
               symbol<? #:key car)
         (sort (for/list ([t (in-hash-values (graph-tasks g))])
                 (list (task-name t) (task-kind t)

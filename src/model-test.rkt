@@ -68,3 +68,53 @@
          (make-task 'y 'transform #:inputs '(a) #:outputs '(b)))
    (list (make-artifact 'a 'file) (make-artifact 'b 'file))))
 (check-exn #rx"cycle" (lambda () (topo-sort cyclic (set 'x 'y))))
+
+;; --- code-closure: the imports-edge walk (st-whi) -----------------------------
+;; A chain with a diamond and a dangling edge:
+;;   a.py -> b.py -> d.py
+;;   a.py -> c.py -> d.py    ; diamond: d reached twice, counted once
+;;   c.py -> ghost.py        ; named but not in the graph: kept, not traversed
+(define gcode
+  (build-graph
+   (list (make-task 'use 'transform #:inputs '(raw a.py) #:outputs '(out)))
+   (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
+         (make-artifact 'a.py 'code #:imports '(b.py c.py))
+         (make-artifact 'b.py 'code #:imports '(d.py))
+         (make-artifact 'c.py 'code #:imports '(d.py ghost.py))
+         (make-artifact 'd.py 'code))))
+(check-equal? (code-closure gcode '(a.py))
+              '(a.py b.py c.py d.py ghost.py)
+              "seeds included, diamond counted once, dangling name kept")
+(check-equal? (code-closure gcode '(d.py)) '(d.py)
+              "a leaf helper closes over itself alone")
+(check-equal? (code-closure gcode '()) '() "no seeds, no closure")
+;; a cycle among helpers terminates (each node visited once)
+(define gcyc
+  (build-graph
+   '()
+   (list (make-artifact 'p.py 'code #:imports '(q.py))
+         (make-artifact 'q.py 'code #:imports '(p.py)))))
+(check-equal? (code-closure gcyc '(p.py)) '(p.py q.py)
+              "a helper-import cycle terminates")
+
+;; graph->datum (v2): imports edges are topology — they appear in the datum and
+;; therefore move the graph digest; a graph without them records '() per artifact.
+(check-not-false (member '(a.py code derived (b.py c.py))
+                         (caddr (graph->datum gcode)))
+                 "a code artifact's imports ride in the topology snapshot")
+(let* ([imports-of (lambda (g name)
+                     (for/first ([e (in-list (caddr (graph->datum g)))]
+                                 #:when (eq? (car e) name))
+                       (cadddr e)))])
+  (check-equal? (imports-of g 'raw) '() "a data artifact records no imports"))
+(check-not-equal?
+ (graph-digest gcode)
+ (graph-digest
+  (build-graph
+   (list (make-task 'use 'transform #:inputs '(raw a.py) #:outputs '(out)))
+   (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
+         (make-artifact 'a.py 'code #:imports '(b.py))   ; c.py edge dropped
+         (make-artifact 'b.py 'code #:imports '(d.py))
+         (make-artifact 'c.py 'code #:imports '(d.py ghost.py))
+         (make-artifact 'd.py 'code))))
+ "changing only an imports edge changes the graph digest")

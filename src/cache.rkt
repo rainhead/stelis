@@ -212,10 +212,19 @@
 ;; address (`token-address', st-ysf — needs `cache-dir'); externals have no
 ;; content hash. The recipe's CODE files (st-top) are hashed alongside, each by
 ;; its bytes.
+;; 'code-kind INPUTS (st-whi — shared helpers promoted to graph artifacts) are
+;; the reason-layer partition: expanded to their full import closure
+;; (code-closure over the artifacts' `imports' edges) and hashed onto the CODE
+;; side of the snapshot, keyed by resolved path exactly like the recipe's named
+;; scripts — so a helper edit still reports 'code-changed naming the file, as it
+;; did when the closure was flattened into recipe-code, while data inputs keep
+;; reporting 'input-changed.
 ;; Returns a 'run decision instead of a snapshot when the task can never be
 ;; content-skipped: 'boundary tasks (ingestion must re-run), and tasks with an
 ;; input that isn't content-addressable here ('inputs-unresolvable) — including a
-;; named code file missing on disk (conservative: unreadable code forces a run).
+;; named code file missing on disk (conservative: unreadable code forces a run;
+;; a 'code artifact with no resolved path is named by its artifact symbol, one
+;; whose file is absent by its path).
 ;; With resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
 (define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f]
                         [runtimes #f] [cache-dir #f])
@@ -224,17 +233,40 @@
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
     [else
      (define inv (task-invoke t))
+     (define-values (code-inputs data-inputs)
+       (partition (lambda (in)
+                    (let ([a (hash-ref (graph-artifacts g) in #f)])
+                      (and a (eq? 'code (artifact-kind a)))))
+                  (task-inputs t)))
      (define pairs
-       (for/list ([in (in-list (task-inputs t))])
+       (for/list ([in (in-list data-inputs)])
          (cons in (input-hash g in resolve resolve-relation resolve-store-keys
                               cache-dir))))
+     ;; each closure member -> (path . hash); a #f hash carries what to NAME —
+     ;; the artifact symbol (no path) or the path string (file absent).
+     (define code-input-pairs
+       (for/list ([in (in-list (code-closure g code-inputs))])
+         (define p (resolve in))
+         (cond
+           [(not p)          (cons in #f)]
+           [(file-exists? p) (cons (~a p) (file-sha1 p))]
+           [else             (cons (~a p) #f)])))
      (define code-pairs
-       (append* (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
-                  (code-path-hashes p))))
+       (append (append* (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
+                          (code-path-hashes p)))
+               (filter cdr code-input-pairs)))
      (define unresolvable
-       (sort (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv)) symbol<?))
+       (sort (append (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv))
+                     (for/list ([kv (in-list code-input-pairs)]
+                                #:when (and (not (cdr kv)) (symbol? (car kv))))
+                       (car kv)))
+             symbol<?))
      (define missing-code
-       (sort (for/list ([kv (in-list code-pairs)] #:unless (cdr kv)) (car kv)) string<?))
+       (sort (append (for/list ([kv (in-list code-pairs)] #:unless (cdr kv)) (car kv))
+                     (for/list ([kv (in-list code-input-pairs)]
+                                #:when (and (not (cdr kv)) (string? (car kv))))
+                       (car kv)))
+             string<?))
      (if (or (pair? unresolvable) (pair? missing-code))
          (decision 'run 'inputs-unresolvable (append unresolvable missing-code))
          (snapshot (string-sha1 (invoke-basis inv runtimes))

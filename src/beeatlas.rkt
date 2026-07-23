@@ -42,7 +42,7 @@
          "notes-digest.rkt"
          "data-quality.rkt"
          "fan-out-key.rkt"
-         "py-imports.rkt")
+         "py-imports.rkt") ; make-data-import-scan (st-6ga/st-whi)
 
 (provide beeatlas-graph
          beeatlas-runtimes
@@ -182,6 +182,10 @@
     ;; EXPORT_DIR artifact. Surfaced by --build --all (dedup-candidates is pruned for
     ;; occurrences.db); the st-6qc guard needs a resolvable path to verify it.
     [(eq? artifact 'dedup_candidates.csv) (build-path DATA "dedup_candidate_pairs.csv")]
+    ;; 'code artifacts (st-whi): the shared Python helpers live in data/ at their
+    ;; own basenames — fixed paths, so they read as ambient inputs everywhere
+    ;; (never seeded, never EXPORT_DIR-relative).
+    [(memq artifact py-code-artifact-names) (data-file s)]
     [(memq artifact sandbox-marts) (build-path SANDBOX s)]
     ;; @export copies (place-marts' verbatim copies + species-export's enriched
     ;; parquet): the placed sibling lives under export-dir at the un-suffixed name.
@@ -294,22 +298,35 @@
 ;; py: a uv/3.14 recipe that calls `module.fn()' the way run.py imports it.
 ;; The module's FILE is the recipe's code (st-top): its content joins the task's
 ;; input address, so editing e.g. notes_harvest.py invalidates the cache the way
-;; editing its data would. The shared helpers a script imports are its code too,
-;; so the recipe hashes them as well — DERIVED, not hand-listed (st-6ga):
-;; `py-import-closure' scans the module's transitive local imports at graph-
-;; authoring time (see py-imports.rkt), which reproduces the old hand `#:code'
-;; lists and fixes their known drift (the places_maps → species_maps → config
-;; second hop the hand list missed). `#:code' remains an escape hatch for files
-;; the scanner can't see — dynamic imports, or a data file a script bakes in.
+;; editing its data would. The shared helpers a script imports are no longer
+;; flattened into this code list (st-whi): each helper is a producerless 'code
+;; ARTIFACT and the imports are EDGES — `py' registers its entry module here, the
+;; add-import-inputs post-pass appends the module's DIRECT local imports as task
+;; inputs (task→helper), and py-code-artifacts (below the task list) authors the
+;; helper nodes with their own direct imports (helper→helper). Transitive
+;; dependence is then the graph's job — model.rkt's code-closure on the cache
+;; side, plan-datalog reachability on the Datalog side — while a helper edit
+;; still reports 'code-changed (the cache partitions inputs by kind, st-whi).
+;; The scan is st-6ga's py-imports.rkt, one directory read for the whole graph;
+;; it reproduces the old hand `#:code' lists and fixes their known drift (the
+;; places_maps → species_maps → config second hop the hand list missed).
+;; `#:code' remains an escape hatch for files the scanner can't see — dynamic
+;; imports, or a data file a script bakes in.
 (define (data-file rel) (string-append DATA "/" rel))
-(define py-import-closure (make-data-import-closure DATA))
+(define-values (py-direct-imports py-import-closure) (make-data-import-scan DATA))
+
+;; recipe → entry module name, filled as `py' authors each recipe, so the
+;; import-edge post-pass can recover which module a task executes without
+;; re-parsing its argv. Authoring-time bookkeeping only; never escapes.
+(define py-entry-modules (make-hasheq))
+
 (define (py module fn #:code [extra '()])
-  (define files (remove-duplicates
-                 (append (list (string-append module ".py"))
-                         (py-import-closure module)
-                         extra)))
-  (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))
-          (map data-file files)))
+  (define rec
+    (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))
+            (map data-file (remove-duplicates
+                            (cons (string-append module ".py") extra)))))
+  (hash-set! py-entry-modules rec module)
+  rec)
 
 ;; place-marts copies each dbt mart from the sandbox to $EXPORT_DIR (injected by
 ;; the executor). `set -e' so a missing mart fails the task rather than a partial
@@ -686,4 +703,39 @@
               #:inputs '(ecdysis_data) #:outputs '(feeds)
               #:invoke (py "feeds" "main"))))
 
-(define beeatlas-graph (build-graph tasks (append artifacts mart-export-artifacts)))
+;; --- Code artifacts + import edges (st-whi) ----------------------------------
+;; Every module a py entry transitively imports becomes a producerless 'code
+;; artifact carrying its DIRECT imports as helper→helper edges — the st-6ga
+;; flattened code lists, promoted to graph structure. Authored from the same
+;; one-directory scan `py' uses, and placed AFTER the task list so
+;; py-entry-modules is complete. With no beeatlas checkout (CI) the scan is
+;; empty: no artifacts, no edges — the same conservative degradation as the
+;; st-6ga code lists (tasks whose code can't be hashed rerun).
+(define py-helper-files
+  (sort (remove-duplicates
+         (append-map py-import-closure (hash-values py-entry-modules)))
+        string<?))
+(define (module-of f) (regexp-replace #rx"\\.py$" f ""))
+(define py-code-artifacts
+  (for/list ([f (in-list py-helper-files)])
+    (make-artifact (string->symbol f) 'code
+                   #:imports (map string->symbol (py-direct-imports (module-of f))))))
+(define py-code-artifact-names (map artifact-name py-code-artifacts))
+
+;; add-import-inputs : (listof task) -> (listof task)
+;; The task→helper edges: a py task consumes its entry module's DIRECT local
+;; imports as 'code inputs. Direct only — the transitive closure is the graph's
+;; (imports edges), never a flattened list here.
+(define (add-import-inputs ts)
+  (for/list ([t (in-list ts)])
+    (define entry (hash-ref py-entry-modules (task-invoke t) #f))
+    (define direct (if entry (py-direct-imports entry) '()))
+    (if (null? direct)
+        t
+        (struct-copy task t
+                     [inputs (append (task-inputs t)
+                                     (map string->symbol direct))]))))
+
+(define beeatlas-graph
+  (build-graph (add-import-inputs tasks)
+               (append artifacts mart-export-artifacts py-code-artifacts)))

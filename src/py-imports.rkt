@@ -47,6 +47,7 @@
 
 (provide parse-local-imports
          import-closure
+         make-data-import-scan
          make-data-import-closure)
 
 ;; --- Pure parse layer -------------------------------------------------------
@@ -113,16 +114,21 @@
 
 ;; --- Filesystem wrapper -----------------------------------------------------
 
-;; make-data-import-closure : path-string -> (string -> (listof path-string))
+;; make-data-import-scan : path-string
+;;   -> (values (string -> (listof string))    ; DIRECT local imports
+;;              (string -> (listof string)))   ; transitive closure
 ;; Reads `dir' ONCE — listing its *.py files as the local-name set and slurping
-;; their text — then returns a per-entry lookup: given an entry module name, the
-;; sorted transitive local imports it pulls in (excluding the entry), as
-;; "name.py" filenames. The one directory read is shared across every call, so
-;; authoring N recipes costs one scan, not N. If `dir' is absent (the beeatlas
-;; checkout isn't mounted), every lookup returns '() — no extras derived, which
-;; degrades to the same conservative "inputs-unresolvable" rerun a bare recipe
-;; already gets.
-(define (make-data-import-closure dir)
+;; their text — then returns two per-entry lookups sharing that read: a module's
+;; DIRECT local imports, and its transitive closure (excluding the module
+;; itself). Both return sorted "name.py" filenames. The direct form is the EDGE
+;; set (st-whi: task→helper inputs and helper→helper `imports' edges are
+;; authored from it); the closure remains for callers that want the flattened
+;; set. The one directory read is shared across every call, so authoring N
+;; recipes costs one scan, not N. If `dir' is absent (the beeatlas checkout
+;; isn't mounted), every lookup returns '() — no edges derived, which degrades
+;; to the same conservative "inputs-unresolvable" rerun a bare recipe already
+;; gets.
+(define (make-data-import-scan dir)
   (define entries
     (if (directory-exists? dir) (directory-list dir #:build? #f) '()))
   (define py-files
@@ -138,6 +144,21 @@
       (values (path->string (path-replace-extension p #""))
               (file->string (build-path dir p)))))
   (define (read-module name) (hash-ref texts name #f))
-  (lambda (entry)
+  (define (direct entry)
+    (define text (read-module entry))
+    (sort (for/list ([n (in-list (if text
+                                     (parse-local-imports text local-names)
+                                     '()))])
+            (string-append n ".py"))
+          string<?))
+  (define (closure entry)
     (for/list ([name (in-list (import-closure read-module local-names entry))])
-      (string-append name ".py"))))
+      (string-append name ".py")))
+  (values direct closure))
+
+;; make-data-import-closure : path-string -> (string -> (listof string))
+;; The closure half alone — the st-6ga flattened-list entry point, kept for
+;; callers (and tests) that don't need edges.
+(define (make-data-import-closure dir)
+  (define-values (_direct closure) (make-data-import-scan dir))
+  closure)

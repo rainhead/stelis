@@ -119,6 +119,16 @@
                        (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'species-export)))
                  "species-export consumes occurrences.parquet (seasonality accumulation)")
 
+;; data-inputs-of: a task's inputs MINUS the derived 'code inputs (st-whi) — the
+;; exact-edge assertions below pin the authored DATA edges, which are the same
+;; with or without a beeatlas checkout; the code edges exist only where the
+;; import scan could run, and are asserted separately (section 15).
+(define (data-inputs-of task-name)
+  (for/list ([in (in-list (task-inputs (hash-ref (graph-tasks beeatlas-graph) task-name)))]
+             #:unless (let ([a (hash-ref (graph-artifacts beeatlas-graph) in #f)])
+                        (and a (eq? 'code (artifact-kind a)))))
+    in))
+
 ;; 9. place-marts + collectors.json (st-4cm slice 2). collectors.json's cone runs
 ;;    dbt-build -> place-marts -> species-export -> collectors-export, in that
 ;;    order; collectors-export reads the EXPORT_DIR copies (@export), not the
@@ -132,7 +142,7 @@
               "place-marts runs before collectors-export")
   (check-true (< (hash-ref pos 'dbt-build) (hash-ref pos 'place-marts))
               "dbt-build runs before place-marts"))
-(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-export))
+(check-equal? (data-inputs-of 'collectors-export)
               '(occurrences.parquet@export species.parquet@export)
               "collectors-export reads the EXPORT_DIR copies, not the sandbox originals")
 (let ([stub (lambda (a) an-existing-file)]) ; everything resolves
@@ -154,7 +164,7 @@
               "species-export (its @export species.parquet) runs before places-export")
   (check-false (memq 'generate-sqlite pl-ordered)
                "places.json does NOT pull in the occurrences.db producer"))
-(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'places-export))
+(check-equal? (data-inputs-of 'places-export)
               '(occurrence_places.parquet@export occurrences.parquet@export
                 species.parquet@export geographies_places)
               "places-export reads the EXPORT_DIR copies, not the sandbox originals")
@@ -171,7 +181,7 @@
 ;;     sandbox originals) and writes three .clean.geojson siblings; its cone is just
 ;;     dbt-build -> place-marts -> topology, and it pulls in NEITHER species-export
 ;;     nor the occurrences.db producer.
-(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'topology-postprocess))
+(check-equal? (data-inputs-of 'topology-postprocess)
               '(counties.geojson@export ecoregions.geojson@export wilderness.geojson@export)
               "topology reads the @export mart copies, not the sandbox originals")
 (check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'topology-postprocess))
@@ -192,7 +202,7 @@
 ;;     collectors.events.json (+ its sidecar), reading occurrences.parquet@export and
 ;;     the species/higher-taxa JSON for slug resolution; its cone adds collectors-
 ;;     export and species-export on top of place-marts.
-(check-equal? (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-events-export))
+(check-equal? (data-inputs-of 'collectors-events-export)
               '(collectors.json occurrences.parquet@export species.json higher_taxa.json)
               "collectors-events reads base collectors.json + @export occ + slug JSON")
 (check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-events-export))
@@ -266,3 +276,42 @@
                "the store has no producer — forward-only by construction")
   (check-true (and (memq 'notes-store.db (task-inputs harvest)) #t)
               "notes-harvest declares the store as an input (edge no longer under-declared)"))
+
+;; 15. Code-as-artifacts + import edges (st-whi). The shared helpers the py
+;;     entries import are producerless 'code artifacts; a task consumes its
+;;     entry's DIRECT imports; the second hop rides the helper→helper `imports'
+;;     edge and is reached by code-closure — nothing stores the flattened list.
+;;     Only checkable where the import scan could run (the author's beeatlas
+;;     checkout); in CI there are no code artifacts, and skipping mirrors the
+;;     duckdb/relation-digest skip idiom.
+(define code-artifact-names
+  (sort (for/list ([a (in-hash-values (graph-artifacts beeatlas-graph))]
+                   #:when (eq? 'code (artifact-kind a)))
+          (artifact-name a))
+        symbol<?))
+(cond
+  [(null? code-artifact-names)
+   (printf "plan-test: no code artifacts (no beeatlas checkout) — skipping import-edge assertions.\n")]
+  [else
+   ;; the known drift case st-6ga fixed, now as graph structure: places_maps
+   ;; imports species_maps DIRECTLY; config.py arrives only via the edge.
+   (define pm-inputs (task-inputs (hash-ref (graph-tasks beeatlas-graph) 'places-maps)))
+   (check-not-false (memq 'species_maps.py pm-inputs)
+                    "places-maps consumes its direct import as a 'code input")
+   (check-false (memq 'config.py pm-inputs)
+                "the second hop is NOT flattened into the task's inputs")
+   (define sm-art (hash-ref (graph-artifacts beeatlas-graph) 'species_maps.py #f))
+   (check-not-false sm-art "the imported helper exists as an artifact")
+   (check-not-false (memq 'config.py (artifact-imports sm-art))
+                    "species_maps.py carries its own import as a helper→helper edge")
+   (check-not-false (memq 'config.py (code-closure beeatlas-graph '(species_maps.py)))
+                    "code-closure reaches the second hop through the edge")
+   ;; every code artifact is producerless (nothing builds source), and every
+   ;; helper a code artifact imports is itself a code artifact — the closure
+   ;; can never dangle.
+   (for ([n (in-list code-artifact-names)])
+     (check-false (producer-of beeatlas-graph n) (~a n " has no producer")))
+   (for* ([n (in-list code-artifact-names)]
+          [i (in-list (artifact-imports (hash-ref (graph-artifacts beeatlas-graph) n)))])
+     (check-not-false (memq i code-artifact-names)
+                      (~a n " imports " i ", which must itself be a code artifact")))])
