@@ -23,12 +23,12 @@
               (set 'dedup-candidates 'dedup-gate 'topology-postprocess
                    'species-export 'species-maps 'places-export
                    'collectors-export 'collectors-events-export
-                   'notes-harvest 'notes-assemble
+                   'notes-harvest
                    'places-maps 'feeds 'place-marts)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
 (check-equal? (length ordered) 22 "22 tasks upstream of occurrences.db (+ the integrity gate, st-0vz)")
-(check-equal? (+ (length ordered) (set-count pruned)) 35 "35 tasks total (notes split into harvest + assemble, st-pd1)")
+(check-equal? (+ (length ordered) (set-count pruned)) 34 "34 tasks total (notes-assemble retired, beeatlas-6x9)")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download
@@ -259,18 +259,21 @@
   (check-true (regexp-match? #px"^[0-9]+$" e1) "build clock is a numeric epoch")
   (check-equal? e1 e2 "build clock is stable across calls (deterministic)"))
 
-;; 14. notes.json provenance reconciliation (st-msn). notes-harvest emits a DERIVED
-;;     notes.json (reproducible from the store, so cutoff-eligible), and reads the
-;;     AUTHORITATIVE notes store — a producerless 'file leaf whose forward-only-ness
-;;     is structural (the graph has no way to rebuild it). The store is a declared
-;;     input, fixing the previously under-declared edge.
-(let ([notes  (hash-ref (graph-artifacts beeatlas-graph) 'notes.json)]
+;; 14. Notes provenance (st-msn, reshaped by beeatlas-6x9). notes-harvest emits
+;;     the DERIVED per-species notes/ dir — since the notes.json roll-up retired,
+;;     the TERMINAL notes artifact (reproducible from the store, cutoff-eligible)
+;;     — and reads the AUTHORITATIVE notes store: a producerless 'file leaf whose
+;;     forward-only-ness is structural (the graph has no way to rebuild it).
+(let ([notes  (hash-ref (graph-artifacts beeatlas-graph) 'notes)]
       [store  (hash-ref (graph-artifacts beeatlas-graph) 'notes-store.db)]
       [harvest (hash-ref (graph-tasks beeatlas-graph) 'notes-harvest)])
+  (check-false (hash-ref (graph-artifacts beeatlas-graph) 'notes.json #f)
+               "the notes.json roll-up is gone from the graph (beeatlas-6x9)")
   (check-eq? (artifact-provenance notes) 'derived
-             "notes.json is derived (was mislabeled authoritative)")
+             "the notes/ dir is derived")
+  (check-eq? (artifact-kind notes) 'dir "the notes SET is a 'dir artifact")
   (check-eq? (artifact-provenance store) 'authoritative
-             "the authoritative label moved to the input store")
+             "the authoritative label lives on the input store")
   (check-eq? (artifact-kind store) 'file "the store is a file input")
   (check-false (producer-of beeatlas-graph 'notes-store.db)
                "the store has no producer — forward-only by construction")

@@ -58,8 +58,9 @@ import edges are topology, and transitive code dependence is a walk, never a
 stored flattened list) ·
 [`plan-datalog.rkt`](src/plan-datalog.rkt) the same plan as a Datalog reachability
 rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-task
-recipes, and the runtimes (incl. the `notes-harvest` → per-species `notes/` dir →
-`notes-assemble` → `notes.json` split, and `beeatlas-partial-tasks` (st-pd1)).
+recipes, and the runtimes (incl. the per-species `notes/` dir — the TERMINAL notes
+artifact since beeatlas-6x9 retired the `notes.json` roll-up; `_data/notes.js`
+reads the dir — and `beeatlas-partial-tasks` (st-pd1)).
 Data only — the 11ty render left the graph in Model Y (ADR 0007 Amendment,
 st-5em): the site build is top-level in beeatlas and consumes the export via
 `npm run fetch-data` ·

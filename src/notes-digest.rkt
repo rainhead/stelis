@@ -5,12 +5,13 @@
 ;; a KEYED change, the first step of subsuming beeatlas's ADR 0013 notes worker
 ;; into the general engine.
 ;;
-;; notes.json is Record<canonical_name, Note[]> over status='approved' notes
-;; (beeatlas notes_harvest, D-10/D-13); species with zero approved notes are absent
-;; as keys. This digests EXACTLY those — approved notes, grouped by canonical_name,
-;; hashing only the fields that flow into notes.json (id, author_id, body_html, the
-;; two timestamps) — so adding/editing/removing one note moves only its species'
-;; key, and unapproving the last note for a species drops the key. The value shape
+;; The harvest (beeatlas notes_harvest, D-10/D-13) emits one notes/<canonical_
+;; name>.json per species with status='approved' notes; species with zero
+;; approved notes have no file. This digests EXACTLY that keyset — approved
+;; notes, grouped by canonical_name, hashing only the fields that flow into the
+;; harvest output (id, author_id, body_html, the two timestamps) — so adding/
+;; editing/removing one note moves only its species' key, and unapproving the
+;; last note for a species drops the key. The value shape
 ;; is "<digest>:<count>", the same as relation-digest.rkt's per-column parts, so it
 ;; rides the existing per-key observation / delta machinery unchanged.
 ;;
@@ -29,8 +30,9 @@
 ;; notes-store-keys : (or/c path-string #f) -> (or/c (listof (cons string string)) #f)
 ;; The store's per-canonical_name observation: sorted (canonical_name -> "<digest>:
 ;; <count>") pairs over approved notes, or #f when the store can't be read. '() (not
-;; #f) for a readable store with no approved notes — no keys, exactly as notes.json
-;; would have none. Order-independent in rows (sum) and in keys (ORDER BY).
+;; #f) for a readable store with no approved notes — no keys, exactly as the
+;; harvest would emit no files. Order-independent in rows (sum) and in keys
+;; (ORDER BY).
 (define (notes-store-keys db)
   (and db
        (let ([out (duckdb-query #f (notes-keys-query db))])
@@ -50,7 +52,7 @@
    "  || ':' || count(*)::VARCHAR\n"
    ;; INNER JOIN users to MATCH notes_harvest exactly (it joins User; a note whose
    ;; author has no user row is dropped, so it must not count toward a species' key
-   ;; either). inat_login is hashed because notes.json's byline is derived from it.
+   ;; either). inat_login is hashed because the baked byline is derived from it.
    "FROM s.notes n JOIN s.users u ON n.author_id = u.id\n"
    "WHERE n.status='approved'\n"
    "GROUP BY n.canonical_name ORDER BY n.canonical_name;"))

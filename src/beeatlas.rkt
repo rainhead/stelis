@@ -133,8 +133,7 @@
     collectors.events.json collector_event_pages.json
     places.json places.geojson place_details.json
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
-    seasonality.json photos.json species_hosts.json higher_taxa.json
-    notes.json)) ; assembled from the per-species notes/ dir by notes-assemble (st-pd1)
+    seasonality.json photos.json species_hosts.json higher_taxa.json))
 
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
 ;; land as a directory of per-entity files under EXPORT_DIR — species_maps writes
@@ -142,8 +141,11 @@
 ;; feeds/. The directory name is the artifact name. Content-addressed as a whole by
 ;; an order-independent tree digest (tree-digest.rkt); SET completeness is st-tul.
 ;; `notes' is the per-canonical_name notes SET (st-pd1): notes-harvest writes
-;; EXPORT_DIR/notes/<canonical_name>.json, one per approved species — the keyed unit
-;; a targeted rebuild touches (notes-assemble then rolls it into notes.json).
+;; EXPORT_DIR/notes/<canonical_name>.json, one per approved species — the keyed
+;; unit a targeted rebuild touches, and since beeatlas-6x9 the TERMINAL notes
+;; artifact: _data/notes.js reads the dir directly (the notes.json roll-up and
+;; its notes-assemble task retired — the monolith's only consumer was that
+;; loader).
 ;; The 11ty render is NOT a Stelis task (ADR 0007 Amendment / Model Y, st-5em):
 ;; Stelis narrows to the DATA engine, and the site build (11ty/Vite) is
 ;; top-level, consuming these artifacts via `npm run fetch-data`. The `site`
@@ -422,10 +424,6 @@
    ;; and a missed key both fail the gate, by name.
    (make-artifact 'notes                        'dir
                   #:keyed-by (store-keyed 'notes-store.db "{}.json"))
-   ;; notes.json is DERIVED: notes-assemble rolls the notes/ dir up into the
-   ;; monolithic Record _data/notes.js reads (st-pd1; was notes-harvest's direct
-   ;; output, st-msn). The authoritative thing is the INPUT store below, not this.
-   (make-artifact 'notes.json                   'file)
    ;; the authoritative notes STORE — beeatlas's one piece of forward-only state on
    ;; this graph (user-authored notes; regenerable only by migration, never by the
    ;; build). It has NO producer here, so the graph structurally cannot rebuild it —
@@ -673,12 +671,6 @@
    (make-task 'notes-harvest 'transform
               #:inputs '(collectors.json notes-store.db) #:outputs '(notes)
               #:invoke (py "notes_harvest" "main"))
-   ;; notes-assemble rolls the per-species notes/ dir up into the monolithic
-   ;; notes.json _data/notes.js reads — full + cheap, and it runs AFTER any prune of
-   ;; retracted species, so notes.json reflects exactly the dir (st-pd1).
-   (make-task 'notes-assemble 'transform
-              #:inputs '(notes) #:outputs '(notes.json)
-              #:invoke (py "assemble_notes" "main"))
    ;; places_maps reads occurrences.parquet@export + the occurrence_places.parquet@
    ;; export bridge (grouping points per place_slug) and county GEOMETRY from the
    ;; geographies.us_counties db-relation — it never opens places.geojson, so the

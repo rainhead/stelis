@@ -2,7 +2,7 @@
 
 ;; Tests for notes-store per-canonical_name content-addressing (st-... H2.2a). The
 ;; properties that matter: keys are the APPROVED-note species only (removed/pending
-;; excluded, matching notes.json); the digest is order-independent and stable; a
+;; excluded, matching the harvest keyset); the digest is order-independent and stable; a
 ;; single-note edit moves ONLY its species' key; adding a note under a new species
 ;; adds a key; unapproving a species' last note drops the key. Hermetic — builds a
 ;; tiny SQLite store with the sqlite3 CLI and reads it with duckdb; if either CLI is
@@ -61,7 +61,7 @@
    (define (keys) (notes-store-keys db))
    (define (val k ks) (cond [(assoc k ks) => cdr] [else #f]))
 
-   ;; approved species only; a removed-only species is absent (matches notes.json)
+   ;; approved species only; a removed-only species is absent (matches the harvest)
    (define k0 (keys))
    (check-equal? (map car k0) '("apis mellifera" "osmia lignaria")
                  "keys are the approved-note species, sorted; removed-only absent")

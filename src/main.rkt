@@ -12,7 +12,7 @@
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
 ;;   racket src/main.rkt --build --all --export-dir DIR    ; build EVERY target (the run.py replacement)
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
-;;   racket src/main.rkt --build --from notes-harvest --export-dir DIR notes.json  ; CRUD: targeted notes into a served dir
+;;   racket src/main.rkt --build --from notes-harvest --export-dir DIR notes  ; CRUD: targeted notes into a served dir
 ;;   racket src/main.rkt --history                         ; list every recorded build
 ;;   racket src/main.rkt --history species-maps            ; one artifact's hash timeline
 
