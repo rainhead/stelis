@@ -29,6 +29,9 @@
 ;;   * COMPLETENESS {input keys} \ {file keys}: input keys with no file. Under
 ;;     data-dependent filtering these are expected (the filtered-out entities), so
 ;;     they are REPORTED, not failed.
+;; EXCEPTION: a store-keyed dir (below) gates BOTH directions — its key source is
+;; already filtered to exactly the expected fileset, so incompleteness is a defect
+;; there, folded into orphans the way verify-manifest folds missing files in.
 ;;
 ;; H2 reuse: the same keyed-by declaration is what promotes each key to an
 ;; independently-stale artifact (delta propagation) later — one artifact / one
@@ -44,9 +47,11 @@
 
 (provide (struct-out fan-out)
          (struct-out manifest-key)
+         (struct-out store-keyed)
          (struct-out fan-out-verdict)
          fan-out-verdict-sound?
          template-arity
+         template-fill
          file->key
          classify-fan-out
          classify-manifest-files
@@ -56,6 +61,7 @@
          dir-relpaths
          verify-fan-out-key
          verify-manifest
+         verify-store-keyed
          verify-fan-out-keys)
 
 ;; A fan-out BRANCH: the files whose relative path matches `template' are keyed by
@@ -82,6 +88,20 @@
 ;;                 "determinations.xml")
 (struct manifest-key (manifest file-field key-field type-field sources singletons)
   #:transparent)
+
+;; A STORE-keyed IDENTITY fan-out (st-243): a dir whose files are one-per-key of a
+;; keyed STORE input — notes/ holds exactly <canonical_name>.json per key of the
+;; notes store. The keys come through the same resolve-store-keys read the cache's
+;; input address uses (st-2k9, notes-store-keys) — ONE definition of "the store's
+;; keyset", never a second SQL path — and that read is already scoped to what the
+;; producer emits (approved notes ⋈ users), so unlike `fan-out' branches there is
+;; no filtering slack: the keyset IS the expected fileset, and both an orphan file
+;; (a retracted key's un-pruned leftover) and a missing key (a harvest that
+;; skipped one) fail sound?. This is what makes a MERGED dir after a partial
+;; rebuild (st-pd1) trustworthy: the identity holds or the gate names the file.
+;;   input    : the store artifact (e.g. 'notes-store.db)
+;;   template : filename pattern with exactly one "{}" (keys are scalar strings)
+(struct store-keyed (input template) #:transparent)
 
 ;; The outcome of checking one 'dir's declared fan-out.
 ;;   sound-files: count of produced files that ARE explained — a branch template
@@ -111,6 +131,15 @@
   (when (< (length lits) 2)
     (error 'template->rx "template has no {} placeholder: ~a" template))
   (pregexp (string-append "^" (string-join (map regexp-quote lits) "(.+?)") "$")))
+
+;; template-fill : string (listof string) -> string
+;; Substitute a key-tuple into a template — the inverse of file->key.
+;; "{}.json" + ("Bombus fervidus") -> "Bombus fervidus.json".
+(define (template-fill template tup)
+  (define lits (string-split template "{}" #:trim? #f))
+  (unless (= (length tup) (sub1 (length lits)))
+    (error 'template-fill "tuple ~a does not fit template ~s" tup template))
+  (apply string-append (car lits) (append-map list tup (cdr lits))))
 
 ;; file->key : string string -> (or/c (listof string) #f)
 ;; The key-TUPLE a relative file path encodes under `template' (one element per
@@ -300,13 +329,51 @@
   (fan-out-verdict dir (- (length relpaths) (length file-orphans) (length bad))
                    orphans incomplete))
 
+;; --- store-keyed identity verification (st-243) ------------------------------
+
+;; verify-store-keyed : store-keyed path-string
+;;                      (symbol -> (or/c (listof (cons string string)) #f))
+;;                      -> fan-out-verdict
+;; Check a store-keyed dir against the store's live keyset (via the caller's
+;; resolve-store-keys — the st-2k9 seam). IDENTITY gates: a file the template
+;; doesn't explain or whose key isn't in the store is an orphan; a store key with
+;; no file lands in orphans as "missing:<file>" (the verify-manifest precedent),
+;; so the shared sound? gate covers both directions. An unreadable store raises —
+;; the gate cannot vouch for what it cannot see.
+(define (verify-store-keyed sk dir resolve-store-keys)
+  (define template (store-keyed-template sk))
+  (unless (= 1 (template-arity template))
+    (error 'verify-store-keyed "store keys are scalar; template needs exactly one {}: ~s"
+           template))
+  (define pairs (and resolve-store-keys (resolve-store-keys (store-keyed-input sk))))
+  (unless pairs
+    (error 'verify-store-keyed "could not read the ~a keyset" (store-keyed-input sk)))
+  (define input-keys (for/set ([kv (in-list pairs)]) (list (car kv))))
+  (define rel+key
+    (for/list ([rel (in-list (dir-relpaths dir))])
+      (cons rel (file->key template rel))))
+  (define orphan-files
+    (for/list ([rk (in-list rel+key)]
+               #:unless (and (cdr rk) (set-member? input-keys (cdr rk))))
+      (car rk)))
+  (define file-keys (for/set ([rk (in-list rel+key)] #:when (cdr rk)) (cdr rk)))
+  (define missing
+    (for/list ([tup (in-list (sort (set->list (set-subtract input-keys file-keys)) tuple<?))])
+      (string-append "missing:" (template-fill template tup))))
+  (fan-out-verdict dir (- (length rel+key) (length orphan-files))
+                   (sort (append orphan-files missing) string<?) '()))
+
 ;; verify-fan-out-keys : graph (listof symbol) (symbol -> path?/#f) path-string
-;;                       [#:db (or/c path-string #f)] -> boolean
+;;                       [#:db (or/c path-string #f)]
+;;                       [#:resolve-store-keys (or/c (symbol -> any) #f)] -> boolean
 ;; For each keyed 'dir output of the given tasks, verify its fan-out against the
 ;; reference build and print a report. A manifest-key dir is checked by
-;; verify-manifest (needs #:db, the shared duckdb); fan-out branches by
-;; verify-fan-out-key. Returns #t iff every keyed dir is SOUND (no orphans).
-(define (verify-fan-out-keys g tasks resolve reference-dir #:db [db #f])
+;; verify-manifest (needs #:db, the shared duckdb); a store-keyed dir by
+;; verify-store-keyed (needs #:resolve-store-keys, the st-2k9 store read); fan-out
+;; branches by verify-fan-out-key. Returns #t iff every keyed dir is SOUND (no
+;; orphans).
+(define (verify-fan-out-keys g tasks resolve reference-dir #:db [db #f]
+                             #:resolve-store-keys [resolve-store-keys #f])
   (printf "Fan-out-key verification — reference ~a\n\n" reference-dir)
   (define keyed
     (for*/list ([name (in-list tasks)]
@@ -324,9 +391,12 @@
        (for/list ([entry (in-list keyed)])
          (define-values (name out keyed-by) (apply values entry))
          (define dir (resolve out reference-dir))
-         (define v (if (manifest-key? keyed-by)
-                       (verify-manifest keyed-by dir db)
-                       (verify-fan-out-key keyed-by dir (lambda (a) (resolve a reference-dir)))))
+         (define v (cond
+                     [(manifest-key? keyed-by) (verify-manifest keyed-by dir db)]
+                     [(store-keyed? keyed-by)
+                      (verify-store-keyed keyed-by dir resolve-store-keys)]
+                     [else (verify-fan-out-key keyed-by dir
+                                               (lambda (a) (resolve a reference-dir)))]))
          (printf "~a ~a → ~a/\n"
                  (if (fan-out-verdict-sound? v) "✓" "✗") name out)
          (printf "    sound    : ~a\n"

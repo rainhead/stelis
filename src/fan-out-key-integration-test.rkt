@@ -45,3 +45,19 @@
   [else
    (printf "fan-out-key integration: SKIPPED — no usable reference at ~a\n" reference)
    (printf "  (run `racket src/main.rkt --run <places-maps|species-maps|feeds>` first)\n")])
+
+;; --- the notes/ identity gate (st-243) ----------------------------------------
+;; Separately gated: it needs a harvested notes/ in the reference AND the live
+;; store readable (NOTES_DB_PATH mounts only where the store lives). NOTE the
+;; check compares the LIVE keyset against the reference tree — a note approved
+;; since the reference build fails it honestly (re-run notes-harvest).
+(cond
+  [(and (directory-exists? (build-path reference "notes"))
+        (beeatlas-resolve-store-keys 'notes-store.db))
+   (test-case "notes/ is exactly the store keyset (identity, st-243)"
+     (check-true
+      (verify-fan-out-keys beeatlas-graph '(notes-harvest) beeatlas-path reference
+                           #:resolve-store-keys beeatlas-resolve-store-keys)
+      "one <canonical_name>.json per approved-notes key — no strays, no gaps"))]
+  [else
+   (printf "fan-out-key integration (notes): SKIPPED — no reference notes/ or store unreadable\n")])

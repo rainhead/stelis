@@ -65,7 +65,8 @@ subprocess executor, plus in-process `rule-check` nodes — a rule evaluated in
 Racket as a graph node, gating its downstream (st-0vz). `run-plan`'s
 `#:rebuild-keys-of` does TARGETED execution (st-pd1): a partial-capable task
 rebuilds only changed keys via `STELIS_REBUILD_KEYS`, `prune-keys!` retracts
-removed ones · [`cache.rkt`](src/cache.rkt)
+removed ones, and partial mode needs the on-disk dir to MATCH the last clean
+run's receipt (`prior-complete-build?`, st-243), not merely exist · [`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts ·
 [`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;
 first rule = the integrity gate (record-count swing vs. the previous build's
@@ -92,7 +93,8 @@ exposes those per-file pairs (`tree-hashes`) for per-key observations ·
 [`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted
-manifest (soundness gated, completeness reported) ·
+manifest (soundness gated, completeness reported); a `store-keyed` dir (notes/,
+st-243) gates IDENTITY vs. the store keyset — both strays and gaps fail ·
 [`trace.rkt`](src/trace.rkt) the per-task build-record shape + its serialization ·
 [`history.rkt`](src/history.rkt) append-only, content-addressed build history under
 `.stelis/` — per-build observation records (artifact→hash, plus a per-PART

@@ -130,7 +130,8 @@
 ;; partial-capable task about to rerun on a changed keyed input, fold the H1
 ;; prospective delta into the canonical_names to re-harvest (added+changed) and the
 ;; output files to prune (removed → "<name>.json"). #f (full) unless there is a real
-;; per-key delta; run-plan additionally requires a prior 'dir output to merge into.
+;; per-key delta; run-plan additionally requires the prior 'dir output to match its
+;; last clean-run receipt (prior-complete-build?, st-243) — a verified merge basis.
 (define (beeatlas-rebuild-keys-of name)
   (and (memq name beeatlas-partial-tasks)
        (let-values ([(dec _snap) (decision+snapshot beeatlas-graph name benv)])

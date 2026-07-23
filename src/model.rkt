@@ -39,10 +39,13 @@
 ;;   fingerprint : content/version fingerprint; #f until computed (see cache.rkt)
 ;;   provenance  : 'derived (safe to destroy and rebuild) | 'authoritative
 ;;                 (forward-only; never rebuilt from scratch — migrations only)
-;;   keyed-by    : #f, or (for a 'dir) a list of fan-out branches declaring the
-;;                 directory's files are keyed by a column of a named input
-;;                 relation (st-tul). Opaque here — interpreted by fan-out-key.rkt;
-;;                 it lets the SET be verified, not just the tree hashed.
+;;   keyed-by    : #f, or (for a 'dir) a declaration of the key SET the
+;;                 directory's files fan out over: a list of fan-out branches
+;;                 (columns of an input relation, st-tul), a manifest-key
+;;                 (exporter-emitted manifest, st-q6i), or a store-keyed identity
+;;                 (a keyed store's exact keyset, st-243). Opaque here —
+;;                 interpreted by fan-out-key.rkt; it lets the SET be verified,
+;;                 not just the tree hashed.
 (struct artifact (name kind fingerprint provenance keyed-by) #:transparent)
 
 ;; A task node.

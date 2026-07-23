@@ -149,4 +149,64 @@
   (check-equal? orphans '("stray.xml") "a file neither indexed nor a singleton is an orphan")
   (check-equal? missing '("genus-b.xml") "an indexed file not on disk is missing"))
 
+;; --- template-fill: the substitution inverse of file->key ---------------------
+
+(check-equal? (template-fill "{}.json" '("Bombus fervidus")) "Bombus fervidus.json"
+              "a scalar key substitutes in, spaces intact")
+(check-equal? (template-fill "subgenus/{}/{}.svg" '("Andrena" "Micrandrena"))
+              "subgenus/Andrena/Micrandrena.svg" "composite tuples fill in order")
+(check-exn #rx"does not fit"
+           (lambda () (template-fill "{}.json" '("a" "b")))
+           "a tuple wider than the template is a caller error")
+
+;; --- verify-store-keyed: the identity gate (st-243, notes/ shape) -------------
+;; The store keyset (via a fake resolve-store-keys — pairs shaped like
+;; notes-store-keys' (canonical_name . "digest:count")) IS the expected fileset:
+;; both directions gate.
+
+(define notes (at "notes"))
+(make-directory notes)
+(display-to-file "[]" (build-path notes "Bombus fervidus.json"))
+(display-to-file "[]" (build-path notes "Osmia lignaria.json"))
+(define (store-resolve keys) (lambda (_a) (map (lambda (k) (cons k "d:1")) keys)))
+(define sk (store-keyed 'notes-store.db "{}.json"))
+
+(let ([v (verify-store-keyed sk notes (store-resolve '("Bombus fervidus" "Osmia lignaria")))])
+  (check-true (fan-out-verdict-sound? v) "files == store keys: the identity holds")
+  (check-equal? (fan-out-verdict-sound-files v) 2 "both files keyed")
+  (check-equal? (fan-out-verdict-incomplete v) '() "identity leaves nothing merely-reported"))
+
+;; a stale file for a retracted key (the un-pruned leftover a partial rebuild
+;; could leave) is an orphan
+(let ([v (verify-store-keyed sk notes (store-resolve '("Bombus fervidus")))])
+  (check-false (fan-out-verdict-sound? v) "a file for a key not in the store fails")
+  (check-equal? (fan-out-verdict-orphans v) '("Osmia lignaria.json") "…named by file"))
+
+;; a store key with no file (a harvest that skipped one) ALSO gates — folded into
+;; orphans with the manifest-style "missing:" prefix
+(let ([v (verify-store-keyed sk notes
+                             (store-resolve '("Andrena prunorum" "Bombus fervidus"
+                                              "Osmia lignaria")))])
+  (check-false (fan-out-verdict-sound? v) "a missing key fails, not just reports")
+  (check-equal? (fan-out-verdict-orphans v) '("missing:Andrena prunorum.json")
+                "the missing file is named via the template"))
+
+;; a file the template doesn't explain is an orphan outright
+(display-to-file "x" (build-path notes "README.txt"))
+(let ([v (verify-store-keyed sk notes (store-resolve '("Bombus fervidus" "Osmia lignaria")))])
+  (check-equal? (fan-out-verdict-orphans v) '("README.txt") "an unexplained file is an orphan")
+  (check-equal? (fan-out-verdict-sound-files v) 2 "…and doesn't count as sound"))
+(delete-file (build-path notes "README.txt"))
+
+;; an unreadable store raises — the gate cannot vouch for what it cannot see
+(check-exn #rx"could not read"
+           (lambda () (verify-store-keyed sk notes (lambda (_a) #f)))
+           "resolve-store-keys returning #f is an error, not a pass")
+
+;; declaration sanity: store keys are scalar, so exactly one placeholder
+(check-exn #rx"exactly one"
+           (lambda () (verify-store-keyed (store-keyed 's "{}/{}.json") notes
+                                          (store-resolve '())))
+           "a composite template against a scalar store is a declaration error")
+
 (delete-directory/files tmp)

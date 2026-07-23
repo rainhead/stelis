@@ -112,4 +112,27 @@ SH
 (check-equal? (content2 "b") "b:v2" "the targeted key was rebuilt to the new tag")
 (check-equal? (content2 "a") "a:v1" "an untouched key kept its prior content (merge)")
 
+;; build 3: the merge basis is TAMPERED (st-243) — the on-disk dir no longer
+;; matches the last clean run's receipt, so the caller's partial plan is refused
+;; and the task rebuilds FULLY (every key rewritten, nothing pruned).
+(display-to-file "hand-edited" (build-path maps2 "a") #:exists 'replace)
+(display-to-file "v3" src-file #:exists 'replace)
+(let-values ([(_s _r) (run-plan g2 '(export) runtimes #:env (env-for "v3") #:context env2
+                                #:state-dir (build-path root ".stelis")
+                                #:rebuild-keys-of
+                                (lambda (n) (if (eq? n 'export) (cons '("b") '("a")) #f)))]) (void))
+(check-equal? (files2) '("a" "b" "c")
+              "a drifted dir forces a full rebuild: the whole set re-emitted, no prune")
+(check-equal? (content2 "a") "a:v3" "the tampered key was rebuilt from scratch")
+(check-equal? (content2 "c") "c:v3" "the previously-pruned key returns — full, not merged")
+
+;; build 4: the receipt now reflects build 3's full rebuild, so partial works again
+(display-to-file "v4" src-file #:exists 'replace)
+(let-values ([(_s _r) (run-plan g2 '(export) runtimes #:env (env-for "v4") #:context env2
+                                #:state-dir (build-path root ".stelis")
+                                #:rebuild-keys-of
+                                (lambda (n) (if (eq? n 'export) (cons '("b") '()) #f)))]) (void))
+(check-equal? (content2 "b") "b:v4" "with a clean receipt the partial path re-engages")
+(check-equal? (content2 "a") "a:v3" "…merging into the intact prior build")
+
 (delete-directory/files root)

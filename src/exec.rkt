@@ -179,9 +179,10 @@
 
 ;; keyed-dir-outputs : graph symbol build-env? -> (listof path-string)
 ;; The task's 'dir outputs that already exist on disk — where a partial rebuild
-;; merges into and where retracted keys are pruned. A missing dir means there is no
-;; prior complete build to merge into, so it drops out (the caller then rebuilds
-;; that output fully rather than partially).
+;; merges into and where retracted keys are pruned. Existence is all this asks;
+;; whether the dir is a sound merge BASIS is prior-complete-build?'s question
+;; (asked before the run — after a partial run the merged dir necessarily
+;; differs from the receipt, and pruning must still find it).
 (define (keyed-dir-outputs g name env)
   (for*/list ([out (in-list (task-outputs (hash-ref (graph-tasks g) name)))]
               [a (in-value (hash-ref (graph-artifacts g) out #f))]
@@ -189,6 +190,30 @@
               [p (in-value (and env (env-resolve env out)))]
               #:when (and p (directory-exists? p)))
     p))
+
+;; prior-complete-build? : graph symbol build-env? -> boolean
+;; The partial-rebuild precondition (st-243): a partial rebuild MERGES into the
+;; task's existing 'dir output(s), so what's on disk must be a prior COMPLETE
+;; build. Directory-exists is not that — an interrupted run or a hand-touched
+;; tree also "exists", and merging a few keys into one silently yields an
+;; incomplete set. The proof is the cache receipt: every 'dir output's CURRENT
+;; tree digest must equal the digest the last clean run recorded
+;; (cache-store!'s output-hashes). No receipt, missing dir, or drifted content
+;; -> #f, and the caller falls back to a full rebuild.
+(define (prior-complete-build? g name env)
+  (define dirs
+    (for*/list ([out (in-list (task-outputs (hash-ref (graph-tasks g) name)))]
+                [a (in-value (hash-ref (graph-artifacts g) out #f))]
+                #:when (and a (eq? 'dir (artifact-kind a))))
+      out))
+  (and (pair? dirs)
+       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])
+         (and entry
+              (let ([recorded (hash-ref entry 'output-hashes '())]
+                    [fresh (output-snapshot g name env)])
+                (for/and ([out (in-list dirs)])
+                  (define rec (assq out recorded))
+                  (and rec (equal? rec (assq out fresh)))))))))
 
 ;; --- Ordered plan execution with partial success ----------------------------
 
@@ -223,9 +248,9 @@
 ;; a PARTIAL rebuild (st-pd1), or #f for a normal full rebuild. The caller (which
 ;; owns the delta machinery) decides; the executor just honors it — injecting the
 ;; rebuild keys and, after a clean run, pruning the removed keys from the merged
-;; 'dir output(s). Only tasks with an existing 'dir output can be partial (there
-;; must be a prior build to merge into); the caller is expected to return #f
-;; otherwise, and keyed-dir-outputs is the backstop (no dir -> nothing pruned).
+;; 'dir output(s). Partial mode additionally requires prior-complete-build?
+;; (st-243): the on-disk 'dir(s) must MATCH the last clean run's receipt, not
+;; merely exist — anything else falls back to a full rebuild, and says so.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
                   #:context [env #f]
@@ -281,12 +306,16 @@
          ;; comparison basis for the output delta
          (define prior (and env (read-cache-entry (build-env-cache-dir env) name)))
          ;; partial rebuild (st-pd1): the caller's (rebuild . removed) for this task,
-         ;; or #f for a full rebuild. Only honored when a prior 'dir output exists.
-         (define rk (and env (pair? (keyed-dir-outputs g name env)) (rebuild-keys-of name)))
-         (when rk
-           (printf "  ⇒ partial: rebuilding ~a key(s)~a\n"
-                   (length (car rk))
-                   (if (pair? (cdr rk)) (format ", pruning ~a" (length (cdr rk))) "")))
+         ;; or #f for a full rebuild. Only honored on a verified merge basis (st-243).
+         (define rk-wanted (and env (rebuild-keys-of name)))
+         (define rk (and rk-wanted (prior-complete-build? g name env) rk-wanted))
+         (cond
+           [rk
+            (printf "  ⇒ partial: rebuilding ~a key(s)~a\n"
+                    (length (car rk))
+                    (if (pair? (cdr rk)) (format ", pruning ~a" (length (cdr rk))) ""))]
+           [rk-wanted
+            (printf "  ⇒ full rebuild: prior 'dir output missing or ≠ its last receipt\n")])
          (define code (run-task g name runtimes #:env extra-env #:label name
                                 #:rebuild-keys (and rk (car rk))))
          (define ok? (zero? code))

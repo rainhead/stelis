@@ -387,7 +387,13 @@
    ;; the per-canonical_name notes SET (st-pd1): notes-harvest writes one
    ;; EXPORT_DIR/notes/<name>.json per approved species — the KEYED unit a targeted
    ;; rebuild touches (a note edit rebuilds only that species' file). DERIVED.
-   (make-artifact 'notes                        'dir)
+   ;; keyed-by (st-243): an IDENTITY gate against the store keyset. The harvest
+   ;; does not filter beyond what notes-store-keys already scopes to (approved
+   ;; notes ⋈ users), so the merged dir a partial rebuild leaves behind must be
+   ;; EXACTLY one <canonical_name>.json per store key — a stale un-pruned file
+   ;; and a missed key both fail the gate, by name.
+   (make-artifact 'notes                        'dir
+                  #:keyed-by (store-keyed 'notes-store.db "{}.json"))
    ;; notes.json is DERIVED: notes-assemble rolls the notes/ dir up into the
    ;; monolithic Record _data/notes.js reads (st-pd1; was notes-harvest's direct
    ;; output, st-msn). The authoritative thing is the INPUT store below, not this.
