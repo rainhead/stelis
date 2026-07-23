@@ -85,8 +85,18 @@
 (define an-existing-file (path->string model-rkt))
 (define (stub-resolve a)
   (case a [(occurrences.parquet taxa.csv.gz) an-existing-file] [else #f]))
-(check-true (snapshot? (input-snapshot beeatlas-graph 'generate-sqlite stub-resolve))
-            "generate-sqlite is cacheable (all inputs are files)")
+;; The recipe-CODE axis (st-top) is hashed from the real filesystem, not through
+;; stub-resolve, so this assertion is only meaningful where generate-sqlite's code
+;; is on disk (the author's beeatlas checkout). In CI, with no checkout, that code
+;; is genuinely un-hashable and 'inputs-unresolvable is the CORRECT answer — so
+;; skip rather than assert a snapshot (mirrors relation-digest-test's duckdb skip).
+(define gen-sqlite-code
+  (recipe-code (task-invoke (hash-ref (graph-tasks beeatlas-graph) 'generate-sqlite))))
+(define (code-present? p) (or (file-exists? p) (directory-exists? p)))
+(if (andmap code-present? gen-sqlite-code)
+    (check-true (snapshot? (input-snapshot beeatlas-graph 'generate-sqlite stub-resolve))
+                "generate-sqlite is cacheable (all inputs are files)")
+    (printf "plan-test: generate-sqlite recipe code absent (no beeatlas checkout) — skipping cacheable assertion.\n"))
 (let ([d (input-snapshot beeatlas-graph 'dbt-build stub-resolve)])
   (check-equal? (decision-reason d) 'inputs-unresolvable
                 "dbt-build is uncacheable HERE — no relation resolver, no gate entries"))

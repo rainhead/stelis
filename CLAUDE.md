@@ -88,6 +88,13 @@ live in the -wal); the per-key pairs are also recorded across builds as a trace
 species ·
 [`duckdb.rkt`](src/duckdb.rkt) the shared read-only DuckDB CLI runner (relation
 digests + parquet key extraction + the notes-store SQLite scan) ·
+[`py-imports.rkt`](src/py-imports.rkt) derives a `py` recipe's `code` list at
+graph-authoring time (st-6ga): a regex scan of a script's transitive LOCAL imports
+(basename-set membership rejects installed packages + docstring prose), so the
+shared-helper code files are computed, not hand-transcribed — reproduces the old
+`#:code` lists and fixes their drift (the places_maps→species_maps→config second
+hop). `#:code` survives only as the escape hatch for imports a scan can't see
+(dynamic/importlib, baked-in data files) ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
 order-independent digest over its sorted (relative-path → content-hash) tree, and
 exposes those per-file pairs (`tree-hashes`) for per-key observations ·
