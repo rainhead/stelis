@@ -84,7 +84,8 @@ excluded), so a loader that re-lands identical content lets its downstream
 transforms cache-skip — cutoff reaches the pre-dbt graph, not just the file
 edges around `dbt-build`. See [`relation-digest.rkt`](src/relation-digest.rkt).
 
-A task's **code is an input too**: each recipe's named script file(s) are
+A task's **code is an input too**: each recipe's named script file(s) — or
+directories, expanded per-file (dbt's `models/`, `seeds/`, `tests/`) — are
 hashed into its input address alongside the resolved command line, so editing
 a loader/exporter (or a runtime pin) invalidates its cache and the decision
 names the changed file. Named files only — Python imports are not traced; a

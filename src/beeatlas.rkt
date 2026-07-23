@@ -513,7 +513,18 @@
               ;; (st-4cm), so it is a modeled, cache-skippable edge rather than a
               ;; side effect of the dbt step. occurrences.db is unaffected —
               ;; generate-sqlite reads occurrences.parquet from the sandbox directly.
-              #:invoke (recipe 'dbt (list "build")))
+              ;; dbt's CODE (st-0ql): the wrapper (whose uvx line pins the dbt
+              ;; version), project+profiles config, and the source trees dbt
+              ;; build reads — models/, macros/, seeds/, tests/, expanded
+              ;; per-file so 'code-changed names the exact model. target/,
+              ;; logs/, and .user.yml are deliberately ABSENT: they are dbt's
+              ;; own outputs/mutable state, and hashing them into the input
+              ;; address would self-invalidate every build.
+              #:invoke (recipe 'dbt (list "build")
+                               (map data-file
+                                    '("dbt/run.sh" "dbt/dbt_project.yml"
+                                      "dbt/profiles.yml" "dbt/models"
+                                      "dbt/macros" "dbt/seeds" "dbt/tests"))))
 
    ;; --- the target producer (has a __main__; run as a script) ---
    (make-task 'generate-sqlite 'transform

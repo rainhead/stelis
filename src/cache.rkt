@@ -15,6 +15,7 @@
 
 (require file/sha1
          racket/file
+         racket/list
          racket/set
          racket/format
          racket/string
@@ -222,8 +223,8 @@
        (for/list ([in (in-list (task-inputs t))])
          (cons in (input-hash g in resolve resolve-relation resolve-store-keys))))
      (define code-pairs
-       (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
-         (cons (~a p) (and (file-exists? p) (file-sha1 p)))))
+       (append* (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
+                  (code-path-hashes p))))
      (define unresolvable
        (sort (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv)) symbol<?))
      (define missing-code
@@ -233,6 +234,21 @@
          (snapshot (string-sha1 (invoke-basis inv runtimes))
                    (make-immutable-hash pairs)
                    (make-immutable-hash code-pairs)))]))
+
+;; code-path-hashes : path-string -> (listof (cons string (or/c string #f)))
+;; One recipe-code entry's (path -> content-hash) pairs. A FILE hashes by its
+;; bytes. A DIRECTORY (st-0ql: dbt's models/, seeds/, …) expands to one pair per
+;; file inside — "<dir>/<rel>" -> hash, the same per-file grain tree-hashes gives
+;; 'dir artifacts — so 'code-changed names the exact model file, and an added or
+;; removed file surfaces as a key change rather than an opaque digest flip. A
+;; missing path yields a single #f pair (-> 'inputs-unresolvable, conservative).
+(define (code-path-hashes p)
+  (cond
+    [(directory-exists? p)
+     (for/list ([kv (in-list (tree-hashes p))])
+       (cons (string-append (~a p) "/" (car kv)) (cdr kv)))]
+    [(file-exists? p) (list (cons (~a p) (file-sha1 p)))]
+    [else (list (cons (~a p) #f))]))
 
 ;; invoke-basis : any (or/c hash #f) -> string
 ;; What recipe-hash fingerprints. With a runtimes map that knows the recipe's

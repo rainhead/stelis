@@ -220,6 +220,43 @@
               "a missing script is conservative: not addressable, named")
 (display-to-file "print('v2')" script-path)
 
+;; a DIRECTORY code entry (st-0ql: dbt's models/) expands per-file, so the
+;; decision names the exact file inside — edited, added, or removed.
+(define code-dir (build-path tmp "models"))
+(make-directory code-dir)
+(display-to-file "select 1" (build-path code-dir "a.sql"))
+(display-to-file "select 2" (build-path code-dir "b.sql"))
+(define (dirfile name) (path->string (build-path code-dir name)))
+(define gdc
+  (build-graph
+   (list (make-task 'dbtish 'transform #:inputs '(raw) #:outputs '(out)
+                    #:invoke (recipe 'dbt '("build")
+                                     (list (path->string code-dir)))))
+   (list (make-artifact 'raw 'file) (make-artifact 'out 'file))))
+(define snap-d (input-snapshot gdc 'dbtish resolve))
+(check-pred snapshot? snap-d "a directory code entry resolves")
+(check-equal? (sort (hash-keys (snapshot-code-hashes snap-d)) string<?)
+              (list (dirfile "a.sql") (dirfile "b.sql"))
+              "the directory expands to one entry per file inside")
+(cache-store! cache-dir 'dbtish snap-d (list out-path)
+              (output-snapshot gdc 'dbtish env))
+(check-equal? (task-decision gdc 'dbtish env)
+              (decision 'skip 'cached '())
+              "unchanged tree -> cached")
+(display-to-file "select 22" (build-path code-dir "b.sql") #:exists 'replace)
+(check-equal? (task-decision gdc 'dbtish env)
+              (decision 'run 'code-changed (list (dirfile "b.sql")))
+              "an edited file inside the tree is named exactly")
+(display-to-file "select 22" (build-path code-dir "b.sql") #:exists 'replace)
+(display-to-file "select 3" (build-path code-dir "c.sql"))
+(check-equal? (decision-details (task-decision gdc 'dbtish env))
+              (list (dirfile "b.sql") (dirfile "c.sql"))
+              "an added file surfaces as a key change, named alongside")
+(delete-directory/files code-dir)
+(check-equal? (task-decision gdc 'dbtish env)
+              (decision 'run 'inputs-unresolvable (list (path->string code-dir)))
+              "a missing code directory is conservative, named as the dir")
+
 ;; runtime identity (st-top): with a runtimes map on the env, the recipe hash
 ;; covers the RESOLVED argv, so a launch/pin change invalidates — with '()
 ;; details (the command moved, not the code).

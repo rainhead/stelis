@@ -88,8 +88,9 @@
 ;; shared helper declares it in `code' explicitly.
 ;;   runtime : symbol
 ;;   args    : (listof string)
-;;   code    : (listof path-string), '() when the command carries no script file
-;;             (an inline sh script, dbt)
+;;   code    : (listof path-string) — each a FILE (hashed by its bytes) or a
+;;             DIRECTORY (st-0ql: expanded per-file, e.g. dbt's models/); '()
+;;             when the command carries no code on disk (an inline sh script)
 (struct recipe (runtime args code) #:transparent
   #:omit-define-syntaxes #:constructor-name make-recipe)
 (define (recipe runtime args [code '()]) (make-recipe runtime args code))
