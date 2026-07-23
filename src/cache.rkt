@@ -64,9 +64,11 @@
 ;;   reason  : 'boundary             ingestion — its real input is the external
 ;;                                   world, never content-skipped
 ;;           | 'inputs-unresolvable  not content-addressable; details name the
-;;                                   artifacts (e.g. duckdb relations, tokens) —
-;;                                   or, as path strings, code files the recipe
-;;                                   names that don't exist on disk (st-top)
+;;                                   artifacts (externals; relations/stores with
+;;                                   no resolver; a token whose gate has never
+;;                                   passed here, st-ysf) — or, as path strings,
+;;                                   code files the recipe names that don't
+;;                                   exist on disk (st-top)
 ;;           | 'no-cache-entry       never built here (or unreadable/old entry)
 ;;           | 'code-changed         the task's CODE changed (st-top) — details
 ;;                                   name the changed script file(s)
@@ -200,20 +202,23 @@
 ;;                  [(or/c (symbol -> (or/c string #f)) #f)]
 ;;                  [(or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)]
 ;;                  [(or/c (hash symbol -> runtime) #f)]
+;;                  [(or/c path-string #f)]
 ;;                  -> (or/c snapshot? decision?)
 ;; Hash the task's recipe and each input's content. Each input is hashed by its
 ;; artifact KIND: a keyed 'file store by the roll-up of its per-key digests
 ;; (`resolve-store-keys', st-2k9 — see the build-env slot for why bytes are wrong
 ;; under WAL); any other file by its bytes; a db-relation by `resolve-relation'
-;; (its DuckDB digest, st-d5d); anything else (tokens, externals) has no content
-;; hash. The recipe's CODE files (st-top) are hashed alongside, each by its bytes.
+;; (its DuckDB digest, st-d5d); a gate token by its producer's recorded input
+;; address (`token-address', st-ysf — needs `cache-dir'); externals have no
+;; content hash. The recipe's CODE files (st-top) are hashed alongside, each by
+;; its bytes.
 ;; Returns a 'run decision instead of a snapshot when the task can never be
 ;; content-skipped: 'boundary tasks (ingestion must re-run), and tasks with an
 ;; input that isn't content-addressable here ('inputs-unresolvable) — including a
 ;; named code file missing on disk (conservative: unreadable code forces a run).
 ;; With resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
 (define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f]
-                        [runtimes #f])
+                        [runtimes #f] [cache-dir #f])
   (define t (hash-ref (graph-tasks g) name))
   (cond
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
@@ -221,7 +226,8 @@
      (define inv (task-invoke t))
      (define pairs
        (for/list ([in (in-list (task-inputs t))])
-         (cons in (input-hash g in resolve resolve-relation resolve-store-keys))))
+         (cons in (input-hash g in resolve resolve-relation resolve-store-keys
+                              cache-dir))))
      (define code-pairs
        (append* (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
                   (code-path-hashes p))))
@@ -264,15 +270,17 @@
 
 ;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)
 ;;              (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)
+;;              (or/c path-string #f)
 ;;              -> (or/c string #f)
 ;; One input's content hash, by artifact kind, or #f if not content-addressable:
 ;; a keyed 'file store by digest-of-pairs over its per-key digests (the same
 ;; boundary read the observation layer records — decision and delta can never
 ;; disagree); any other file by its bytes; a dir by its order-independent tree
-;; digest (st-cly); a db-relation by `resolve-relation'. #f (absent/unresolvable)
-;; forces a rerun — a keyed store whose scan fails falls back to file bytes, and
-;; an absent file to #f, so unreadable stays conservative.
-(define (input-hash g in resolve resolve-relation resolve-store-keys)
+;; digest (st-cly); a db-relation by `resolve-relation'; a gate token by
+;; `token-address' (st-ysf). #f (absent/unresolvable) forces a rerun — a keyed
+;; store whose scan fails falls back to file bytes, and an absent file to #f, so
+;; unreadable stays conservative.
+(define (input-hash g in resolve resolve-relation resolve-store-keys cache-dir)
   (define a (hash-ref (graph-artifacts g) in #f))
   (cond
     [(and a (eq? (artifact-kind a) 'db-relation))
@@ -280,6 +288,8 @@
     [(and a (eq? (artifact-kind a) 'dir))
      (define p (resolve in))
      (and p (tree-digest p))]
+    [(and a (eq? (artifact-kind a) 'token))
+     (and cache-dir (token-address g in cache-dir))]
     [else
      (define keys (and resolve-store-keys (resolve-store-keys in)))
      (cond
@@ -287,6 +297,27 @@
        [else
         (define p (resolve in))
         (and p (file-exists? p) (file-sha1 p))])]))
+
+;; token-address : graph symbol path-string -> (or/c string #f)
+;; A gate TOKEN's content address (st-ysf): the digest of what its producer's
+;; last PASSING run was a verdict ABOUT — the recipe identity, input hashes, and
+;; code hashes recorded in the producer's cache entry. A passing gate whose own
+;; input address is unchanged vouches exactly what it vouched before (the same
+;; argument that lets a gate cache-skip its evaluation, st-0vz), so its token
+;; reads unchanged and a consumer (dbt-build) may skip; anything that moves the
+;; gate — upstream data, its rule/code, its runtime pin — moves the token.
+;; Entries are written only on a PASS, and run-plan blocks a failing gate's
+;; consumers before their decision matters, so "the entry" is always "the last
+;; pass". #f — no producer, no entry, or an entry without a snapshot (the gate's
+;; own inputs weren't addressable) — keeps the consumer conservative
+;; ('inputs-unresolvable): an unaddressed verdict propagates, never launders.
+(define (token-address g in cache-dir)
+  (define p (producer-of g in))
+  (define e (and p (read-cache-entry cache-dir p)))
+  (and e (hash-ref e 'recipe-hash #f)
+       (string-sha1 (~s (list (hash-ref e 'recipe-hash)
+                              (hash-ref e 'input-hashes '())
+                              (hash-ref e 'code-hashes '()))))))
 
 ;; output-snapshot+keys : graph symbol build-env?
 ;;   -> (values (listof (cons symbol string))                        ; digests
@@ -516,7 +547,8 @@
   (define snap (input-snapshot g name (lambda (a) (env-resolve env a))
                                (build-env-resolve-relation env)
                                (build-env-resolve-store-keys env)
-                               (build-env-runtimes env)))
+                               (build-env-runtimes env)
+                               (build-env-cache-dir env)))
   (if (decision? snap)
       (values snap #f)
       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])

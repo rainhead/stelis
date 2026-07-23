@@ -90,8 +90,11 @@ hashed into its input address alongside the resolved command line, so editing
 a loader/exporter (or a runtime pin) invalidates its cache and the decision
 names the changed file. Named files only — Python imports are not traced; a
 task known to lean on a shared helper declares it on its recipe explicitly.
-Only inputs with no content to hash — gate tokens, externals — stay
-non-addressable and force a conservative rerun.
+A **gate token** is addressed by what its gate's last passing run was a verdict
+*about* (the gate's recorded recipe + input + code hashes), so an unchanged
+upstream lets the guarded consumer (`dbt-build`) skip; a token whose gate has
+never passed here stays non-addressable, as do externals — those force a
+conservative rerun.
 
 Outputs land in an explicit export directory (a scratch dir under the system
 temp dir, printed at build time). Build state — the input-addressed cache and

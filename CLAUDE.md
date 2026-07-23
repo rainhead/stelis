@@ -67,7 +67,8 @@ Racket as a graph node, gating its downstream (st-0vz). `run-plan`'s
 rebuilds only changed keys via `STELIS_REBUILD_KEYS`, `prune-keys!` retracts
 removed ones, and partial mode needs the on-disk dir to MATCH the last clean
 run's receipt (`prior-complete-build?`, st-243), not merely exist · [`cache.rkt`](src/cache.rkt)
-input-addressed skip decisions + early-cutoff output receipts ·
+input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
+addressed by its gate's recorded input address (st-ysf), so dbt-build can skip ·
 [`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;
 first rule = the integrity gate (record-count swing vs. the previous build's
 observation blocks publish — an OPERATOR alarm, distinct from editorial flags) ·

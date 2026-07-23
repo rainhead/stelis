@@ -78,9 +78,9 @@
 ;; 7. Caching (st-d44.3): a task is cacheable only when ALL its inputs are
 ;;    content-addressable. generate-sqlite's inputs are files. dbt-build's
 ;;    db-relations become addressable once a resolve-relation is supplied
-;;    (st-d5d), but its GATE-TOKEN inputs never are, so it stays unresolvable
-;;    regardless — asserted here with no relation resolver (relations fall
-;;    through to unresolvable too), which is enough to keep it uncacheable.
+;;    (st-d5d), and its GATE-TOKEN inputs once a cache-dir holding the gates'
+;;    passing entries is (st-ysf) — asserted here with NEITHER, pinning the
+;;    conservative default: absent those, everything falls to unresolvable.
 (define-runtime-path model-rkt "model.rkt") ; a file that exists, resolved by source location
 (define an-existing-file (path->string model-rkt))
 (define (stub-resolve a)
@@ -89,7 +89,7 @@
             "generate-sqlite is cacheable (all inputs are files)")
 (let ([d (input-snapshot beeatlas-graph 'dbt-build stub-resolve)])
   (check-equal? (decision-reason d) 'inputs-unresolvable
-                "dbt-build is not cacheable (gate-token inputs are never content-addressable)"))
+                "dbt-build is uncacheable HERE — no relation resolver, no gate entries"))
 (let ([d (input-snapshot beeatlas-graph 'taxa-download stub-resolve)])
   (check-equal? (decision-reason d) 'boundary
                 "boundary tasks are never content-cached (ingestion re-runs)"))

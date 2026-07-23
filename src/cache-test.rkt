@@ -382,4 +382,65 @@
               (decision 'run 'input-changed '(raw))
               "a plain file under a present-but-#f key slot hashes by bytes")
 
+;; --- gate tokens (st-ysf): addressed by the gate's recorded input address -----
+;; A token hashes as a digest of its producer's cache entry (recipe + inputs +
+;; code of the last PASS), so a consumer (dbt-build) skips exactly when nothing
+;; upstream of the gate, and nothing about the gate itself, moved.
+(define gate-in (build-path tmp "gate-in.csv"))
+(define tok-out (build-path tmp "tout.db"))
+(display-to-file "g1" gate-in)
+(display-to-file "made" tok-out)
+(define (t-resolve a) (case a [(gate-in) gate-in] [(tok-out) tok-out] [else #f]))
+(define tenv (make-build-env (lambda (a _d) (t-resolve a)) tmp cache-dir))
+(define (token-graph gate-invoke)
+  (build-graph
+   (list (make-task 'gatekeeper 'gate #:inputs '(gate-in) #:outputs '(tok)
+                    #:invoke gate-invoke)
+         (make-task 'consumer 'transform #:inputs '(tok) #:outputs '(tok-out)
+                    #:invoke "use"))
+   (list (make-artifact 'gate-in 'file) (make-artifact 'tok 'token)
+         (make-artifact 'tok-out 'file))))
+(define tg (token-graph "check-v1"))
+
+;; before the gate ever passed here: no entry -> conservative, the token named
+(check-equal? (task-decision tg 'consumer tenv)
+              (decision 'run 'inputs-unresolvable '(tok))
+              "a token whose gate has no entry stays unresolvable")
+
+;; the gate passes (run-plan stores its entry on ok); the consumer becomes
+;; addressable and, once stored, skips
+(define gate-snap (input-snapshot tg 'gatekeeper t-resolve))
+(cache-store! cache-dir 'gatekeeper gate-snap '() '())
+(define consumer-snap (input-snapshot tg 'consumer t-resolve #f #f #f cache-dir))
+(check-pred snapshot? consumer-snap "with a gate entry the token resolves")
+(cache-store! cache-dir 'consumer consumer-snap (list tok-out)
+              (output-snapshot tg 'consumer tenv))
+(check-equal? (task-decision tg 'consumer tenv)
+              (decision 'skip 'cached '())
+              "gate unchanged -> token unchanged -> the consumer skips")
+
+;; the gate's INPUT moves and the gate re-passes: the token flips, named as such
+(display-to-file "g2" gate-in #:exists 'replace)
+(cache-store! cache-dir 'gatekeeper (input-snapshot tg 'gatekeeper t-resolve) '() '())
+(check-equal? (task-decision tg 'consumer tenv)
+              (decision 'run 'input-changed '(tok))
+              "a move upstream of the gate surfaces on the consumer AS the token")
+
+;; the gate's own RECIPE changes (a rule/threshold edit) and re-passes: same flip
+;; even though the guarded data never moved
+(cache-store! cache-dir 'consumer (input-snapshot tg 'consumer t-resolve #f #f #f cache-dir)
+              (list tok-out) (output-snapshot tg 'consumer tenv))
+(let ([tg2 (token-graph "check-v2")])
+  (cache-store! cache-dir 'gatekeeper (input-snapshot tg2 'gatekeeper t-resolve) '() '())
+  (check-equal? (task-decision tg2 'consumer tenv)
+                (decision 'run 'input-changed '(tok))
+                "a gate rule change moves the token — a verdict about new criteria"))
+
+;; a gate entry stored WITHOUT a snapshot (its own inputs weren't addressable)
+;; cannot vouch: the token goes back to unresolvable, never a stale skip
+(cache-store! cache-dir 'gatekeeper #f '() '())
+(check-equal? (task-decision tg 'consumer tenv)
+              (decision 'run 'inputs-unresolvable '(tok))
+              "an unaddressed gate verdict propagates — it never launders")
+
 (delete-directory/files tmp)
