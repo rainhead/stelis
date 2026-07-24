@@ -70,7 +70,8 @@
 
 ;; the decorated renderer appends the subset line to the base reason.
 (define reason->string (make-reason->string g env state))
-(define rendered (reason->string d))
+;; the renderer now takes (task decision); the input-changed path ignores the task
+(define rendered (reason->string 'use d))
 (check-true (regexp-match? #rx"inputs changed: maps" rendered) "keeps the base prose")
 (check-true (regexp-match? #rx"maps → .*b\\.svg" rendered)     "adds the moved subset")
 

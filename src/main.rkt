@@ -217,20 +217,36 @@
                      (string-join (map symbol->string (trace-record-blockers r)) ", "))]
             [(trace-record-decision r) (decision->string (trace-record-decision r))]
             [else "(caching was off)"]))
-        ;; the cutoff receipt (st-8ig): what the rerun did to its outputs
+        ;; what the rerun did. Two receipts can ride a run: a probing boundary's
+        ;; own source report (st-8bj) and the generic output-cutoff delta (st-8ig).
+        (define sr (trace-record-source-report r))
         (define delta (trace-record-delta r))
-        (define delta-note
+        ;; the cutoff receipt as a clause, or #f — reused below.
+        (define delta-clause
           (cond
-            [(not delta) ""]
+            [(not delta) #f]
             [(eq? 'identical (output-delta-status delta))
-             " → reran; outputs identical — early cutoff, downstream saw unchanged inputs"]
+             "outputs identical — early cutoff, downstream saw unchanged inputs"]
             [else
-             (format " → reran; outputs changed: ~a"
+             (format "outputs changed: ~a"
                      (string-join (map symbol->string (output-delta-details delta)) ", "))]))
+        (define note
+          (cond
+            ;; an UNCHANGED source short-circuits ingestion and leaves outputs
+            ;; untouched, so the delta can only echo "identical" — the report says
+            ;; it better and fuller; show it alone.
+            [(and sr (source-report-unchanged? sr))
+             (format " → reran; ~a" (source-report->string sr))]
+            ;; a CHANGED source means the loader re-ingested; keep the delta clause
+            ;; too, since whether the outputs actually moved is the informative bit.
+            [sr (format " → reran; ~a~a" (source-report->string sr)
+                        (if delta-clause (format "; ~a" delta-clause) ""))]
+            [delta-clause (format " → reran; ~a" delta-clause)]
+            [else ""]))
         (printf "~a~a. ~a ~a\n     ~a~a\n"
                 (if (< i 10) " " "") i
                 (outcome-glyph (trace-record-outcome r)) (trace-record-task r)
-                why delta-note))])]
+                why note))])]
 
   ;; --- browse the build history ------------------------------------------
   ;; No name: the list of builds (append order — for BROWSING, not freshness).

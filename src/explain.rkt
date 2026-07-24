@@ -19,6 +19,8 @@
          plan-explanations
          explanation-glyph
          decision->string
+         source-report->string
+         default-reason->string
          explanation->string
          print-explanations)
 
@@ -74,21 +76,37 @@
     [(cached)              "cached — inputs unchanged, outputs present"]
     [else                  (format "~a" (decision-reason d))]))
 
-;; reason->string decorates the base reason prose (default = decision->string,
-;; the pure one). The delta adapter (delta-explain.rkt) passes an impure renderer
-;; that appends the changed KEY subset for an 'input-changed edge; the conditional
-;; suffix is layered on top of whatever it returns.
-(define (explanation->string e [reason->string decision->string])
+;; source-report->string : source-report? -> string — a boundary loader's own
+;; verdict about its external source (st-8bj), in prose. Shared by the retrospective
+;; renderer (--explain --last) and the prospective, history-flavored boundary line
+;; (delta-explain.rkt). `records'/`since' are shown only when the loader gave them.
+(define (source-report->string s)
+  (define suffix
+    (string-append
+     (if (source-report-records s) (format ", ~a new records" (source-report-records s)) "")
+     (if (source-report-since s)   (format " since ~a" (source-report-since s)) "")))
+  (if (source-report-unchanged? s)
+      (string-append "source unchanged — ingestion skipped" suffix)
+      (string-append "source changed — re-ingested" suffix)))
+
+;; reason->string decorates the base reason prose. It now takes (task decision):
+;; the impure delta adapter (delta-explain.rkt) needs the task to flavor a 'boundary
+;; line with that task's last recorded source report (st-8bj), as it already uses the
+;; decision's details to name an 'input-changed edge's moved keys. The default just
+;; ignores the task and calls the pure decision->string; the conditional suffix is
+;; layered on top of whatever it returns.
+(define (default-reason->string _task d) (decision->string d))
+(define (explanation->string e [reason->string default-reason->string])
   (define d (explanation-decision e))
-  (define base (reason->string d))
+  (define base (reason->string (explanation-task e) d))
   (if (and (eq? 'skip (decision-verdict d)) (pair? (explanation-upstreams e)))
       (format "~a, BUT conditional: upstream ~a runs first and may change its inputs"
               base
               (string-join (map symbol->string (explanation-upstreams e)) ", "))
       base))
 
-;; print-explanations : (listof explanation?) [(decision? -> string)] -> void
-(define (print-explanations exps [reason->string decision->string])
+;; print-explanations : (listof explanation?) [(symbol decision? -> string)] -> void
+(define (print-explanations exps [reason->string default-reason->string])
   (for ([e (in-list exps)] [i (in-naturals 1)])
     (printf "~a~a. ~a ~a\n     ~a\n"
             (if (< i 10) " " "") i

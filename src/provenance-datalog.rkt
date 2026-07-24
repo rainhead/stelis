@@ -154,10 +154,12 @@
 ;;                  -> void
 ;; The transitive chain as a tree over the stale-because edges; a node reached
 ;; twice (diamonds) is elided after its first showing. The theory supplies the
-;; structure; the decision records supply the prose. reason->string decorates a
-;; node's own reason (default = decision->string); delta-explain.rkt passes an
-;; impure renderer that names the changed KEY subset for an 'input-changed node.
-(define (print-why-tree thy root dec-of [reason->string decision->string])
+;; structure; the decision records supply the prose. reason->string, (task decision
+;; -> string), decorates a node's own reason (default = default-reason->string, which
+;; ignores the task and calls decision->string); delta-explain.rkt passes an impure
+;; renderer that names the changed KEY subset for an 'input-changed node and flavors
+;; a 'boundary node with its last source report.
+(define (print-why-tree thy root dec-of [reason->string default-reason->string])
   (define shown (mutable-set))
   (let loop ([t root] [depth 0])
     (define first-time? (not (set-member? shown t)))
@@ -177,7 +179,7 @@
               ;; instead of the misleading bare "cached"
               [(and (eq? 'skip (decision-verdict d)) (pair? blames))
                "inputs unchanged, but stale through upstreams ↓"]
-              [else (reason->string d)]))
+              [else (reason->string t d)]))
     (for ([u (in-list blames)])
       (loop u (add1 depth)))))
 

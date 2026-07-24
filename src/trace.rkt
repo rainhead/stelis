@@ -17,7 +17,14 @@
 
 (require "cache.rkt")
 
-(provide (struct-out trace-record)
+;; trace-record uses a smart constructor (below), so it can't be exported via
+;; struct-out (which needs the omitted define-syntaxes); name the parts explicitly,
+;; as cache.rkt does for snapshot.
+(provide trace-record trace-record?
+         trace-record-task trace-record-decision trace-record-snapshot
+         trace-record-outcome trace-record-blockers trace-record-delta
+         trace-record-output-hashes trace-record-output-key-hashes
+         trace-record-input-key-hashes trace-record-source-report
          outcome-glyph
          trace-record->datum
          datum->trace-record)
@@ -52,10 +59,25 @@
 ;;                   would ever observe it; recording it here gives its per-key
 ;;                   timeline (and the delta a `from' basis). '() for a task with no
 ;;                   keyed-store input.
+;;   source-report : (or/c source-report? #f) — for a 'boundary run: what the
+;;                   loader's own probe reported about its external source (st-8bj),
+;;                   read from the STELIS_BOUNDARY_RECEIPT file after the run. #f when
+;;                   the loader wrote no receipt (re-ingested, or not a probing
+;;                   loader) — the great majority of records, so it is an OPTIONAL
+;;                   trailing field: every pre-st-8bj call site (and history datum)
+;;                   omits it and reads back as #f.
 (struct trace-record
   (task decision snapshot outcome blockers delta
-   output-hashes output-key-hashes input-key-hashes)
-  #:transparent)
+   output-hashes output-key-hashes input-key-hashes source-report)
+  #:transparent #:omit-define-syntaxes #:constructor-name make-trace-record)
+;; Smart constructor: source-report defaults to #f so the field is opt-in (mirrors
+;; cache.rkt's snapshot). Keeps the 9-argument call sites — tests, and every code
+;; path that produces no source-report — valid unchanged.
+(define (trace-record task decision snapshot outcome blockers delta
+                      output-hashes output-key-hashes input-key-hashes
+                      [source-report #f])
+  (make-trace-record task decision snapshot outcome blockers delta
+                     output-hashes output-key-hashes input-key-hashes source-report))
 
 ;; outcome-glyph : symbol -> string — the one legend for actual outcomes.
 (define (outcome-glyph o)
@@ -92,6 +114,12 @@
 (define (datum->delta v)
   (and (list? v) (= 2 (length v)) (output-delta (car v) (cadr v))))
 
+(define (source-report->datum s)
+  (and s (list (source-report-unchanged? s) (source-report-records s)
+               (source-report-since s))))
+(define (datum->source-report v)
+  (and (list? v) (= 3 (length v)) (source-report (car v) (cadr v) (caddr v))))
+
 ;; trace-record->datum : trace-record -> list
 ;; A record as a plain, `read'-able list — the on-disk shape history persists.
 (define (trace-record->datum r)
@@ -103,7 +131,8 @@
         (delta->datum (trace-record-delta r))
         (trace-record-output-hashes r)
         (trace-record-output-key-hashes r)
-        (trace-record-input-key-hashes r)))
+        (trace-record-input-key-hashes r)
+        (source-report->datum (trace-record-source-report r))))
 
 ;; datum->trace-record : any -> trace-record
 ;; Inverse of trace-record->datum. Assumes a well-formed datum (the caller —
@@ -117,4 +146,9 @@
                 (datum->delta (list-ref r 5))
                 (list-ref r 6)
                 (list-ref r 7)
-                (list-ref r 8)))
+                (list-ref r 8)
+                ;; source-report is the opt-in trailing field: a pre-st-8bj datum
+                ;; (9 elements) has none and reads back as #f, so old history loads
+                ;; unchanged — no HISTORY-VERSION bump needed (cf. datum->snapshot's
+                ;; 2-vs-3 tolerance).
+                (and (> (length r) 9) (datum->source-report (list-ref r 9)))))

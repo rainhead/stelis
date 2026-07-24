@@ -26,6 +26,7 @@
          snapshot snapshot? snapshot-recipe-hash snapshot-input-hashes
          snapshot-code-hashes
          (struct-out output-delta)
+         (struct-out source-report)
          (struct-out build-env)
          make-build-env
          env-resolve
@@ -102,6 +103,24 @@
 ;;   status  : 'identical | 'changed
 ;;   details : artifact names — everything verified identical, or what changed
 (struct output-delta (status details) #:transparent)
+
+;; A 'boundary loader's SOURCE report (st-8bj): what a boundary task's own probe
+;; concluded about its external source this run. DISTINCT from output-delta, which
+;; compares OUTPUT bytes after the fact: a loader that probes its source and
+;; short-circuits WITHOUT re-ingesting (e.g. ecdysis_pipeline's v2-API probe,
+;; beeatlas-29j) never touches its outputs, so output-delta can only ever say
+;; 'identical — it cannot say WHY. This is the loader speaking for itself: it writes
+;; the report to the STELIS_BOUNDARY_RECEIPT path (exec.rkt), and Stelis reads it
+;; post-run and records it, so --explain/--why can surface "source unchanged, 0
+;; records since <date>" as a first-class build fact rather than the loader silently
+;; reusing a cache behind Stelis's back. #f (no receipt) = the loader said nothing
+;; (it re-ingested, or predates the probe) — indistinguishable from a plain run.
+;;   unchanged? : boolean — the source was unchanged; the loader skipped ingestion
+;;   records    : (or/c exact-nonnegative-integer #f) — records new since `since'
+;;                (0 when unchanged), or #f when the loader didn't quantify it
+;;   since      : (or/c string #f) — the watermark the probe compared against
+;;                (a date or cursor, for display only), or #f
+(struct source-report (unchanged? records since) #:transparent)
 
 ;; --- The build environment ------------------------------------------------------
 

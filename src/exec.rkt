@@ -14,6 +14,9 @@
 (require racket/list
          racket/string
          racket/system
+         racket/file
+         racket/path
+         json
          "model.rkt"
          "cache.rkt"
          "trace.rkt")
@@ -228,6 +231,33 @@
    (lambda (p) (and (hash-has-key? status p)
                     (memq (hash-ref status p) '(failed skipped)))))) ; 'ok/'cached fine
 
+;; boundary-receipt-path : build-env symbol -> path
+;; Where a 'boundary loader is told (via STELIS_BOUNDARY_RECEIPT) to write its
+;; source report (st-8bj). Under the derived, disposable cache dir — one file per
+;; task, so concurrent boundaries never collide and a run's own report is isolated.
+(define (boundary-receipt-path env name)
+  (build-path (build-env-cache-dir env) "boundary" (format "~a.json" name)))
+
+;; read-boundary-receipt : path -> (or/c source-report? #f)
+;; The loader's report, parsed from the receipt it wrote, or #f when it wrote none
+;; (re-ingested, or a loader that doesn't probe) or wrote something unparseable
+;; (conservative: a malformed receipt is treated as "said nothing", never an error —
+;; a boundary always runs regardless, so a bad receipt only costs the annotation).
+;; Shape: {"unchanged": bool, "records": int|null, "since": string|null}. `unchanged'
+;; is REQUIRED and must be a boolean (a receipt lacking it is malformed → #f); a
+;; report present but not unchanged is a changed-source report (the loader ran and
+;; re-ingested but chose to quantify it).
+(define (read-boundary-receipt path)
+  (and (file-exists? path)
+       (with-handlers ([exn:fail? (lambda (_) #f)])
+         (define j (call-with-input-file path read-json))
+         (and (hash? j) (hash-has-key? j 'unchanged) (boolean? (hash-ref j 'unchanged))
+              (let ([records (hash-ref j 'records #f)]
+                    [since (hash-ref j 'since #f)])
+                (source-report (hash-ref j 'unchanged)
+                               (and (exact-nonnegative-integer? records) records)
+                               (and (string? since) since)))))))
+
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
 ;;            #:env (listof (cons string string)) #:context (or/c build-env? #f)
 ;;            -> (values (hash symbol->symbol) (listof trace-record?))
@@ -275,6 +305,11 @@
     ;; the ingestion-boundary CRUD-snapshot (st-2k9): keyed STORE inputs this task
     ;; consumed, recorded when it actually ran (see the run branch). '() otherwise.
     (define input-key-hashes '())
+    ;; a 'boundary loader's own source report (st-8bj), read from the receipt it
+    ;; wrote after the run. #f unless this is a probing boundary that reported.
+    ;; (Named `boundary-report', not `source-report', so it doesn't shadow the
+    ;; struct constructor for the rest of the loop body.)
+    (define boundary-report #f)
     (define outcome
       (cond
         [(pair? blockers)
@@ -316,10 +351,37 @@
                     (if (pair? (cdr rk)) (format ", pruning ~a" (length (cdr rk))) ""))]
            [rk-wanted
             (printf "  ⇒ full rebuild: prior 'dir output missing or ≠ its last receipt\n")])
-         (define code (run-task g name runtimes #:env extra-env #:label name
+         ;; a probing boundary (st-8bj) may report its source unchanged instead of
+         ;; re-ingesting. Hand it a fresh receipt path via env and clear any stale
+         ;; one first, so we never misread a prior run's report as this run's.
+         (define receipt (and env (eq? (task-kind t) 'boundary)
+                              (boundary-receipt-path env name)))
+         (when receipt
+           (delete-directory/files receipt #:must-exist? #f)
+           (make-directory* (path-only receipt)))
+         (define run-env
+           (if receipt
+               (cons (cons "STELIS_BOUNDARY_RECEIPT" (path->string receipt)) extra-env)
+               extra-env))
+         (define code (run-task g name runtimes #:env run-env #:label name
                                 #:rebuild-keys (and rk (car rk))))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
+         ;; the loader's source report (st-8bj), read whether or not there are
+         ;; hashable outputs — a short-circuited boundary leaves outputs untouched,
+         ;; so output-delta alone can't tell "reran, unchanged bytes" from "probed,
+         ;; source unchanged, skipped ingestion". Read on any clean run (a receipt is
+         ;; only ever there for a probing boundary).
+         (when (and ok? receipt)
+           (set! boundary-report (read-boundary-receipt receipt))
+           ;; a terse live headline, in the same register as the early-cutoff line
+           ;; above; the quantified detail (records/since) rides the trace and shows
+           ;; in --explain --last, so it is not re-derived here (no divergent prose).
+           (when boundary-report
+             (printf "  ↺ source ~a\n"
+                     (if (source-report-unchanged? boundary-report)
+                         "unchanged — ingestion skipped"
+                         "changed — re-ingested"))))
          (when (and ok? env)
            ;; retract removed keys from the merged 'dir(s) before observing, so the
            ;; recorded per-key map reflects the pruned set.
@@ -347,6 +409,7 @@
     (hash-set! status name outcome)
     (set! records
           (cons (trace-record name dec snap outcome blockers delta
-                              output-hashes output-key-hashes input-key-hashes)
+                              output-hashes output-key-hashes input-key-hashes
+                              boundary-report)
                 records)))
   (values status (reverse records)))

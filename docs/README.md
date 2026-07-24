@@ -12,3 +12,9 @@ This directory holds the material that accretes *around* those: research
 findings, deeper design notes, and investigations. It is indexed by
 [qmd](https://github.com/tobil/qmd) as the `stelis-docs` collection (root `.md`
 files are `stelis-root`), so anything dropped here becomes searchable.
+
+Reference:
+
+- [`node-types-and-states.md`](node-types-and-states.md) — the task/artifact node
+  kinds and the states a task is reported in (`--explain` / `--why` /
+  `--explain --last` / `--history`).

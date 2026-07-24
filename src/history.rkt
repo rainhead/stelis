@@ -36,6 +36,7 @@
          history-append!
          history-load
          history-last
+         history-last-source-report
          history-observations
          history-key-observations
          history-graph)
@@ -133,6 +134,26 @@
 (define (history-last state-dir)
   (define builds (history-load state-dir))
   (and (pair? builds) (last builds)))
+
+;; history-last-source-report : path-string symbol -> (or/c source-report? #f)
+;; The source report `task' produced on its MOST RECENT RUN (st-8bj) — the basis
+;; for the prospective, history-flavored 'boundary line in --explain/--why. Walks
+;; builds newest-first for the first one in which the task actually RAN (outcome
+;; 'ok — a boundary that was blocked/skipped that build wrote no receipt and must
+;; not mask an older run's report), and returns that run's report; #f when it wrote
+;; none (re-ingested, or not a probing boundary) or the task has never run.
+;; Deliberately that run's report, not the last NON-#f one anywhere: if the most
+;; recent RUN re-ingested, a stale "unchanged" from before would misreport the
+;; current source state.
+(define (history-last-source-report state-dir task)
+  (let loop ([brs (reverse (history-load state-dir))])
+    (cond
+      [(null? brs) #f]
+      [(findf (lambda (rec) (and (eq? (trace-record-task rec) task)
+                                 (eq? (trace-record-outcome rec) 'ok)))
+              (build-record-records (car brs)))
+       => trace-record-source-report]
+      [else (loop (cdr brs))])))
 
 ;; observe-timeline : path-string symbol (trace-record -> alist) (nat any trace-record -> X)
 ;;                    -> (listof X)

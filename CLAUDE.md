@@ -70,7 +70,12 @@ Racket as a graph node, gating its downstream (st-0vz). `run-plan`'s
 `#:rebuild-keys-of` does TARGETED execution (st-pd1): a partial-capable task
 rebuilds only changed keys via `STELIS_REBUILD_KEYS`, `prune-keys!` retracts
 removed ones, and partial mode needs the on-disk dir to MATCH the last clean
-run's receipt (`prior-complete-build?`, st-243), not merely exist · [`cache.rkt`](src/cache.rkt)
+run's receipt (`prior-complete-build?`, st-243), not merely exist. A `'boundary`
+task is handed a `STELIS_BOUNDARY_RECEIPT` path (st-8bj): a probing loader that
+short-circuits an unchanged source writes `{unchanged, records, since}` there, and
+run-plan reads it back as a `source-report` on the trace, so `--explain`/`--why`
+name WHY the boundary didn't re-ingest (the loader-side probe is beeatlas-29j) ·
+[`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
 addressed by its gate's recorded input address (st-ysf), so dbt-build can skip ·
 [`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;

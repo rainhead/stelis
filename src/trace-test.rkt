@@ -31,13 +31,27 @@
                                          ("genus/Apis.svg"   . "h2"))))
                       '())
         (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform) #f '() '() '())
-        (trace-record 'no-cache #f #f 'ok '() #f '((out . "o9")) '() '())))
+        (trace-record 'no-cache #f #f 'ok '() #f '((out . "o9")) '() '())
+        ;; a probing boundary's source report (st-8bj) rides the optional 10th field
+        (trace-record 'probe  (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()
+                      (source-report #t 0 "2026-07-20"))
+        (trace-record 'probe2 (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()
+                      (source-report #f 12 #f))))
 
 ;; datum->trace-record ∘ trace-record->datum = identity, across every field
-;; shape (decisions, snapshots, deltas, and #f alike, plus the observations)
+;; shape (decisions, snapshots, deltas, source-reports, and #f alike, plus the
+;; observations)
 (for ([r (in-list some-records)])
   (check-equal? (datum->trace-record (trace-record->datum r)) r
                 "a record survives serialization unchanged"))
+
+;; backward compatibility: a pre-st-8bj datum (9 elements, no source-report) reads
+;; back with source-report #f — so old history lines load without a version bump.
+(let ([legacy (list 'old (list 'run 'boundary '()) #f 'ok '() #f '() '() '())])
+  (define r (datum->trace-record legacy))
+  (check-false (trace-record-source-report r)
+               "a 9-element legacy datum has no source-report")
+  (check-equal? (trace-record-task r) 'old "…and its other fields still read"))
 
 ;; and the datum is genuinely `read'-able (the property history relies on to
 ;; store one build per line)

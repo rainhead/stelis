@@ -21,8 +21,8 @@
 (require racket/list
          "model.rkt"
          "cache.rkt"        ; decision accessors, artifact-key-parts (the kind dispatch)
-         "explain.rkt"      ; decision->string (the pure base this decorates)
-         "history.rkt"      ; history-key-observations
+         "explain.rkt"      ; decision->string, source-report->string (the pure bases)
+         "history.rkt"      ; history-key-observations, history-last-source-report
          "delta.rkt")
 
 (provide input-key-deltas
@@ -54,22 +54,35 @@
                      a (history-key-observations state-dir a) live))))]
     [else '()]))
 
-;; make-reason->string : graph build-env? path-string -> (decision? -> string)
+;; make-reason->string : graph build-env? path-string -> (symbol decision? -> string)
 ;; The decorated reason renderer both printers accept as #:reason->string. Returns
-;; decision->string's prose, then — for an 'input-changed run — one indented line
-;; per changed keyed input naming the moved subset, e.g.
-;;   inputs changed: occurrence_places
-;;       occurrence_places → 2 of 214 keys: +olympia ~seattle
-;; Closes over the env + state dir so the printers stay pure (decision -> string).
+;; decision->string's prose, then EITHER:
+;;   - for an 'input-changed run — one indented line per changed keyed input naming
+;;     the moved subset, e.g.
+;;       inputs changed: occurrence_places
+;;           occurrence_places → 2 of 214 keys: +olympia ~seattle
+;;   - for a 'boundary run — the task's last recorded source report (st-8bj), so the
+;;     PROSPECTIVE plan is history-flavored, e.g.
+;;       boundary — ingestion; never content-skipped; last run: source unchanged …
+;; Closes over the env + state dir so the printers stay pure (task decision -> string).
+;; It takes the TASK (not the decision alone) because a boundary decision carries no
+;; name to look its history up by — unlike 'input-changed, whose details name inputs.
 (define (make-reason->string g env state-dir)
-  (lambda (d)
+  (lambda (task d)
     (define base (decision->string d))
-    (define deltas (input-key-deltas g d env state-dir))
-    (if (null? deltas)
-        base
-        (string-append
-         base
-         (apply string-append
-                (for/list ([kd (in-list deltas)])
-                  (format "\n       ~a → ~a"
-                          (key-delta-artifact kd) (key-delta->string kd))))))))
+    (cond
+      [(eq? (decision-reason d) 'boundary)
+       (define sr (history-last-source-report state-dir task))
+       (if sr
+           (format "~a; last run: ~a" base (source-report->string sr))
+           base)]
+      [else
+       (define deltas (input-key-deltas g d env state-dir))
+       (if (null? deltas)
+           base
+           (string-append
+            base
+            (apply string-append
+                   (for/list ([kd (in-list deltas)])
+                     (format "\n       ~a → ~a"
+                             (key-delta-artifact kd) (key-delta->string kd))))))])))
