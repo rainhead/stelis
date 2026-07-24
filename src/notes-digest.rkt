@@ -15,6 +15,11 @@
 ;; is "<digest>:<count>", the same as relation-digest.rkt's per-column parts, so it
 ;; rides the existing per-key observation / delta machinery unchanged.
 ;;
+;; This query MIRRORS beeatlas notes_harvest.export_notes (the join, the
+;; status='approved' filter, the hashed field list). notes-digest-contract-test.rkt
+;; ties the two against the REAL models + harvest so a change on either side that
+;; drifted the digest from the artifact it addresses fails a test (st-whm).
+;;
 ;; Built on the shared read-only DuckDB runner (duckdb.rkt) via its SQLite scanner
 ;; (ATTACH ... TYPE sqlite, READ_ONLY), reusing relation-digest's order-independent
 ;; count:sum idiom (sum over per-row hashes is commutative -> row-order-independent).
