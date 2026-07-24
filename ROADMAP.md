@@ -76,9 +76,20 @@ batch→streaming arc completes and the browser gets fed.*
   substrate this folds over — the natural entry point into this horizon (st-066).
 - **Editorial data-quality flags** (moved from H1): rules that flag records for
   end **users** (dup collector-day, out-of-state, bee-vs-flower) and travel with
-  the data into published outputs — they annotate, never block (ADR 0006). Deferred
-  here because end-user-facing flags are *published derived data*, which reopens
-  the "transformations stay external" line — a dbt-vs-Stelis fork to settle first.
+  the data into published outputs — they annotate, never block (ADR 0006). The
+  dbt-vs-Stelis fork is **settled toward dbt** (ADR 0008): these are per-record /
+  per-cluster leaf predicates, no more natural in Datalog than SQL — so they stay
+  external and earn no substrate.
+- **Taxon reasoning with learner explanations** (ADR 0008, st-650 verdict): the
+  value prop that earns the substrate's *reasoning* half. Characterization by
+  taxonomic-rank **inheritance** (unbounded-depth closure, most-specific-wins) →
+  typing the existing `bee_specialist_hosts` / `bee_parasite_hosts` edges over
+  those traits → an ecological **at-risk closure** (necessity through obligate
+  edges only). Runs as Datalog `rule-check` nodes reusing `provenance-datalog.rkt`,
+  so each derived trait carries a **proof tree** — published, baked into pages as
+  learner-facing "why" (the operator `--why` engine, audience flipped). Beachhead:
+  st-ozp. Render-by-query is *not* pulled forward — explanations are precomputed
+  and baked, so the H3 substrate below keeps its deferral.
 - **Demand-directed evaluation** via magic sets, if/when goal-directedness is
   needed.
 - **Compile-to-TS emission:** specialized projections compiled to small
@@ -93,10 +104,18 @@ batch→streaming arc completes and the browser gets fed.*
 `DESIGN.md`.*
 
 - **Sentential-Datalog render substrate** (the server pivot's deferred half,
-  ADR 0007): pages rendered by querying a fact database, replacing 11ty. Why
-  deferred: required by nothing shipped so far — it must re-enter through a
-  concrete value prop a near-term Stelis would serve. First candidate under
-  exploration: editorial data-quality flags (st-650).
+  ADR 0007): pages rendered by querying a fact database at request time, replacing
+  11ty. Why deferred: required by nothing shipped so far. st-650's exploration
+  resolved (ADR 0008) — flags don't earn it, and taxon reasoning earns only the
+  *reasoning* half (now H2 above), whose explanations are precomputed and baked.
+  **Render-by-query itself is still unclaimed** and needs its own concrete value
+  prop: a query parameterized *at request time*, over a space too large or too live
+  to bake. And it is squeezed from both sides — fixed projections bake (H2), while
+  open/interactive queries over a *small* fact base (bee taxa + edges is shippable)
+  go **client-side via compile-to-TS emission** (also H2, above). That leaves H3
+  only the cases a small atlas doesn't have: a fact base too large to ship, or a
+  query needing live/secret server-only state. Likely empty for this use case — a
+  home, not a plan.
 - **Non-linear time:** git-like branching and grafting of database-programs;
   distribution. The hard problem; everything else assumes it away.
 - **Review / staleness workflow layer:** human and LLM review nodes; three-valued
