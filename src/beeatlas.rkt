@@ -36,11 +36,13 @@
          racket/string
          racket/system
          racket/port
+         racket/runtime-path
          "model.rkt"
          "exec.rkt"
          "relation-digest.rkt"
          "notes-digest.rkt"
          "data-quality.rkt"
+         "taxon-derive.rkt"  ; make-taxon-reasoning (st-ozp)
          "fan-out-key.rkt"
          "py-imports.rkt") ; make-data-import-scan (st-6ga/st-whi)
 
@@ -63,6 +65,14 @@
 ;; override with BEEATLAS_DIR to run this graph on another host (maderas, CI).
 (define BEEATLAS (or (getenv "BEEATLAS_DIR") "/Users/rainhead/dev/beeatlas"))
 (define DATA (string-append BEEATLAS "/data"))
+
+;; Taxon reasoning's three files (st-ozp; see the section further down for what
+;; each is for). These are STELIS's own paths, not beeatlas's — the first task
+;; whose code is the engine itself — so they resolve relative to this module and
+;; exist even where there is no beeatlas checkout.
+(define-runtime-path taxon-rules-source "taxon-inherit.rkt")
+(define-runtime-path taxon-seam-source "taxon-derive.rkt")
+(define-runtime-path taxon-traits-facts "../data/taxon-traits.rktd")
 
 ;; --- Deterministic build clock (ADR 0004, st-3mi) ---------------------------
 ;; SOURCE_DATE_EPOCH: the one build-wide clock a task embeds instead of wall-
@@ -133,7 +143,8 @@
     collectors.events.json collector_event_pages.json
     places.json places.geojson place_details.json
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
-    seasonality.json photos.json species_hosts.json higher_taxa.json))
+    seasonality.json photos.json species_hosts.json higher_taxa.json
+    species_reasoning.json))
 
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
 ;; land as a directory of per-entity files under EXPORT_DIR — species_maps writes
@@ -168,7 +179,12 @@
 ;; raw/fetched/authoritative inputs at fixed paths (taxa under DATA; the notes
 ;; store at its absolute NOTES_DB_PATH).
 (define raw-file-paths (hash 'taxa.csv.gz    (build-path DATA "raw" "taxa.csv.gz")
-                             'notes-store.db notes-store-path))
+                             'notes-store.db notes-store-path
+                             ;; the curated trait assertions (st-ozp) — checked
+                             ;; into STELIS, not beeatlas: they are Stelis's
+                             ;; domain knowledge about the taxonomy, not the
+                             ;; case study's pipeline data.
+                             'taxon-traits.rktd taxon-traits-facts))
 
 ;; Where beeatlas's file/dir artifacts physically live — the resolver caching uses
 ;; to content-hash inputs and to place/verify outputs. #f for artifacts with no
@@ -277,6 +293,22 @@
 ;; other task rebuilds whole. The engine still only goes partial when the task has
 ;; an existing 'dir output and a real per-key delta on a keyed input.
 (define beeatlas-partial-tasks '(notes-harvest))
+
+;; --- Taxon reasoning (st-ozp) -------------------------------------------------
+;; The Horizon 2 substrate beachhead (ADR 0008): a `derivation' node — a
+;; transform that runs INSIDE the engine — inheriting curated high-rank trait
+;; assertions down the taxonomic rank tree by Datalog closure, and publishing the
+;; proof as learner-facing prose.
+;;
+;; Three files, three roles, deliberately distinct:
+;;   taxon-inherit.rkt  the RULES  — engine source, so it is the node's `code'
+;;   taxon-derive.rkt   the SEAM   — likewise code (it decides what is read/written)
+;;   data/taxon-traits.rktd  the FACTS — an input ARTIFACT, not code: curated
+;;     data, so it belongs in the graph, shows up in --why, and is content-
+;;     addressed like the marts it reasons over.
+;; Editing the rules reports 'code-changed; editing the facts, 'input-changed.
+;; (The three paths are declared up by BEEATLAS/DATA, where the placement facts
+;; live — raw-file-paths needs the facts path before this point in the module.)
 
 ;; --- Integrity gate (st-0vz) ------------------------------------------------
 ;; The default fractional record-count swing that trips an integrity gate: a
@@ -448,6 +480,17 @@
                                 (list (list "collector" "ecdysis_data.occurrences" "recorded_by")
                                       (list "genus"     "ecdysis_data.occurrences" "genus"))
                                 (list "index.json" "determinations.xml")))
+   ;; --- taxon reasoning (st-ozp) ---
+   ;; The curated high-rank trait assertions. Hand-authored, no producer — the
+   ;; graph structurally cannot rebuild it, which IS the forward-only guarantee
+   ;; (same argument as notes-store.db; here the forward-only store is git).
+   ;; Modelled as an ARTIFACT rather than folded into the node's `code' so that
+   ;; a curator's edit reads as the data change it is: 'input-changed naming the
+   ;; file, visible in --why, and part of the graph snapshot.
+   (make-artifact 'taxon-traits.rktd            'file #:provenance 'authoritative)
+   ;; …and what the reasoning publishes: per-species derived traits, each with
+   ;; the proof of which ancestor carries it and a learner-facing sentence.
+   (make-artifact 'species_reasoning.json       'file)
    ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
    ;; enriched species.parquet species-export writes there. Distinct artifacts
    ;; from the sandbox originals so each has exactly one producer.
@@ -693,7 +736,24 @@
    ;; <updated> (was wall-clock), so two builds of a snapshot are byte-identical.
    (make-task 'feeds 'transform
               #:inputs '(ecdysis_data) #:outputs '(feeds)
-              #:invoke (py "feeds" "main"))))
+              #:invoke (py "feeds" "main"))
+   ;; --- taxon reasoning: the first transform INSIDE the engine (st-ozp) ---
+   ;; Reads the rank tree off the species mart and the curated assertions off the
+   ;; fact artifact; writes species_reasoning.json. species_traits.parquet is read
+   ;; only to CROSS-CHECK the result against Bee-Gap's independent per-species
+   ;; values (reported in the node's note, never published) — an honest input, and
+   ;; a degrading one: losing it costs the report, not the reasoning.
+   ;; Deliberately crosses "transformations stay external" (ADR 0008 decision 5):
+   ;; what earns Stelis-side is unbounded-depth closure with a native why. A
+   ;; bounded join or a bulk aggregation would still belong in dbt.
+   (make-task 'taxon-reasoning 'transform
+              #:inputs '(species.parquet species_traits.parquet taxon-traits.rktd)
+              #:outputs '(species_reasoning.json)
+              #:invoke (derivation
+                        "taxon-traits"
+                        (make-taxon-reasoning 'species.parquet 'species_traits.parquet
+                                              'taxon-traits.rktd 'species_reasoning.json)
+                        (list taxon-rules-source taxon-seam-source)))))
 
 ;; --- Code artifacts + import edges (st-whi) ----------------------------------
 ;; Every module a py entry transitively imports becomes a producerless 'code
