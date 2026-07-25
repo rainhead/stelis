@@ -26,6 +26,7 @@
 
 (provide (struct-out species-row)
          read-lineages
+         read-lineages*
          lineages->taxonomy
          species-index
          reasoning-jsexpr
@@ -76,6 +77,22 @@
     (species-row (first tup)
                  (if (string=? (second tup) "") (first tup) (second tup))
                  (map blank->false (drop tup 2)))))
+
+;; read-lineages* : path-string -> (listof species-row)
+;; read-lineages, refusing an EMPTY result. Zero rows is not a legitimate state
+;; here — a species mart with no species means the read matched nothing (a renamed
+;; column, an output format change that fails the arity guard, a truncated mart),
+;; and the reasoning would otherwise derive nothing, publish an artifact with an
+;; empty species map, and report success. The site loader is absence-tolerant, so
+;; every page would silently lose its reasoning on a GREEN build. Fail loudly
+;; instead: a failed node blocks its downstream and leaves the last good artifact.
+(define (read-lineages* parquet)
+  (define rows (read-lineages parquet))
+  (when (null? rows)
+    (error 'taxon-reasoning
+           "~a yielded no species rows — the taxonomy read matched nothing (renamed column? changed CLI output format?); refusing to publish an empty artifact"
+           parquet))
+  rows)
 
 (define (blank->false s) (if (string=? s "") #f s))
 
@@ -232,7 +249,7 @@
       (define facts (path-of facts-artifact))
       (define out (path-of output-artifact))
 
-      (define rows (read-lineages parquet))
+      (define rows (read-lineages* parquet))
       (define taxa (lineages->taxonomy rows))
       (define index (species-index rows))
       (define-values (glossary assertions) (read-fact-file facts))
@@ -252,14 +269,22 @@
                                (format "~a ~a" (first c) (second c)))
                              ", ")))]
         [else
+         ;; Everything fallible runs BEFORE the write. Writing first and then
+         ;; raising leaves the worst possible state: the node fails, so run-plan
+         ;; skips observe-outputs! and no receipt is stored — the PREVIOUS receipt
+         ;; survives, pointing at the OLD hash, while disk holds the NEW bytes.
+         ;; The next build sees unchanged inputs and an existing output (presence
+         ;; is all the cache checks, never content) and skips forever, with the
+         ;; receipt permanently disagreeing with the file.
          (define j (reasoning-jsexpr derived index assertions glossary))
+         (define-values (agree gaps bad uncovered)
+           (beegap-agreement derived index (beegap-nesting (path-of traits-artifact))))
+         (define note (summary (hash-count (hash-ref j 'species)) (length assertions)
+                               (length derived) agree gaps bad uncovered unresolved))
          (make-directory* (path-only* out))
          (call-with-output-file out #:exists 'replace
            (lambda (o) (write-json j o) (newline o)))
-         (define-values (agree gaps bad uncovered)
-           (beegap-agreement derived index (beegap-nesting (path-of traits-artifact))))
-         (values #t (summary (hash-count (hash-ref j 'species)) (length assertions) (length derived)
-                             agree gaps bad uncovered unresolved))]))))
+         (values #t note)]))))
 
 (define (summary species assertions derived agree gaps bad uncovered unresolved)
   (string-append

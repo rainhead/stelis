@@ -15,6 +15,7 @@
 ;; CI (which has neither).
 
 (require rackunit
+         racket/system
          racket/list
          racket/set
          racket/string
@@ -91,6 +92,23 @@
                "few Bee-Gap parasitic species escape every assertion")
    (printf "taxon-derive-integration-test: ~a species characterized · Bee-Gap ~a agree, ~a gap(s) filled · ~a uncovered ~s\n"
            (length species-facts) agree gaps (length uncovered) uncovered)
+
+   ;; --- an empty read must never publish quietly -------------------------------
+   ;; Zero rows is not a legitimate state: it means the read matched nothing (a
+   ;; renamed column, a CLI output-format change that fails the arity guard). The
+   ;; artifact would be written with an empty species map, the node would report
+   ;; success, and the absence-tolerant site loader would silently drop the
+   ;; reasoning from every page on a green build.
+   (let ([empty-parquet (build-path (find-system-path 'temp-dir) "stelis-empty-species.parquet")])
+     (void (system (format "duckdb -c \"COPY (SELECT * FROM read_parquet('~a') WHERE false) TO '~a' (FORMAT PARQUET)\" >/dev/null 2>&1"
+                           species-parquet empty-parquet)))
+     (when (file-exists? empty-parquet)
+       (check-equal? (read-lineages empty-parquet) '()
+                     "the plain reader returns empty — it does not raise")
+       (check-exn #rx"yielded no species rows"
+                  (lambda () (read-lineages* empty-parquet))
+                  "…but the guarded reader the node uses REFUSES to proceed")
+       (delete-file empty-parquet)))
 
    ;; --- the published sentence ------------------------------------------------------
    (define j (reasoning-jsexpr derived index assertions glossary))
