@@ -81,6 +81,13 @@ name WHY the boundary didn't re-ingest (the loader-side probe is beeatlas-29j) �
 [`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
 addressed by its gate's recorded input address (st-ysf), so dbt-build can skip ·
+[`corrections-drift.rkt`](src/corrections-drift.rkt) the operator gate behind the
+CORRECTION overlay (st-t4t): beeatlas holds local overrides of values an upstream
+source gets wrong (a dbt seed + a precedence arm — a bounded join, so by ADR 0008's
+gate it earns no substrate), and each records the `expected_upstream` it was written
+against. This node fails the build when upstream stops matching, so a correction
+cannot silently outlive the error it fixes — and catches the case dbt structurally
+cannot, a correction whose upstream row is gone ·
 [`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;
 first rule = the integrity gate (record-count swing vs. the previous build's
 observation blocks publish — an OPERATOR alarm, distinct from editorial flags) ·

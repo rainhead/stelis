@@ -27,9 +27,10 @@
                    'places-maps 'feeds 'place-marts)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
-(check-equal? (length ordered) 22 "22 tasks upstream of occurrences.db (+ the integrity gate, st-0vz)")
-(check-equal? (+ (length ordered) (set-count pruned)) 35
-              "35 tasks total (+ taxon-reasoning, the in-engine derivation, st-ozp)")
+(check-equal? (length ordered) 23
+              "23 tasks upstream of occurrences.db (+ the integrity gate st-0vz, + the correction drift gate st-t4t)")
+(check-equal? (+ (length ordered) (set-count pruned)) 36
+              "36 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t)")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download

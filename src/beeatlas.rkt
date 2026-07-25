@@ -42,6 +42,7 @@
          "relation-digest.rkt"
          "notes-digest.rkt"
          "data-quality.rkt"
+         "corrections-drift.rkt"  ; make-corrections-drift-check (st-t4t)
          "taxon-derive.rkt"  ; make-taxon-reasoning (st-ozp)
          "fan-out-key.rkt"
          "rkt-imports.rkt"  ; rkt-import-closure (st-egh)
@@ -179,7 +180,14 @@
 
 ;; raw/fetched/authoritative inputs at fixed paths (taxa under DATA; the notes
 ;; store at its absolute NOTES_DB_PATH).
+(define (seed-file name) (build-path DATA "dbt" "seeds" name))
+
 (define raw-file-paths (hash 'taxa.csv.gz    (build-path DATA "raw" "taxa.csv.gz")
+                             ;; the two seeds the correction drift gate compares
+                             ;; (st-t4t): the local overrides and the upstream
+                             ;; source they claim to be correcting.
+                             'bee_traits_corrections.csv (seed-file "bee_traits_corrections.csv")
+                             'bee_traits_beegap.csv      (seed-file "bee_traits_beegap.csv")
                              'notes-store.db notes-store-path
                              ;; the curated trait assertions (st-ozp) — checked
                              ;; into STELIS, not beeatlas: they are Stelis's
@@ -409,6 +417,12 @@
    (make-artifact 'places-validated         'token)
    (make-artifact 'dedup-verified           'token)
    (make-artifact 'inat-obs-count-verified  'token) ; integrity gate (st-0vz)
+   ;; the correction overlay's two seeds + the gate token they feed (st-t4t).
+   ;; Authored, forward-only overrides of values an upstream source gets wrong;
+   ;; git is their store, so neither has a producer here.
+   (make-artifact 'bee_traits_corrections.csv 'file #:provenance 'authoritative)
+   (make-artifact 'bee_traits_beegap.csv      'file)
+   (make-artifact 'corrections-verified       'token)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
    ;; topology-postprocess reads each raw region mart @export copy and writes a
@@ -579,12 +593,28 @@
               #:inputs '(places-validated geographies) #:outputs '(geographies_places)
               #:invoke (py "places_load" "load_places_step"))
 
+   ;; A correction overrides a CITED source, so it must not be able to outlive the
+   ;; error it fixes (st-t4t). This gate fails the build when an upstream value no
+   ;; longer matches the `expected_upstream` its correction was written against —
+   ;; upstream fixed the record, or changed it to something else. Blocking rather
+   ;; than advisory: if upstream has been fixed, continuing to override it would
+   ;; REINTRODUCE an error in the name of correctness. An in-process rule node, as
+   ;; the integrity gate is.
+   (make-task 'corrections-drift-gate 'gate
+              #:inputs '(bee_traits_corrections.csv bee_traits_beegap.csv)
+              #:outputs '(corrections-verified)
+              #:invoke (rule-check "corrections-drift"
+                                   (make-corrections-drift-check
+                                    (seed-file "bee_traits_corrections.csv")
+                                    (seed-file "bee_traits_beegap.csv"))))
+
    ;; --- the transform hinge: one opaque task, many outputs ---
    (make-task 'dbt-build 'transform
               #:inputs '(ecdysis_data ecdysis_links inat_observations inat_projects
                          waba_data anti-entropy-applied
                          checklist_resolved checklist-resolution-verified
                          inat_obs_data inat-obs-count-verified
+                         corrections-verified
                          canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
                          taxon_lineage_extended host_plant_lineage geographies_places)
