@@ -116,7 +116,45 @@
              (merge-taxa
               (append (lineage "Apidae" "Nomadinae" "Epeolini" "Triepeolus" "Triepeolus" #f)
                       (lineage "Apidae" "Nomadinae" "Epeolini" "Epeolus" "Triepeolus" #f))))
-           "the same rank+name under two parents would graft a subtree onto the wrong lineage")
+           "the same rank+name under two DIFFERENT lineages would graft a subtree wrongly")
+
+;; --- a rank GAP is not a homonym -------------------------------------------------
+;; One blank cell used to fail the whole node. Melecta from a complete row hangs
+;; off tribe:Melectini; from a row whose tribe cell is blank it hangs off
+;; subfamily:Apinae. The parents are on ONE lineage — the second row just carried
+;; less — so this resolves to the most specific parent rather than raising.
+
+(define gapped
+  (merge-taxa
+   (append (lineage "Apidae" "Apinae" "Melectini" "Melecta" #f "Melecta pacifica")
+           (lineage "Apidae" "Apinae" #f          "Melecta" #f "Melecta separata"))))
+(define melecta (findf (lambda (t) (eq? 'genus:Melecta (taxon-key t))) gapped))
+(check-equal? (taxon-parent melecta) 'tribe:Melectini
+              "a rank gap resolves to the MOST SPECIFIC parent, not an error")
+
+;; …and the trait still descends through the repaired chain to BOTH species
+(define gapped-rows
+  (inherited-traits
+   (taxonomy->theory gapped (list (assertion 'tribe "Melectini" 'nesting 'cleptoparasitic
+                                             "digger bees" #f)))))
+(check-equal? (sort (for/list ([r (in-list gapped-rows)]
+                               #:when (eq? 'species (taxon-rank
+                                                     (findf (lambda (t) (eq? (taxon-key t)
+                                                                             (inherited-subject r)))
+                                                            gapped))))
+                      (symbol->string (inherited-subject r)))
+                    string<?)
+              '("species:Melecta pacifica" "species:Melecta separata")
+              "…and the gapped row's species still inherits — the chain was not broken")
+
+;; the order the rows arrive in must not change the outcome
+(check-equal? (taxon-parent
+               (findf (lambda (t) (eq? 'genus:Melecta (taxon-key t)))
+                      (merge-taxa
+                       (append (lineage "Apidae" "Apinae" #f "Melecta" #f "Melecta separata")
+                               (lineage "Apidae" "Apinae" "Melectini" "Melecta" #f "Melecta pacifica")))))
+              'tribe:Melectini
+              "…whichever order the gapped and complete rows arrive in")
 
 ;; --- Conflicts: none yet, and detected when they arrive --------------------------
 

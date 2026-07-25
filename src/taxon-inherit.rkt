@@ -99,24 +99,76 @@
           (loop (cdr ps) k (cons (taxon k rank name parent) acc))])])))
 
 ;; merge-taxa : (listof taxon) -> (listof taxon)
-;; Every lineage's nodes into one deduplicated tree, sorted by key. A key that
-;; appears with two DIFFERENT parents is a homonym — the same rank+name sitting
-;; under two ancestors — and is an ERROR, not a pick-one: silently choosing a
-;; parent would graft a whole subtree onto the wrong lineage, and every trait
-;; asserted above it would then inherit to the wrong species. Loud beats subtle.
+;; Every lineage's nodes into one deduplicated tree, sorted by key.
+;;
+;; A key reached with two different parents is one of two very different things,
+;; and conflating them was a real defect:
+;;
+;;   A RANK GAP — the parents lie on ONE lineage. Melecta reached from complete
+;;   rows has parent tribe:Melectini; from a row whose `tribe' cell is blank it
+;;   has parent subfamily:Apinae. Nothing is ambiguous: the second row simply
+;;   carried less information, and Apinae is an ancestor of Melectini. This is
+;;   ordinary sparsity — what lineage->taxa's rank-skipping is FOR — so it
+;;   resolves to the most specific parent. Treating it as an error meant one
+;;   blank cell anywhere in the mart failed the node and staled the artifact for
+;;   every species.
+;;
+;;   A HOMONYM — the parents lie on DIFFERENT lineages, e.g. subgenus
+;;   "Triepeolus" under both genus:Triepeolus and genus:Epeolus. Here rank+name
+;;   genuinely is not a unique identity, and picking one would graft a whole
+;;   subtree onto the wrong lineage so every trait asserted above it inherits to
+;;   the wrong species. Still an ERROR. Loud beats subtle.
+;;
+;; The test that separates them: is every other candidate parent an ancestor of
+;; the most specific one? Keys are resolved coarsest-rank first, so a node's
+;; candidate parents are always settled before the node itself is judged.
 (define (merge-taxa taxa)
-  (define index (make-hash))
+  (define candidates (make-hash))
   (for ([t (in-list taxa)])
-    (define prior (hash-ref index (taxon-key t) #f))
+    (hash-update! candidates (taxon-key t) (lambda (v) (cons t v)) '()))
+  (define (rank-index r) (or (index-of RANKS r) -1))
+  (define settled (make-hash))
+  (define keys
+    (sort (hash-keys candidates) <
+          #:key (lambda (k) (rank-index (taxon-rank (car (hash-ref candidates k)))))))
+  (for ([k (in-list keys)])
+    (define ts (hash-ref candidates k))
+    (define parents (remove-duplicates (map taxon-parent ts)))
+    (hash-set! settled k
+               (if (null? (cdr parents))
+                   (car ts)
+                   (resolve-parent k ts parents settled rank-index))))
+  (sort (hash-values settled) symbol<? #:key taxon-key))
+
+;; The most specific candidate, once every other candidate is confirmed to sit on
+;; its ancestor chain. A #f parent (a lineage with no higher rank present at all)
+;; is vacuously on every chain — it asserts nothing about ancestry.
+(define (resolve-parent k ts parents settled rank-index)
+  (define best
+    (argmax (lambda (t) (let ([p (taxon-parent t)])
+                          (if p (rank-index (taxon-rank-of p settled)) -1)))
+            ts))
+  (define chain (parent-chain (taxon-parent best) settled))
+  (for ([p (in-list parents)])
+    (unless (or (not p) (equal? p (taxon-parent best)) (member p chain))
+      (error 'merge-taxa
+             "homonym: ~a appears under both ~a and ~a, which are on different lineages — rank+name is not a unique identity here"
+             k (or (taxon-parent best) '<root>) p)))
+  best)
+
+;; a settled node's rank, for comparing how specific two candidate parents are
+(define (taxon-rank-of k settled)
+  (define t (hash-ref settled k #f))
+  (if t (taxon-rank t) 'family))
+
+;; k and everything above it, using the already-settled parents
+(define (parent-chain k settled)
+  (let loop ([k k] [acc '()])
     (cond
-      [(not prior) (hash-set! index (taxon-key t) t)]
-      [(equal? (taxon-parent prior) (taxon-parent t)) (void)]
+      [(not k) (reverse acc)]
       [else
-       (error 'merge-taxa
-              "homonym: ~a appears under both ~a and ~a — rank+name is not a unique identity here"
-              (taxon-key t)
-              (or (taxon-parent prior) '<root>) (or (taxon-parent t) '<root>))]))
-  (sort (hash-values index) symbol<? #:key taxon-key))
+       (define t (hash-ref settled k #f))
+       (loop (and t (taxon-parent t)) (cons k acc))])))
 
 ;; --- The theory ------------------------------------------------------------------
 ;;
