@@ -23,7 +23,9 @@
 
 (provide (struct-out runtime)                       ; re-provided from model.rkt
          recipe recipe? recipe-runtime recipe-args recipe-code ; (st-top: types
-         (struct-out rule-check)                    ;  moved there for cache.rkt)
+         derivation derivation? derivation-label     ;  moved there for cache.rkt;
+         derivation-run derivation-code              ;  st-ozp likewise)
+         (struct-out rule-check)
          (struct-out check-context)
          recipe->argv
          shell-quote
@@ -46,6 +48,10 @@
 ;; layer content-addresses a recipe's code files, and exec.rkt requires cache.rkt,
 ;; so the types had to sit below both). Re-provided above; behavior stays here.
 
+;; The `derivation' TYPE (st-ozp) — the third invoke variant — also lives in
+;; model.rkt, for the same reason `recipe' does (cache.rkt content-addresses its
+;; code). Re-provided above; its dispatch is in print-plan-commands and run-plan.
+;;
 ;; An IN-PROCESS node (st-0vz): the "second Datalog application" runs a rule-set
 ;; as a build node instead of shelling out. Its invoke is a `rule-check' whose
 ;; `run' evaluates the rule (e.g. a Datalog data-quality check) in Racket and
@@ -95,6 +101,9 @@
       [(rule-check? rec)
        (printf "~a. ~a  [rule: ~a]~a\n     (in-process rule — no command)\n"
                (~i i) name (rule-check-label rec) tag)]
+      [(derivation? rec)
+       (printf "~a. ~a  [derivation: ~a]~a\n     (in-process derivation — no command)\n"
+               (~i i) name (derivation-label rec) tag)]
       [rec
        (define rt (hash-ref runtimes (recipe-runtime rec)))
        (printf "~a. ~a  [~a]~a\n     ~a\n"
@@ -310,6 +319,35 @@
     ;; (Named `boundary-report', not `source-report', so it doesn't shadow the
     ;; struct constructor for the rest of the loop body.)
     (define boundary-report #f)
+    ;; the previous entry, read BEFORE cache-store! overwrites it — the
+    ;; comparison basis for the output delta. Read up front (cheap, and before
+    ;; anything can run) so every producing arm shares one basis.
+    (define prior (and env (read-cache-entry (build-env-cache-dir env) name)))
+    ;; observe-outputs! : -> void
+    ;; The post-run bookkeeping every node that PRODUCED artifacts owes — whether
+    ;; it shelled out or derived in-process (st-ozp). Hash the outputs at both
+    ;; granularities (st-sds/st-6dv), snapshot keyed store inputs (st-2k9), write
+    ;; the cache receipt, then compute and report the early-cutoff delta (st-8ig).
+    ;; Going through here is what earns a new node kind cutoff, history, and
+    ;; observations for free — a rule-check, having no file outputs, does not.
+    (define (observe-outputs!)
+      (define-values (out-hashes out-keys) (output-snapshot+keys g name env))
+      (set! output-hashes out-hashes)
+      (set! output-key-hashes out-keys)
+      ;; snapshot the store input's per-key map at the same point the outputs
+      ;; are observed — the store is read-only during the build, so this is its
+      ;; state for this build (st-2k9).
+      (set! input-key-hashes (input-store-snapshot g name env))
+      (cache-store! (build-env-cache-dir env) name snap
+                    (env-output-paths env t) out-hashes)
+      (set! delta (compare-outputs prior out-hashes))
+      (when delta
+        (case (output-delta-status delta)
+          [(identical)
+           (printf "  ≡ outputs identical to last build — early cutoff: downstream sees unchanged inputs\n")]
+          [(changed)
+           (printf "  ± outputs changed: ~a\n"
+                   (string-join (map symbol->string (output-delta-details delta)) ", "))])))
     (define outcome
       (cond
         [(pair? blockers)
@@ -334,12 +372,22 @@
            (cache-store! (build-env-cache-dir env) name snap
                          (env-output-paths env t) '()))
          (if ok? 'ok 'failed)]
+        ;; an in-process DERIVATION (st-ozp): the rule runs here and WRITES the
+        ;; task's outputs, so unlike a rule-check it goes through the full
+        ;; producing-node bookkeeping — its artifact is observed, receipted, and
+        ;; cutoff-compared exactly like a subprocess's would be. The engine does
+        ;; not care that the transform happens to live inside it.
+        [(derivation? (task-invoke t))
+         (define d (task-invoke t))
+         (printf "\n▶ ~a  [derivation: ~a]\n" name (derivation-label d))
+         (define-values (ok? note)
+           ((derivation-run d) (check-context g name env state-dir)))
+         (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
+         (when (and ok? env) (observe-outputs!))
+         (if ok? 'ok 'failed)]
         [else
          (define rt (hash-ref runtimes (recipe-runtime (task-invoke t))))
          (printf "\n▶ ~a  [~a]\n" name (runtime-label rt))
-         ;; the previous entry, read before cache-store! overwrites it — the
-         ;; comparison basis for the output delta
-         (define prior (and env (read-cache-entry (build-env-cache-dir env) name)))
          ;; partial rebuild (st-pd1): the caller's (rebuild . removed) for this task,
          ;; or #f for a full rebuild. Only honored on a verified merge basis (st-243).
          (define rk-wanted (and env (rebuild-keys-of name)))
@@ -388,23 +436,7 @@
            (when rk
              (for ([d (in-list (keyed-dir-outputs g name env))])
                (prune-keys! d (cdr rk))))
-           (define-values (out-hashes out-keys) (output-snapshot+keys g name env))
-           (set! output-hashes out-hashes)
-           (set! output-key-hashes out-keys)
-           ;; snapshot the store input's per-key map at the same point the outputs
-           ;; are observed — the store is read-only during the build, so this is its
-           ;; state for this build (st-2k9).
-           (set! input-key-hashes (input-store-snapshot g name env))
-           (cache-store! (build-env-cache-dir env) name snap
-                         (env-output-paths env t) out-hashes)
-           (set! delta (compare-outputs prior out-hashes))
-           (when delta
-             (case (output-delta-status delta)
-               [(identical)
-                (printf "  ≡ outputs identical to last build — early cutoff: downstream sees unchanged inputs\n")]
-               [(changed)
-                (printf "  ± outputs changed: ~a\n"
-                        (string-join (map symbol->string (output-delta-details delta)) ", "))])))
+           (observe-outputs!))
          (if ok? 'ok 'failed)]))
     (hash-set! status name outcome)
     (set! records

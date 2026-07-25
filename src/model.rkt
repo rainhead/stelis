@@ -16,6 +16,8 @@
          (struct-out graph)
          (struct-out runtime)
          recipe recipe? recipe-runtime recipe-args recipe-code
+         derivation derivation? derivation-label derivation-run derivation-code
+         invoke-code
          recipe->argv
          make-artifact
          make-task
@@ -108,6 +110,42 @@
 (struct recipe (runtime args code) #:transparent
   #:omit-define-syntaxes #:constructor-name make-recipe)
 (define (recipe runtime args [code '()]) (make-recipe runtime args code))
+
+;; A DERIVATION (st-ozp): a task whose transform runs IN-PROCESS and produces an
+;; artifact. The third `invoke' variant, beside `recipe' (shell out) and
+;; `rule-check' (in-process, returns a gate verdict but writes nothing).
+;;
+;; This is the first transform that lives INSIDE the engine, and it crosses the
+;; Horizon 1 "transformations stay external" guardrail deliberately — ADR 0008
+;; decision 5: what earns Stelis-side is unbounded-depth closure with defeasible
+;; override and a native "why", and nothing else. Bounded joins and bulk
+;; aggregation stay in dbt/DuckDB.
+;;
+;; It lives here rather than in exec.rkt for the same reason `recipe' does: the
+;; cache layer content-addresses its `code', and exec.rkt requires cache.rkt.
+;;   label : string — short display tag (e.g. "taxon-traits")
+;;   run   : (check-context -> (values boolean string)) — writes the task's
+;;           outputs and returns a verdict plus a human note. #f FAILS the node,
+;;           blocking downstream exactly like a non-zero exit.
+;;   code  : (listof path-string) — the ENGINE SOURCE implementing the rule (the
+;;           rule module itself). When the transform is in-process, Stelis's own
+;;           source IS task code: editing the rules must invalidate the cache the
+;;           way editing a Python exporter does (st-top's argument, turned inward).
+;;           The authored FACTS are not here — they are an input ARTIFACT, so they
+;;           show up in --why and the graph snapshot as the data they are.
+(struct derivation (label run code) #:transparent
+  #:omit-define-syntaxes #:constructor-name make-derivation)
+(define (derivation label run [code '()]) (make-derivation label run code))
+
+;; invoke-code : any -> (listof path-string)
+;; The code files behind a task's `invoke', whatever variant it is — the one
+;; place that knows which variants carry code. '() for a variant that carries
+;; none (rule-check, or no invoke at all).
+(define (invoke-code inv)
+  (cond
+    [(recipe? inv)     (recipe-code inv)]
+    [(derivation? inv) (derivation-code inv)]
+    [else '()]))
 
 ;; recipe->argv : recipe (hash symbol->runtime) -> (listof string)
 ;; The full command: the runtime's launch prefix followed by the recipe's args.

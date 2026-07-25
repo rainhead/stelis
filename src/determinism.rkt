@@ -46,10 +46,19 @@
 ;; build: for a --from suffix (st-dtq), these are the suffix's external @export
 ;; inputs its scripts read from EXPORT_DIR, held fixed so the harness measures the
 ;; suffix's own determinism given identical upstream bytes.
+;;
+;; `make-context', (build-dir -> build-env?), supplies each build its own
+;; build-env. A SUBPROCESS task learns where to write from the EXPORT_DIR env var,
+;; so the harness needed none; an IN-PROCESS node (a rule-check or a derivation,
+;; st-0vz/st-ozp) resolves artifact paths through the build-env instead, and
+;; cannot run without one. The caller must point each env's CACHE dir inside that
+;; build's throwaway directory: a shared cache would let build 2 skip as "inputs
+;; unchanged" and quietly make the whole comparison vacuous.
 (define (verify-determinism g target runtimes
                             #:from [from #f]
                             #:extra-env [extra-env '()]
                             #:seed [seed '()]
+                            #:make-context [make-context #f]
                             #:out-file [out-file "occurrences.db"])
   (define-values (ordered _pruned) (plan g target))
   (define to-run
@@ -64,7 +73,8 @@
     (for ([s (in-list seed)])
       (copy-file (car s) (build-path dir (cdr s)) #t))
     (run-plan g to-run runtimes
-              #:env (cons (cons "EXPORT_DIR" (path->string dir)) extra-env))
+              #:env (cons (cons "EXPORT_DIR" (path->string dir)) extra-env)
+              #:context (and make-context (make-context dir)))
     (build-path dir out-file))
 
   (define f1 (build! 1))

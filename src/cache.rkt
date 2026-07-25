@@ -271,7 +271,7 @@
            [(file-exists? p) (cons (~a p) (file-sha1 p))]
            [else             (cons (~a p) #f)])))
      (define code-pairs
-       (append (append* (for/list ([p (in-list (if (recipe? inv) (recipe-code inv) '()))])
+       (append (append* (for/list ([p (in-list (invoke-code inv))])
                           (code-path-hashes p)))
                (filter cdr code-input-pairs)))
      (define unresolvable
@@ -314,10 +314,20 @@
 ;; (st-top's "runtime identity"). Otherwise the raw invoke value, as before.
 ;; Code file CONTENTS ride separately in snapshot-code-hashes; the code path
 ;; LIST is visible there too (as keys), so membership changes are always caught.
+;;
+;; A `derivation' (st-ozp) is fingerprinted by its LABEL and code paths, never by
+;; the raw struct: its `run' slot holds a PROCEDURE, and a procedure's printed
+;; form is an implementation detail — anything address- or gensym-flavoured in it
+;; would read as "recipe-changed" on every build and defeat caching entirely.
+;; What the procedure DOES is covered properly, by hashing its source (code-hashes).
 (define (invoke-basis inv runtimes)
-  (if (and (recipe? inv) runtimes (hash-ref runtimes (recipe-runtime inv) #f))
-      (~s (recipe->argv inv runtimes))
-      (~s inv)))
+  (cond
+    [(and (recipe? inv) runtimes (hash-ref runtimes (recipe-runtime inv) #f))
+     (~s (recipe->argv inv runtimes))]
+    [(derivation? inv)
+     (~s (list 'derivation (derivation-label inv)
+               (map ~a (derivation-code inv))))]
+    [else (~s inv)]))
 
 ;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)
 ;;              (or/c (symbol -> (or/c (listof (cons string string)) #f)) #f)

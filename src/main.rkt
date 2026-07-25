@@ -108,13 +108,16 @@
 ;; the one build environment every cache-aware mode shares. resolve-relation
 ;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
 ;; reaches the pre-dbt graph and not only the file edges around dbt-build.
-(define benv (make-build-env beeatlas-path (scratch-out-path) stelis-cache
-                             #:resolve-relation beeatlas-resolve-relation
-                             #:resolve-relation-columns beeatlas-resolve-relation-columns
-                             #:resolve-store-keys beeatlas-resolve-store-keys
-                             ;; st-top: recipe hashes cover the resolved argv +
-                             ;; named code files, so script/pin edits invalidate
-                             #:runtimes beeatlas-runtimes))
+(define (beeatlas-env export-dir cache-dir)
+  (make-build-env beeatlas-path export-dir cache-dir
+                  #:resolve-relation beeatlas-resolve-relation
+                  #:resolve-relation-columns beeatlas-resolve-relation-columns
+                  #:resolve-store-keys beeatlas-resolve-store-keys
+                  ;; st-top: recipe hashes cover the resolved argv +
+                  ;; named code files, so script/pin edits invalidate
+                  #:runtimes beeatlas-runtimes))
+
+(define benv (beeatlas-env (scratch-out-path) stelis-cache))
 
 ;; ADR 0004 (st-3mi): the deterministic build clock injected into every executed
 ;; task's hermetic env, so outputs that stamp a build time stay byte-stable.
@@ -385,10 +388,15 @@
    ;; scratch dir a prior --build/--run left behind — holding upstream fixed so we
    ;; measure the suffix's own determinism. (Full-plan --verify needs no seeding.)
    (define seed (verify-seeds beeatlas-graph to-run (scratch-out-path)))
+   ;; each build gets its own env, with its cache INSIDE that build's throwaway
+   ;; dir — an in-process node needs an env to resolve paths at all (st-ozp), and
+   ;; a shared cache would let build 2 skip and make the comparison vacuous.
    (exit (if (verify-determinism beeatlas-graph name beeatlas-runtimes
                                  #:from (from-task)
                                  #:seed seed
                                  #:out-file out-file
+                                 #:make-context
+                                 (lambda (dir) (beeatlas-env dir (build-path dir ".cache")))
                                  #:extra-env
                                  (list (cons "SOURCE_DATE_EPOCH"
                                              (beeatlas-source-date-epoch))))
