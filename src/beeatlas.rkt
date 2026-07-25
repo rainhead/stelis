@@ -44,6 +44,7 @@
          "data-quality.rkt"
          "taxon-derive.rkt"  ; make-taxon-reasoning (st-ozp)
          "fan-out-key.rkt"
+         "rkt-imports.rkt"  ; rkt-import-closure (st-egh)
          "py-imports.rkt") ; make-data-import-scan (st-6ga/st-whi)
 
 (provide beeatlas-graph
@@ -303,6 +304,12 @@
 ;; Three files, three roles, deliberately distinct:
 ;;   taxon-inherit.rkt  the RULES  — engine source, so it is the node's `code'
 ;;   taxon-derive.rkt   the SEAM   — likewise code (it decides what is read/written)
+;;     …and the node's code is the transitive CLOSURE of those two modules' local
+;;     requires (rkt-import-closure, st-egh), not the two files alone. Hand-listing
+;;     missed duckdb.rkt, through which every taxonomy read passes: an edit there
+;;     changed what the node does while leaving its recorded code-hashes untouched,
+;;     so it cache-skipped on stale output. Same argument as the Python side's
+;;     import scan — and the same fix.
 ;;   data/taxon-traits.rktd  the FACTS — an input ARTIFACT, not code: curated
 ;;     data, so it belongs in the graph, shows up in --why, and is content-
 ;;     addressed like the marts it reasons over.
@@ -753,7 +760,7 @@
                         "taxon-traits"
                         (make-taxon-reasoning 'species.parquet 'species_traits.parquet
                                               'taxon-traits.rktd 'species_reasoning.json)
-                        (list taxon-rules-source taxon-seam-source)))))
+                        (rkt-import-closure taxon-seam-source taxon-rules-source)))))
 
 ;; --- Code artifacts + import edges (st-whi) ----------------------------------
 ;; Every module a py entry transitively imports becomes a producerless 'code

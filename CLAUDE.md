@@ -100,6 +100,12 @@ live in the -wal); the per-key pairs are also recorded across builds as a trace
 species ·
 [`duckdb.rkt`](src/duckdb.rkt) the shared read-only DuckDB CLI runner (relation
 digests + parquet key extraction + the notes-store SQLite scan) ·
+[`rkt-imports.rkt`](src/rkt-imports.rkt) the same idea for RACKET (st-egh): the
+transitive closure of a module's local (string) requires, so a `derivation` node's
+code covers what its modules actually depend on. Hand-listing missed duckdb.rkt —
+an edit there changed every taxonomy read while the recorded code-hashes stayed
+put, so the node cache-skipped on stale output. Collection requires are not
+followed (pinned by the package install, not source here) ·
 [`py-imports.rkt`](src/py-imports.rkt) scans a script's LOCAL imports at
 graph-authoring time (st-6ga: a regex line scan; basename-set membership rejects
 installed packages + docstring prose). Its DIRECT lookup authors the st-whi
