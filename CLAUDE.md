@@ -65,8 +65,11 @@ Data only — the 11ty render left the graph in Model Y (ADR 0007 Amendment,
 st-5em): the site build is top-level in beeatlas and consumes the export via
 `npm run fetch-data` ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
-subprocess executor, plus in-process `rule-check` nodes — a rule evaluated in
-Racket as a graph node, gating its downstream (st-0vz). `run-plan`'s
+subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
+rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and
+`derivation` (st-ozp), which likewise runs in Racket but PRODUCES an artifact, so
+it goes through the full producing-node path (observed, receipted, cutoff-compared)
+and its `code` is Stelis's own source, making a rule edit report `'code-changed`. `run-plan`'s
 `#:rebuild-keys-of` does TARGETED execution (st-pd1): a partial-capable task
 rebuilds only changed keys via `STELIS_REBUILD_KEYS`, `prune-keys!` retracts
 removed ones, and partial mode needs the on-disk dir to MATCH the last clean
@@ -128,6 +131,18 @@ history-tail vs a live on-disk map). Per-key staleness first, no Z-sets yet ·
 `'input-changed` decision into that named delta for a PENDING build, so `--why` /
 `--explain` name WHICH keys of a changed input are about to move (`explain.rkt`/
 `decision->string` stay pure; this is the only IO seam) ·
+[`taxon-inherit.rkt`](src/taxon-inherit.rkt) the H2 reasoning beachhead's PURE core
+(st-ozp, ADR 0008): curated trait assertions at a high rank inherited down the
+taxonomic rank tree by Datalog closure, each derived fact carrying the asserting
+ancestor as its proof. The closure is phrased DOWNWARD (`covers(S,X)`, source bound
+first) — 40× faster than the obvious upward form on the real taxonomy, and the
+truer reading of what an assertion does. Theory answers structure; the curator's
+learner-facing note stays beside it, as in provenance-datalog ·
+[`taxon-derive.rkt`](src/taxon-derive.rkt) its IO seam (the delta/delta-explain
+idiom): lineages off the species mart via DuckDB, assertions off the checked-in
+[`data/taxon-traits.rktd`](data/taxon-traits.rktd) (an input ARTIFACT, so a curator
+edit reads as `'input-changed`), out to `species_reasoning.json`; refuses to publish
+a conflicted result and cross-checks coverage against Bee-Gap ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules,
 plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
@@ -146,7 +161,11 @@ in code:
 
 - **Transformations stay external (through Horizon 1).** Orchestrate dlt / dbt /
   exporters; do **not** reimplement their logic in Racket. (Delta propagation
-  that touches this is Horizon 2.)
+  that touches this is Horizon 2.) **One deliberate exception, ADR 0008 D5:** a
+  `derivation` node runs a transform inside the engine, and what earns that is
+  narrow — unbounded-depth closure with defeasible override and a native "why"
+  (taxon reasoning, st-ozp). A bounded join or a bulk aggregation still goes to
+  dbt/DuckDB; adding a second derivation needs the same argument made afresh.
 - **Derived vs. authoritative.** Derived outputs are safe to destroy and rebuild;
   authoritative state is forward-only — **never rebuild it from scratch**
   (migrations only).

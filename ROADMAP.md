@@ -85,11 +85,21 @@ batch→streaming arc completes and the browser gets fed.*
   taxonomic-rank **inheritance** (unbounded-depth closure, most-specific-wins) →
   typing the existing `bee_specialist_hosts` / `bee_parasite_hosts` edges over
   those traits → an ecological **at-risk closure** (necessity through obligate
-  edges only). Runs as Datalog `rule-check` nodes reusing `provenance-datalog.rkt`,
-  so each derived trait carries a **proof tree** — published, baked into pages as
-  learner-facing "why" (the operator `--why` engine, audience flipped). Beachhead:
-  st-ozp. Render-by-query is *not* pulled forward — explanations are precomputed
-  and baked, so the H3 substrate below keeps its deferral.
+  edges only), so each derived trait carries its **proof** — published, baked into
+  pages as learner-facing "why" (the operator `--why` engine, audience flipped).
+  Render-by-query is *not* pulled forward — explanations are precomputed and
+  baked, so the H3 substrate below keeps its deferral.
+  **Inheritance (st-ozp) is delivered:** a new `derivation` invoke variant runs a
+  transform *inside* the engine (`taxon-inherit.rkt` rules + `taxon-derive.rkt`
+  seam), and `taxon-reasoning` publishes `species_reasoning.json` from curated
+  assertions in `data/taxon-traits.rktd`. Seven assertions — at subfamily, tribe,
+  genus, and subgenus rank, across three families — characterize 106 species;
+  Bee-Gap independently agrees on 95 and has no value for the other 11 (the
+  coverage win, measured). The cross-check runs BOTH ways: it also names species
+  Bee-Gap calls parasitic that *no* assertion reaches, which is how a bad source
+  record surfaces. Most-specific-wins is still deferred (no real lineage conflicts
+  yet; `trait-conflicts` blocks publication the day one appears). Next: type the
+  existing edges over these characterizations, then the at-risk closure.
 - **Demand-directed evaluation** via magic sets, if/when goal-directedness is
   needed.
 - **Compile-to-TS emission:** specialized projections compiled to small
