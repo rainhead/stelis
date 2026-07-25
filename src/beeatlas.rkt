@@ -188,6 +188,7 @@
                              ;; source they claim to be correcting.
                              'bee_traits_corrections.csv (seed-file "bee_traits_corrections.csv")
                              'bee_traits_beegap.csv      (seed-file "bee_traits_beegap.csv")
+                             'bee_parasite_hosts.csv     (seed-file "bee_parasite_hosts.csv")
                              'notes-store.db notes-store-path
                              ;; the curated trait assertions (st-ozp) — checked
                              ;; into STELIS, not beeatlas: they are Stelis's
@@ -422,6 +423,7 @@
    ;; git is their store, so neither has a producer here.
    (make-artifact 'bee_traits_corrections.csv 'file #:provenance 'authoritative)
    (make-artifact 'bee_traits_beegap.csv      'file)
+   (make-artifact 'bee_parasite_hosts.csv     'file)
    (make-artifact 'corrections-verified       'token)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
@@ -601,12 +603,14 @@
    ;; REINTRODUCE an error in the name of correctness. An in-process rule node, as
    ;; the integrity gate is.
    (make-task 'corrections-drift-gate 'gate
-              #:inputs '(bee_traits_corrections.csv bee_traits_beegap.csv)
+              #:inputs '(bee_traits_corrections.csv bee_traits_beegap.csv
+                         bee_parasite_hosts.csv)
               #:outputs '(corrections-verified)
               #:invoke (rule-check "corrections-drift"
                                    (make-corrections-drift-check
                                     (seed-file "bee_traits_corrections.csv")
-                                    (seed-file "bee_traits_beegap.csv"))))
+                                    (seed-file "bee_traits_beegap.csv")
+                                    (seed-file "bee_parasite_hosts.csv"))))
 
    ;; --- the transform hinge: one opaque task, many outputs ---
    (make-task 'dbt-build 'transform

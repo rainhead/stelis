@@ -45,6 +45,7 @@
   [else
    (define tmp (make-temporary-file "stelis-drift-~a" 'directory))
    (define upstream (build-path tmp "upstream.csv"))
+   (define parasites (build-path tmp "parasites.csv"))
    (define corrections (build-path tmp "corrections.csv"))
    (display-to-file
     (string-join
@@ -53,6 +54,16 @@
        "\"osmia lignaria\",\"native\",\"Cavity\",\"Solitary\",\"Generalist\"") "\n")
     upstream #:exists 'replace)
 
+   ;; the SECOND upstream source: host-bee assertions live in their own seed, so a
+   ;; host_bees correction must be compared against THAT, aggregated exactly as
+   ;; species_traits.sql aggregates it.
+   (display-to-file
+    (string-join
+     '("parasite,host_genus,host_species,host_taxon"
+       "\"nomada bella\",\"andrena\",\"\",\"Andrena\""
+       "\"nomada bella\",\"andrena\",\"imitatrix\",\"Andrena imitatrix\"") "\n")
+    parasites #:exists 'replace)
+
    (define (corrections! . rows)
      (display-to-file
       (string-join (cons "canonical_name,trait,action,expected_upstream,corrected_value,reason" rows) "\n")
@@ -60,17 +71,17 @@
 
    ;; matching expectation: no drift
    (corrections! "\"bombus vosnesenskii\",\"sociality\",\"replace\",\"Parasitic\",\"Primitively Eusocial\",\"why\"")
-   (check-equal? (read-drift-rows corrections upstream) '()
+   (check-equal? (read-drift-rows corrections upstream parasites) '()
                  "a correction whose expected value still matches upstream is not drift")
 
    ;; the reason prose contains commas and an em dash — the parse must survive it
    (corrections! "\"bombus vosnesenskii\",\"sociality\",\"replace\",\"Parasitic\",\"Primitively Eusocial\",\"Wrong upstream, confirmed at source — not a cuckoo, and not close.\"")
-   (check-equal? (read-drift-rows corrections upstream) '()
+   (check-equal? (read-drift-rows corrections upstream parasites) '()
                  "quoted prose with commas and dashes does not derail the comparison")
 
    ;; upstream changed underneath the correction
    (corrections! "\"bombus vosnesenskii\",\"sociality\",\"replace\",\"Solitary\",\"Primitively Eusocial\",\"why\"")
-   (define moved (read-drift-rows corrections upstream))
+   (define moved (read-drift-rows corrections upstream parasites))
    (check-equal? (length moved) 1)
    (check-equal? (drift-expected (car moved)) "Solitary")
    (check-equal? (drift-actual (car moved)) "Parasitic"
@@ -80,7 +91,7 @@
    ;; row silently drops out of species_traits — nothing to override — so only this
    ;; gate can notice it.
    (corrections! "\"bombus nonesuch\",\"nesting\",\"retract\",\"Host Nest\",\"\",\"typo in the key\"")
-   (define orphan (read-drift-rows corrections upstream))
+   (define orphan (read-drift-rows corrections upstream parasites))
    (check-equal? (length orphan) 1)
    (check-equal? (drift-actual (car orphan)) ""
                  "a correction naming a nonexistent upstream row is drift, not silence")
@@ -88,10 +99,21 @@
    ;; a trait column the gate does not know about compares as "" and surfaces rather
    ;; than passing quietly
    (corrections! "\"osmia lignaria\",\"wingspan\",\"replace\",\"12mm\",\"11mm\",\"why\"")
-   (check-equal? (length (read-drift-rows corrections upstream)) 1
+   (check-equal? (length (read-drift-rows corrections upstream parasites)) 1
                  "an unrecognized trait column drifts rather than silently passing")
 
-   (check-false (read-drift-rows (build-path tmp "absent.csv") upstream)
+   ;; host_bees resolves against the PARASITE seed, aggregated exactly as
+   ;; species_traits.sql aggregates it — a second upstream source, so the
+   ;; comparison cannot just look at one file.
+   (corrections! "\"nomada bella\",\"host_bees\",\"retract\",\"Andrena, Andrena imitatrix\",\"\",\"why\"")
+   (check-equal? (read-drift-rows corrections upstream parasites) '()
+                 "a host_bees expectation matches the aggregated parasite seed, not the trait seed")
+
+   (corrections! "\"nomada bella\",\"host_bees\",\"retract\",\"Andrena\",\"\",\"why\"")
+   (check-equal? (length (read-drift-rows corrections upstream parasites)) 1
+                 "…and a partial expectation drifts: the AGGREGATE is what the mart publishes")
+
+   (check-false (read-drift-rows (build-path tmp "absent.csv") upstream parasites)
                 "an unreadable seed yields #f — distinguishable from 'nothing drifted'")
 
    (delete-directory/files tmp)])
