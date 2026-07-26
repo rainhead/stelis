@@ -268,6 +268,7 @@
      '("inaturalist_data.canonical_to_taxon_id")] ; shared table — see note above
     [(taxon_lineage_extended) '("inaturalist_data.taxon_lineage_extended")]
     [(host_plant_lineage)     '("inaturalist_data.host_plant_lineage")]
+    [(dem_elevations)         '("dem_data.elevations")]
     [(geographies_places)     '("geographies.places")]
     ;; county GEOMETRY species_maps reads straight from the duckdb (st-4cm edge fix)
     [(geographies_us_counties) '("geographies.us_counties")]
@@ -408,6 +409,10 @@
    (make-artifact 'inactive_remaps          'db-relation)
    (make-artifact 'taxon_lineage_extended   'db-relation)
    (make-artifact 'host_plant_lineage       'db-relation)
+   ;; coordinate -> DEM elevation lookup (beeatlas-sn8). A CACHE that only grows:
+   ;; dem_elevation.py samples a coordinate once and never re-reads it, so this
+   ;; relation's digest changes exactly when new coordinates enter the sources.
+   (make-artifact 'dem_elevations           'db-relation)
    (make-artifact 'geographies_places       'db-relation)
    (make-artifact 'geographies_us_counties  'db-relation) ; county geometry (st-4cm)
    (make-artifact 'geographies              'external)
@@ -591,6 +596,31 @@
    (make-task 'places-validation 'gate
               #:inputs '(geographies) #:outputs '(places-validated)
               #:invoke (py "places_validation" "validate_places_step"))
+
+   ;; DEM elevation backfill (beeatlas-sn8): samples USGS 3DEP for every
+   ;; coordinate in the four source relations that feed int_combined's
+   ;; NON-checklist arms, and caches the result in dem_data.elevations. dbt reads
+   ;; it through stg_dem__elevations, so this MUST precede dbt-build — declared
+   ;; the Stelis way, as an artifact dbt-build lists in its #:inputs, never as an
+   ;; assumption about list order. (Same class of hazard as the ecdysis→checklist
+   ;; edge below: run.py's linear STEPS enforced order implicitly; here it is an
+   ;; explicit edge or it is nothing.)
+   ;;
+   ;; The four inputs are exactly the seed relations dem_elevation._SEED_SOURCES
+   ;; reads — so a re-ingest that introduces new coordinates re-runs this step.
+   ;; Note inat_observations (inaturalist_data) AND waba_data (inaturalist_waba_
+   ;; data) are BOTH here: they are different relations feeding different arms.
+   ;;
+   ;; 'boundary, not 'transform, on two grounds. It reaches outside the build for
+   ;; data (the ingestion-boundary rule), and a boundary always runs — which is
+   ;; what makes a deferred tile self-heal. A tile that 5xx'd is recorded nowhere,
+   ;; so its coordinates stay unsampled; under 'transform an unchanged-input build
+   ;; would skip the step and strand them until the sources happened to move.
+   ;; Running unconditionally costs one query when there is nothing new to sample.
+   (make-task 'dem-elevation 'boundary
+              #:inputs '(ecdysis_data inat_observations waba_data inat_obs_data)
+              #:outputs '(dem_elevations)
+              #:invoke (py "dem_elevation" "load_dem_elevations"))
    (make-task 'places-load 'transform
               #:inputs '(places-validated geographies) #:outputs '(geographies_places)
               #:invoke (py "places_load" "load_places_step"))
@@ -621,7 +651,8 @@
                          corrections-verified
                          canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
-                         taxon_lineage_extended host_plant_lineage geographies_places)
+                         taxon_lineage_extended host_plant_lineage geographies_places
+                         dem_elevations)
               #:outputs sandbox-marts   ; exactly the nine sandbox marts (st-bft)
               ;; Recipe is `run.sh build' only — it writes the marts to the dbt
               ;; sandbox. run.py's _run_dbt_build ALSO copies six of them to
