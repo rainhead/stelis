@@ -102,7 +102,22 @@
       (build-path (find-system-path 'temp-dir) "stelis-out")))
 (define (scratch-out) (define out (scratch-out-path)) (make-directory* out) out)
 
-(define stelis-state (build-path ".stelis"))
+;; Build STATE — the observation history, its graph snapshots, and the
+;; input-addressed cache (st-7wu). This belongs to the PROJECT being built, not to
+;; the engine checkout that happens to be cwd: history.rkt and cache.rkt are already
+;; parameterized on a state dir, and this was the last constant holding the two
+;; together. STELIS_STATE_DIR relocates them as a unit, which is what lets an engine
+;; checkout be updated or replaced without touching a project's record of itself.
+;;
+;; The default stays cwd-relative deliberately. `.stelis/` is NOT uniformly derived:
+;; the cache is disposable, but the observation history is append-only and not
+;; reconstructible, and history.rkt treats a missing history as a legal first run —
+;; so changing where we look by default would start a silent, empty timeline rather
+;; than fail. Relocation is an operator action (mv the dir, set the env), never a
+;; side effect of upgrading the engine.
+(define stelis-state
+  (let ([env (getenv "STELIS_STATE_DIR")])
+    (if (and env (not (string=? env ""))) (string->path env) (build-path ".stelis"))))
 (define stelis-cache (build-path stelis-state "cache"))
 
 ;; the one build environment every cache-aware mode shares. resolve-relation

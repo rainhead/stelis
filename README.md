@@ -97,9 +97,17 @@ never passed here stays non-addressable, as do externals — those force a
 conservative rerun.
 
 Outputs land in an explicit export directory (a scratch dir under the system
-temp dir, printed at build time). Build state — the input-addressed cache and
-the last-build trace — lives in `.stelis/`, which is derived and disposable:
-delete it and the only consequence is a full rebuild.
+temp dir, printed at build time). Build state lives in `.stelis/` — cwd-relative
+by default, relocated as a unit by `STELIS_STATE_DIR`, because the state belongs
+to the project being built rather than to the engine checkout that happens to be
+cwd (st-7wu).
+
+Its two halves are not equally disposable. The input-addressed
+[cache](src/cache.rkt) is derived: delete it and the only consequence is a full
+rebuild. The [observation history](src/history.rkt) is append-only and *not*
+reconstructible — it is the record delta propagation folds over — and a missing
+history reads as a legal first run rather than an error, so it is lost quietly.
+Move it deliberately; don't let an engine upgrade decide where it lives.
 
 ## Tests
 
