@@ -146,6 +146,7 @@
     places.json places.geojson place_details.json
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
     seasonality.json photos.json species_hosts.json higher_taxa.json
+    taxon_presence.json
     species_reasoning.json))
 
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
@@ -445,6 +446,9 @@
    ;; headline target but these four are equally real outputs (the edge-verify
    ;; harness, st-qp7, surfaced them as undeclared writes on the slice-1 edge).
    (make-artifact 'seasonality.json             'file)
+   ;; county/ecoregion -> taxon presence for the static /species/ pickers
+   ;; (beeatlas-0of.2). Derived and rebuildable; published via the slim manifest.
+   (make-artifact 'taxon_presence.json          'file)
    (make-artifact 'photos.json                  'file)
    (make-artifact 'species_hosts.json           'file)
    (make-artifact 'higher_taxa.json             'file)
@@ -727,6 +731,23 @@
               #:outputs '(species.json species.parquet@export
                           seasonality.json photos.json species_hosts.json higher_taxa.json)
               #:invoke (py "species_export" "main"))
+   ;; taxon-presence-export (beeatlas-0of.2): county/ecoregion -> taxon presence
+   ;; with evidence bits, for the static /species/ pickers.
+   ;;
+   ;; Reads occurrences.parquet@export — the PLACED copy in EXPORT_DIR, not the
+   ;; sandbox mart. The bead sketched this node on generate-sqlite (which reads the
+   ;; sandbox), but this export sets ASSETS_DIR := EXPORT_DIR like collectors-export
+   ;; does, so @export is the edge that matches what it actually opens (Pitfall 5).
+   ;; It needs no taxa.csv.gz: presence is keyed on taxon_id straight from the mart,
+   ;; with no name or lineage lookup.
+   ;;
+   ;; ONE output, and that is the whole list — the species-export scar above (a
+   ;; slice-1 edge declaring 2 of the 6 files it wrote, with edge-verify catching
+   ;; the rest as undeclared writes) is why this is stated rather than assumed.
+   (make-task 'taxon-presence-export 'transform
+              #:inputs '(occurrences.parquet@export)
+              #:outputs '(taxon_presence.json)
+              #:invoke (py "taxon_presence_export" "main"))
    ;; species_maps reads THREE EXPORT_DIR @export parquets — it never opens
    ;; species.json, so the slice-1 edge (declaring species.json) was wrong (st-4cm):
    ;;   species.parquet@export     enriched slug + genus/subgenus/tribe/subfamily membership
