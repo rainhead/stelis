@@ -222,7 +222,7 @@ bd close <id>           # Complete work
 - This tracks project *work items*. Persistent facts about the user/project still
   go in the file-based memory (see the memory section of the global CLAUDE.md), not
   `bd remember` — the two don't overlap.
-- **Commit and push only when asked** (global rule). Beads' default "mandatory
-  push" session protocol does **not** apply here; the user drives commits and
+- **Push only when asked** (global rule). Beads' default "mandatory
+  push" session protocol does **not** apply here; the user drives
   pushes. `bd`'s local DB works fully offline.
 <!-- END BEADS INTEGRATION -->
