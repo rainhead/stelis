@@ -115,10 +115,28 @@
 ;; so changing where we look by default would start a silent, empty timeline rather
 ;; than fail. Relocation is an operator action (mv the dir, set the env), never a
 ;; side effect of upgrading the engine.
-(define stelis-state
+(define stelis-state-env
   (let ([env (getenv "STELIS_STATE_DIR")])
-    (if (and env (not (string=? env ""))) (string->path env) (build-path ".stelis"))))
+    (and env (not (string=? env "")) env)))
+(define stelis-state
+  (if stelis-state-env (string->path stelis-state-env) (build-path ".stelis")))
 (define stelis-cache (build-path stelis-state "cache"))
+
+;; An empty state dir is INDISTINGUISHABLE from a never-built one — history.rkt
+;; treats a missing history as a legal first run, by design. That is fine while the
+;; default is the only location, and misleading the moment a history is relocated:
+;; the reader is told "run --build first" when the builds exist, elsewhere. A
+;; relocated deployment sets STELIS_STATE_DIR in its pipeline, but an INTERACTIVE
+;; shell on the same host does not inherit it, which is exactly where this bites.
+;; So whenever we report nothing found, say which of the two dirs we resolved and
+;; how — never just that it was empty.
+(define (state-dir-note)
+  (if stelis-state-env
+      (format "  (STELIS_STATE_DIR=~a)\n" stelis-state-env)
+      (string-append
+       "  STELIS_STATE_DIR is unset, so this path is relative to the current\n"
+       "  directory. If the history was relocated, point at it:\n"
+       "    STELIS_STATE_DIR=<dir> racket src/main.rkt --history\n")))
 
 ;; the one build environment every cache-aware mode shares. resolve-relation
 ;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
@@ -219,8 +237,8 @@
    (define bld (history-last stelis-state))
    (cond
      [(not bld)
-      (printf "No usable build history under ~a/ — run --build first.\n"
-              (path->string stelis-state))
+      (printf "No usable build history under ~a/ — run --build first.\n~a"
+              (path->string stelis-state) (state-dir-note))
       (exit 1)]
      [else
       (define records (build-record-records bld))
@@ -273,8 +291,8 @@
    (define builds (history-load stelis-state))
    (cond
      [(null? builds)
-      (printf "No build history under ~a/ — run --build first.\n"
-              (path->string stelis-state))
+      (printf "No build history under ~a/ — run --build first.\n~a"
+              (path->string stelis-state) (state-dir-note))
       (exit 1)]
      [(not name)
       (printf "Build history — ~a build(s), in append order:\n\n" (length builds))
