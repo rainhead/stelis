@@ -708,12 +708,23 @@
    ;; runs. _meta.built_at now reads the ADR-0004 SOURCE_DATE_EPOCH clock stelis
    ;; injects (beeatlas-8td SITE 1, beeatlas d9ff9e26), and the geometry was already
    ;; stable — so two stelis runs of this task reproduce identical bytes.
+   ;; `#:code' carries data/package-lock.json (st-vue): mapshaper is a SUBPROCESS
+   ;; binary, so the py-imports scan cannot see it, yet its `-simplify' output is
+   ;; algorithm-dependent — a version bump moves the geometry while the recorded
+   ;; code-hashes sit still and the task cache-skips on stale output. That is the
+   ;; st-egh/duckdb.rkt shape exactly. Declaring the ROOT lockfile was never
+   ;; affordable (it moved for every site dependency bump, rebuilding geometry for
+   ;; unrelated reasons); beeatlas-dqh split mapshaper into data/package.json, so
+   ;; this lockfile now pins one tool used by one task — and dependabot watches
+   ;; /data weekly, so it WILL move. Rebuild cost is ~2s of mapshaper on maderas
+   ;; against real inputs, and these three artifacts are terminal here.
    (make-task 'topology-postprocess 'transform
               #:inputs '(counties.geojson@export ecoregions.geojson@export
                          wilderness.geojson@export)
               #:outputs '(counties.clean.geojson ecoregions.clean.geojson
                           wilderness.clean.geojson)
-              #:invoke (py "topology_postprocess" "main"))
+              #:invoke (py "topology_postprocess" "main"
+                           #:code '("package-lock.json")))
    ;; species_export.main reads FOUR dbt-mart parquets from the sandbox and
    ;; writes species.json (among others) to EXPORT_DIR. occurrences.parquet is a
    ;; hard requirement (per-occurrence seasonality accumulation), not optional —
