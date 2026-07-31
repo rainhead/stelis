@@ -15,6 +15,7 @@
 ;;   racket src/main.rkt --build --from notes-harvest --export-dir DIR notes  ; CRUD: targeted notes into a served dir
 ;;   racket src/main.rkt --history                         ; list every recorded build
 ;;   racket src/main.rkt --history species-maps            ; one artifact's hash timeline
+;;   racket src/main.rkt --moved-keys notes                ; which keys moved in the LAST build (machine-readable)
 
 (require racket/cmdline
          racket/set
@@ -34,7 +35,7 @@
          "delta-explain.rkt"
          "determinism.rkt")
 
-(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history
+(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history | 'moved-keys
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
@@ -58,6 +59,8 @@
                  (mode 'verify)]
    [("--history") "browse the build history: all builds, or one artifact's hash timeline"
                   (mode 'history)]
+   [("--moved-keys") "print the keys of ARTIFACT that moved in the LAST build, one per line (for a caller that rebuilds per key)"
+                     (mode 'moved-keys)]
    #:once-each
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
@@ -359,6 +362,58 @@
            (printf "  build ~a  ~a ~a   (by ~a)\n"
                    (observation-build o) glyph (short-hash h)
                    (trace-record-task (observation-record o))))])])]
+
+  ;; --- which keys moved in the last build? (machine-readable) -------------
+  ;; --history's per-key timeline, reduced to the one question a per-key REBUILDER
+  ;; asks: of this keyed artifact, which members did the build I just ran move? The
+  ;; answer goes on stdout as bare keys, one per line, and nothing else — so a shell
+  ;; can feed it straight to a targeted consumer. Everything else is stderr.
+  ;;
+  ;; This is the read side of the same seam --explain/--why decorate prospectively
+  ;; (delta-explain.rkt) and #:rebuild-keys-of drives internally (st-pd1): a keyed
+  ;; input's delta already steers a targeted rebuild INSIDE the engine, and this
+  ;; exposes the same fact to a targeted step OUTSIDE it — beeatlas's scoped 11ty
+  ;; render (beeatlas-4oa), whose key set must agree with the harvest's or a note
+  ;; publish bakes the wrong page.
+  ;;
+  ;; EXIT CODES ARE THE CONTRACT, because "nothing moved" and "I cannot tell you"
+  ;; are opposite instructions to a caller who will otherwise do a partial rebuild:
+  ;;   0 + keys   — these moved
+  ;;   0 + silence — nothing moved (the producer cache-skipped, or re-produced
+  ;;                 byte-identical content). A targeted rebuild of zero keys is
+  ;;                 correct and is the point of early cutoff.
+  ;;   1 + reason — no basis for an answer. The caller must fall back to a FULL
+  ;;                rebuild, never to the empty set.
+  [(eq? (mode) 'moved-keys)
+   (define builds (history-load stelis-state))
+   (when (null? builds)
+     (eprintf "~a — no build history under ~a/; cannot say what moved.\n~a"
+              name (path->string stelis-state) (state-dir-note))
+     (exit 1))
+   ;; A name that isn't in the graph is a typo, and must never reach the delta —
+   ;; there it would be indistinguishable from a real artifact with no timeline.
+   ;; Both refuse, but only here can we say WHICH mistake it was.
+   (unless (hash-ref (graph-artifacts beeatlas-graph) name #f)
+     (eprintf "~a — no artifact by that name in the graph.\n" name)
+     (exit 1))
+   (define kobs (history-key-observations stelis-state name))
+   (define d (build-key-delta name kobs (length builds)))
+   (cond
+     [(eq? d 'not-produced)
+      ;; Silence on stdout is the answer. Say why on stderr so an operator running
+      ;; this by hand isn't left wondering whether it worked.
+      (eprintf "~a — not re-produced by the last build (~a); no keys moved.\n"
+               name (length builds))
+      (exit 0)]
+     [(eq? d 'no-basis)
+      (eprintf "~a — first recorded production (build ~a): every key is new, which is not a delta. Rebuild in full.\n"
+               name (length builds))
+      (exit 1)]
+     [else
+      (for ([k (in-list (key-delta-moved d))]) (displayln k))
+      (eprintf "~a — ~a (build ~a vs ~a)\n"
+               name (key-delta->string d) (key-delta-to-build d) (key-delta-from-build d))
+      (exit 0)])]
 
   ;; --- execute a single task ---------------------------------------------
   [(eq? (mode) 'run)

@@ -44,6 +44,8 @@ package (`raco pkg install datalog`). No build step — Racket compiles on deman
   last `--build` actually did) ·
   `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog) ·
   `--history` (browse recorded builds; `--history <artifact>` for its hash timeline) ·
+  `--moved-keys <artifact>` (which keys moved in the LAST build, machine-readable —
+  bare keys on stdout, everything else on stderr; exit 1 = no basis, rebuild in full) ·
   `--run <task>` (execute one task in its hermetic runtime) ·
   `--build --all --export-dir <dir>` (build EVERY target into `<dir>` — the run.py
   replacement: covers all of run.py's steps, but content-addressed-skips current
@@ -138,8 +140,13 @@ once-per-topology graph snapshot; freshness never reads its sequence (ADR 0005) 
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`delta.rkt`](src/delta.rkt) the H2 delta substrate entry point (st-066): the pure
 per-key delta core — folds a keyed artifact's key-observation timeline into a named
-added/removed/changed key-set (`observations->delta`, retrospective; `prospective-delta`,
-history-tail vs a live on-disk map). Per-key staleness first, no Z-sets yet ·
+added/removed/changed key-set (`build-key-delta`, retrospective, at one recorded build;
+`prospective-delta`, history-tail vs a live on-disk map). Per-key staleness first, no
+Z-sets yet. `--moved-keys` is its first EXTERNAL consumer (beeatlas-4oa): the same fact
+that steers a targeted rebuild inside the engine, handed to a targeted step outside it —
+so beeatlas's scoped 11ty render and the notes harvest cannot disagree about which
+species moved. Its three answers stay distinct on purpose — a delta, 'not-produced
+(nothing moved, an ANSWER), and 'no-basis (refuse; the caller must rebuild in full) ·
 [`delta-explain.rkt`](src/delta-explain.rkt) the impure adapter that refines a pure
 `'input-changed` decision into that named delta for a PENDING build, so `--why` /
 `--explain` name WHICH keys of a changed input are about to move (`explain.rkt`/

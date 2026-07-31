@@ -85,3 +85,56 @@
                               '(("a" . "h"))))
 (check-equal? (key-delta-total rm) 2 "removed key still counts toward the total")
 (check-equal? (key-delta->string rm) "1 of 2 keys: -b")
+
+;; build-key-delta: the RETROSPECTIVE fold at one build ---------------------------
+;; The properties that matter: the `from` side is the previous OBSERVATION (the
+;; previous genuine re-production), not the previous build; the two non-delta
+;; answers stay distinguishable; and 'not-produced is an ANSWER (nothing moved),
+;; while 'no-basis is a refusal to answer.
+
+;; produced at the build we ask about -> diff against the observation before it
+(define bd (build-key-delta
+            'notes
+            (list (obs 2 '(("apis mellifera.json" . "h1") ("bombus mixtus.json" . "h2")))
+                  (obs 7 '(("apis mellifera.json" . "hX") ("osmia lignaria.json" . "h3"))))
+            7))
+(check-equal? (key-delta-from-build bd) 2 "from = the previous OBSERVATION, not build 6")
+(check-equal? (key-delta-to-build bd) 7 "to = the build asked about (recorded, not 'pending)")
+(check-equal? (key-delta-changed bd) '("apis mellifera.json"))
+(check-equal? (key-delta-added bd)   '("osmia lignaria.json"))
+(check-equal? (key-delta-removed bd) '("bombus mixtus.json"))
+(check-equal? (key-delta-total bd) 3 "|to| = 2 plus the 1 removed")
+
+;; key-delta-moved: one flat sorted list, unmarked — a removed key moved too
+(check-equal? (key-delta-moved bd)
+              '("apis mellifera.json" "bombus mixtus.json" "osmia lignaria.json")
+              "every moved key, sorted, no +~- markers")
+
+;; the producer cache-skipped the build asked about: nothing moved THEN. An answer
+;; (the empty key set), never a refusal — this is exactly the early-cutoff case.
+(check-equal? (build-key-delta 'notes (list (obs 2 '(("a.json" . "h")))) 7)
+              'not-produced
+              "no observation at the build asked about -> nothing moved then")
+
+;; a first-ever production has no basis to diff against. Every key is new, which
+;; must NOT be reported as "these keys moved" — a caller would read a first build
+;; as an incremental one and skip rebuilding everything else.
+(check-equal? (build-key-delta 'notes (list (obs 7 '(("a.json" . "h")))) 7)
+              'no-basis
+              "produced, but nothing earlier to diff -> refuse rather than claim a delta")
+
+;; NO per-key timeline at all — a never-built artifact, or a typo'd name. This must
+;; refuse, not answer "nothing moved": an empty key set would tell a targeted caller
+;; to rebuild nothing, which is precisely the wrong instruction when the truth is
+;; "I have never seen this artifact".
+(check-equal? (build-key-delta 'notes '() 7) 'no-basis "empty timeline refuses to answer")
+
+;; a re-production to identical content is an EMPTY delta, not 'not-produced:
+;; the producer DID run, and the truthful answer is "zero keys moved".
+(define bsame (build-key-delta 'notes
+                               (list (obs 3 '(("a.json" . "h")))
+                                     (obs 4 '(("a.json" . "h"))))
+                               4))
+(check-not-false (key-delta? bsame) "ran and produced identical content -> still a delta")
+(check-equal? (key-delta-count bsame) 0 "...an empty one")
+(check-equal? (key-delta-moved bsame) '() "no keys to hand a targeted rebuild")

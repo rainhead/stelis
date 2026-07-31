@@ -39,8 +39,10 @@
 
 (provide (struct-out key-delta)
          key-delta-count
+         key-delta-moved
          diff-key-maps
          prospective-delta
+         build-key-delta
          key-delta->string)
 
 ;; A per-key delta: which members of one keyed artifact moved from one
@@ -118,6 +120,55 @@
                     'pending
                     (+ (length live-keys) (length removed))
                     added removed changed))))
+
+;; key-delta-moved : key-delta -> (listof string)
+;; Every key that moved — added, changed or removed — sorted and UNMARKED: the
+;; machine form of what key-delta->string says in prose. One flat list because
+;; the three arms are one question to a downstream consumer ("which members do I
+;; have to redo?"): a removed key is as much a reason to redo as an added one —
+;; the artifact that consumed it must now be rebuilt WITHOUT it.
+(define (key-delta-moved d)
+  (sort (append (key-delta-added d) (key-delta-changed d) (key-delta-removed d))
+        string<?))
+
+;; build-key-delta : symbol (listof key-observation) exact-positive-integer
+;;                   -> (or/c key-delta 'not-produced 'no-basis)
+;; The RETROSPECTIVE fold at ONE build: which keys of `artifact` moved when build
+;; `at` produced it. Same diff core as prospective-delta, with both sides taken
+;; from history — the `to` side is `at`'s own observation and the `from` side is
+;; the observation before it, which (per observe-timeline) is the previous build
+;; that genuinely RE-PRODUCED the artifact, not merely the previous build.
+;;
+;; The two non-delta answers are distinct and must stay so:
+;;   'not-produced — the artifact HAS a per-key timeline, but no observation at
+;;                   `at`: the producer cache-skipped that build, so nothing moved
+;;                   THEN. This is an answer, not a failure — the truthful key set
+;;                   is empty, which is exactly the early-cutoff case.
+;;   'no-basis     — nothing to diff against, either because `at` is the first-ever
+;;                   production or because the artifact has NO per-key timeline at
+;;                   all. Both must refuse rather than answer "nothing moved": for a
+;;                   first production every key is new, and an empty timeline is
+;;                   equally the signature of a typo'd or never-built name. A
+;;                   consumer that took silence for "nothing moved" would skip the
+;;                   very rebuild it asked about, and quietly publish stale output.
+(define (build-key-delta artifact kobs at)
+  (define cur (findf (lambda (o) (= at (key-observation-build o))) kobs))
+  (cond
+    [(null? kobs) 'no-basis]
+    [(not cur) 'not-produced]
+    [else
+     (define prior (filter (lambda (o) (< (key-observation-build o) at)) kobs))
+     (cond
+       [(null? prior) 'no-basis]
+       [else
+        (define prev (last prior))
+        (define-values (added removed changed)
+          (diff-key-maps (key-observation-keys prev) (key-observation-keys cur)))
+        (key-delta artifact
+                   (key-observation-build prev)
+                   at
+                   (+ (length (key-observation-keys cur)) (length removed))
+                   added removed changed)])]))
 
 ;; key-delta->string : key-delta -> string
 ;; The moved keys as compact prose, refining a bare "inputs changed: A" into a
