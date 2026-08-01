@@ -2,12 +2,14 @@
 
 ;; DASL primitives (st-b7v): ONE spec'd canonical encoding for state.
 ;;
-;; State currently carries THREE ad-hoc answers to "what are these bytes'
-;; identity?" — raw bytes -> sha1 (cache.rkt), "path=hash" lines joined by \n ->
-;; sha1 (tree-digest.rkt's digest-of-pairs), and (format "~s" datum) -> sha1
-;; (model.rkt's graph-digest). So DESIGN's day-one determinism commitment rests on
-;; Racket's printer and on hash iteration order staying put across versions. DASL
-;; replaces all three with a spec, and with an address that says what it addresses.
+;; State carried THREE ad-hoc answers to "what are these bytes' identity?" — raw
+;; bytes -> sha1 (cache.rkt), "path=hash" lines joined by \n -> sha1
+;; (tree-digest.rkt's digest-of-pairs), and (format "~s" datum) -> sha1 (model.rkt's
+;; graph-digest). So DESIGN's day-one determinism commitment rested on Racket's
+;; printer and on hash iteration order staying put across versions. DASL replaces
+;; them with a spec, and with an address that says what it addresses. Two are now
+;; retired — the graph snapshot (st-b7v) and digest-of-pairs (st-1e5, see
+;; keyed-block.rkt); a plain 'file artifact's sha1 is the one that remains.
 ;;
 ;; THIS SLICE IS CID ONLY. DRISL (the CBOR profile) is the next commit, and the
 ;; keyed-observation payoff — where an artifact's roll-up digest BECOMES the CID of

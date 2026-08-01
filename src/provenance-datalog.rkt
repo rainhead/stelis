@@ -120,8 +120,13 @@
         (assert-observed! thy i (car pair) (cdr pair))
         (for ([in (in-list inputs)])
           (assert-derived-from! thy i (car pair) in)))
-      ;; the per-key refinement: one fact per fan-out member of each 'dir output
+      ;; the per-key refinement: one fact per fan-out member of each 'dir output.
+      ;; An entry whose block could not be read back (history.rkt marks it rather
+      ;; than dropping it, so a lost observation is never mistaken for "nothing
+      ;; moved") contributes no facts — this layer PROJECTS what was recorded, and
+      ;; a fact it cannot read is one it must not invent.
       (for* ([entry (in-list (trace-record-output-key-hashes r))]
+             #:when (list? (cdr entry))
              [kp (in-list (cdr entry))])
         (assert-observed-key! thy i (car entry) (car kp) (cdr kp)))))
   thy)

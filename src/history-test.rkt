@@ -14,6 +14,8 @@
          "dasl.rkt"
          "drisl.rkt"
          "blockstore.rkt"
+         (only-in "keyed-block.rkt" keyed-block-digest)
+         (only-in "delta.rkt" build-key-delta)
          "history.rkt")
 
 (define tmp (make-temporary-file "stelis-history-test-~a" 'directory))
@@ -149,17 +151,43 @@
                 '(("genus/Bombus.svg" . "b1"))
                 "...and the third build still has its own full observation"))
 
-;; A missing block degrades to "no observation at that build" rather than a wrong
-;; one — the same shape a cache-skip already produces.
+;; A LOST BLOCK MUST NOT READ AS "NOTHING MOVED". This is the dangerous shape: the
+;; earlier build's observation survives and only the LAST one is gone. If the lost
+;; point were merely dropped, the artifact would look UNOBSERVED at the last build —
+;; the signature of a cache-skip — and build-key-delta would answer 'not-produced,
+;; i.e. "nothing moved". `--moved-keys` would then exit 0 in silence for a build
+;; where keys did move, and a caller that rebuilds per key would publish stale
+;; output. The timeline must refuse instead.
 (let ([kd2 (make-temporary-file "stelis-history-gone-~a" 'directory)])
   (history-append! kd2 'species-maps kg "1"
                    (list (rec-maps "t0" '(("genus/Apis.svg" . "a0")))))
-  (delete-directory/files (blocks-dir kd2))
+  (history-append! kd2 'species-maps kg "2"
+                   (list (rec-maps "t1" '(("genus/Apis.svg" . "a1")))))
+  (check-equal? (length (history-key-observations kd2 'species-maps)) 2
+                "both builds observed before anything is lost")
+  ;; drop ONLY the second build's map block, leaving the first intact
+  (delete-file (block-path kd2 (keyed-block-digest '(("genus/Apis.svg" . "a1")))))
   (check-equal? (history-key-observations kd2 'species-maps) '()
-                "a keyed map whose block is gone yields no point, not a partial one")
-  (check-equal? (length (history-load kd2)) 1
-                "and the build itself still loads — the record is not lost with it")
+                "one unreadable point poisons the timeline rather than thinning it")
+  (check-eq? (build-key-delta 'species-maps (history-key-observations kd2 'species-maps) 2)
+             'no-basis
+             "so the delta REFUSES — never 'not-produced, which means 'nothing moved'")
+  (check-equal? (length (history-load kd2)) 2
+                "and the builds themselves still load — records are not lost with it")
   (delete-directory/files kd2))
+
+;; Storing a map can fail — a producer emitting a duplicate key is refused by
+;; keyed-block — and this runs AFTER the build succeeded, so it must not cost the
+;; record. It falls back to the pre-st-1e5 inline shape, which the reader accepts.
+(let ([kd3 (make-temporary-file "stelis-history-inline-~a" 'directory)])
+  (history-append! kd3 'species-maps kg "1"
+                   (list (rec-maps "t0" '(("genus/Apis.svg" . "a0")
+                                          ("genus/Apis.svg" . "a1")))))
+  (check-equal? (length (history-load kd3)) 1 "the build record survives the failure")
+  (check-equal? (key-observation-keys (first (history-key-observations kd3 'species-maps)))
+                '(("genus/Apis.svg" . "a0") ("genus/Apis.svg" . "a1"))
+                "...with its map written inline instead of as a block")
+  (delete-directory/files kd3))
 
 (delete-directory/files kd)
 

@@ -5,10 +5,10 @@
 ;; model calls DRISL "the successor to DAG-CBOR", and it shares dag-cbor's codec
 ;; number (0x71); it is a strict subset of CBOR Core, not a fork of it.
 ;;
-;; WHY THIS EXISTS. Determinism is a day-one DESIGN property, and today it rests on
-;; Racket's printer: graph-digest hashes `(format "~s" datum)`, and digest-of-pairs
-;; hashes "path=hash" lines. Both are canonical only by habit. A DRISL block is
-;; canonical by specification — one value has exactly one byte sequence — which is
+;; WHY THIS EXISTS. Determinism is a day-one DESIGN property, and it used to rest on
+;; Racket's printer: graph-digest hashed `(format "~s" datum)`, and digest-of-pairs
+;; hashed "path=hash" lines. Both were canonical only by habit; both are now retired
+;; in favour of blocks (st-b7v, st-1e5). A DRISL block is canonical by specification — one value has exactly one byte sequence — which is
 ;; what lets its sha-256 be an identity rather than a fingerprint of a printing.
 ;;
 ;; THE DATA MODEL, in Racket terms:
@@ -24,8 +24,9 @@
 ;;     cid (dasl.rkt)            <-> tag 42 over the 0x00-prefixed link bytes
 ;;
 ;; Anything else — a symbol, a rational, a mutable box, a hash with symbol keys —
-;; has no DRISL encoding and is refused. Callers holding symbol-keyed data (the
-;; history envelope does) convert at this boundary; that is st-1e5's work.
+;; has no DRISL encoding and is refused. Callers holding symbol-keyed data convert
+;; at this boundary (model.rkt's graph->drisl does). The history LOG LINE is still a
+;; symbol-keyed Racket datum and has not crossed; only the blocks it names have.
 ;;
 ;; MAP KEY ORDER is length-first, then bytewise. Two conventions exist in the wild
 ;; (RFC 7049 canonical, which dag-cbor took, vs RFC 8949 4.2.1's bytewise-on-

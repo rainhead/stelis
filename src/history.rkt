@@ -117,9 +117,10 @@
 ;; trace.rkt stays pure (DESIGN: effects at the boundary); the state directory is
 ;; history's business, and this is the only place that knows both.
 ;;
-;; The datum positions are trace.rkt's: 7 = output-key-hashes, 8 = input-key-hashes.
-
-(define KEYED-DATUM-POSITIONS '(7 8))
+;; The datum positions come FROM trace.rkt (KEYED-DATUM-POSITIONS), which owns the
+;; shape — counting them here would be a second copy of a fact that already has an
+;; owner, and swapping the two would mislabel an input map as an output one with no
+;; contract downstream to catch it.
 
 (define (update-positions datum positions f)
   (for/list ([x (in-list datum)] [i (in-naturals)])
@@ -128,25 +129,42 @@
 ;; Each (artifact . pairs) entry becomes (artifact . "<cid>"). The block is exactly
 ;; keyed-block.rkt's, so for a 'dir output this CID is the SAME string as the
 ;; artifact's recorded digest — the map is stored once no matter which side names it.
+;;
+;; A failure to store falls back to writing the pairs INLINE, the pre-st-1e5 shape
+;; the reader still accepts. This runs AFTER a build has already succeeded, so the
+;; one thing it must not do is lose the record: a producer that emitted a duplicate
+;; key (keyed-block refuses it) or a disk that filled would otherwise take the whole
+;; build's history with it, which is a far worse outcome than a fat log line.
 (define (externalize-keyed state-dir datum)
   (update-positions datum KEYED-DATUM-POSITIONS
                     (lambda (entries)
                       (for/list ([e (in-list entries)])
-                        (cons (car e) (block-put! state-dir (keyed-block (cdr e))))))))
+                        (cons (car e)
+                              (with-handlers ([exn:fail? (lambda (_) (cdr e))])
+                                (block-put! state-dir (keyed-block (cdr e)))))))))
 
 ;; The inverse. Tolerant of BOTH shapes on purpose: a pre-st-1e5 line carries its
 ;; pairs inline and is read as-is, so the accumulated history survives the change
 ;; without a HISTORY-VERSION bump — which would have discarded the very timeline
-;; this layer exists to keep. A CID whose block is missing or corrupt yields no
-;; entry at all, so the artifact simply has no observation at that build (the same
-;; shape a cache-skip already produces) rather than a wrong one.
+;; this layer exists to keep.
+;;
+;; AN UNRESOLVABLE BLOCK IS MARKED, NOT DROPPED, and the distinction is load-bearing.
+;; Dropping the entry would make the artifact look UNOBSERVED at that build, which is
+;; the signature of a cache-skip — and build-key-delta reads that as 'not-produced,
+;; i.e. "nothing moved", an ANSWER. So a single lost block for the LAST build would
+;; make `--moved-keys` exit 0 in silence for a build where keys did move, and a
+;; caller that rebuilds per key would publish stale output. That is precisely the
+;; failure delta.rkt's 'no-basis exists to prevent. `unresolved-keys` says "there was
+;; an observation here and we cannot read it", which history-key-observations turns
+;; into a refusal.
+(define unresolved-keys 'unresolved)
+
 (define (internalize-keyed state-dir datum)
   (update-positions datum KEYED-DATUM-POSITIONS
                     (lambda (entries)
-                      (for*/list ([e (in-list entries)]
-                                  [pairs (in-value (resolve-keyed state-dir (cdr e)))]
-                                  #:when pairs)
-                        (cons (car e) pairs)))))
+                      (for/list ([e (in-list entries)])
+                        (cons (car e)
+                              (or (resolve-keyed state-dir (cdr e)) unresolved-keys))))))
 
 ;; resolve-keyed : path-string any -> (or/c (listof (cons string string)) #f)
 (define (resolve-keyed state-dir v)
@@ -231,8 +249,20 @@
 ;; store, st-2k9): its full (part -> hash) map at each build that observed it, in
 ;; build order. Diffing consecutive maps yields exactly the parts that changed. '()
 ;; for an artifact that never recorded a per-part layer.
+;;
+;; ONE LOST OBSERVATION POISONS THE WHOLE TIMELINE, deliberately. If any recorded
+;; point cannot be read back (its block is missing, damaged, or mis-addressed), this
+;; returns '() rather than the surviving subset. A thinned timeline is worse than no
+;; timeline: build-key-delta reads a gap at the build in question as 'not-produced —
+;; "nothing moved" — and a caller that rebuilds per key would then skip work it
+;; needed to do. '() instead yields 'no-basis, which refuses and makes the caller
+;; rebuild in full. Losing precision is recoverable; answering "nothing moved" when
+;; something did is not, and the next build re-records the timeline anyway.
 (define (history-key-observations state-dir artifact)
-  (observe-timeline state-dir artifact trace-record-keyed key-observation))
+  (define points (observe-timeline state-dir artifact trace-record-keyed key-observation))
+  (if (for/or ([p (in-list points)]) (not (list? (key-observation-keys p))))
+      '()
+      points))
 
 ;; trace-record-keyed : trace-record -> (listof (cons symbol (listof (cons string string))))
 ;; A record's per-key observations from BOTH sides — outputs the task produced and

@@ -53,10 +53,18 @@
   (define f (block-path state-dir cid))
   (unless (file-exists? f)
     (make-directory* (blocks-dir state-dir))
-    ;; 'replace rather than 'error: two concurrent builds may write the same block,
-    ;; and since the name is the content they cannot disagree about what is in it.
-    (call-with-output-file f #:exists 'replace
-      (lambda (o) (write-bytes bytes o))))
+    ;; Write to a temp file and RENAME into place, which is atomic on every
+    ;; filesystem we run on. A block is only ever observed complete or absent —
+    ;; never half-written. That matters more here than in an ordinary cache: a torn
+    ;; block would be permanently unreadable (block-ref refuses the bad address) AND
+    ;; permanently unwritten (this `unless` would keep skipping it), so a crash
+    ;; mid-write would leave a gap that never heals. `#:exists 'replace` on the
+    ;; rename because two builds may store the same block concurrently — and since
+    ;; the name IS the content, they cannot disagree about what is in it.
+    (define tmp (make-temporary-file "block-~a" #f (blocks-dir state-dir)))
+    (call-with-output-file tmp #:exists 'truncate/replace
+      (lambda (o) (write-bytes bytes o)))
+    (rename-file-or-directory tmp f #t))
   cid)
 
 ;; block-ref : path-string string -> (or/c any #f)

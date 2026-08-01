@@ -89,9 +89,10 @@ belongs to the format.
 
 ## Consequences
 
-**The snapshot's filename becomes a claim you can check.** `graphs/<cid>.drisl` is
-addressed by the CID of its own bytes, so corruption is *detectable* rather than
-merely unparseable — re-hash and compare. The old envelope (a `'version` and
+**The snapshot's filename becomes a claim you can check.** It is addressed by the CID
+of its own bytes, so corruption is *detectable* rather than merely unparseable —
+re-hash and compare. (It first landed at `graphs/<cid>.drisl`; st-1e5 moved it into
+the shared `blocks/` store below, so there is one block layout rather than two.) The old envelope (a `'version` and
 `'graph-hash` sitting beside the payload) is gone: the version rides inside the
 block, and the hash is the name.
 
@@ -102,8 +103,9 @@ already answers `#f` for anything it cannot read. The build log itself is untouc
 **Symbols are the impedance.** DRISL has text strings and no symbols, so every name
 crosses as a string and back through `string->symbol`. Field names are spelled out
 rather than positional, so a block is legible to a reader that has never seen
-`graph->datum`. Callers holding symbol-keyed data — the history envelope does — will
-convert at the same boundary when st-1e5 moves them.
+`graph->datum`. Callers holding symbol-keyed data convert at the same boundary. Note
+the history LOG LINE has not crossed and is still a symbol-keyed Racket datum — only
+the blocks it names are DRISL.
 
 **A new dependency, `sha`.** Not in the full Racket distribution (unlike `datalog`),
 so CI installs it explicitly. base32 is clean-room from RFC 4648: Racket's `base32`
@@ -129,11 +131,12 @@ datum is what buys it back. It renders maps as key-sorted alists, because a hash
 prints in no useful order and the entire point of the format is that one value has
 one spelling.
 
-**What it buys next (st-1e5).** The per-key map becomes a block whose CID *is* the
-artifact's roll-up digest, so `digest-of-pairs` disappears and the asserted
-invariant becomes structural. Unchanged keys become shared blocks, so the
-observation history stops rewriting the whole `notes/` map every build. And a build
-CID would finally be the name for a whole build state that ROADMAP H3 defers.
+**What st-1e5 delivered, and what is still open.** The per-key map is now a block
+whose CID *is* the artifact's roll-up digest for a `'dir` and the notes store, so
+`digest-of-pairs` is gone and the asserted invariant is structural. The observation
+history stores those maps as blocks, so it stops rewriting the whole `notes/` map
+every build. Still open: a build CID as the name for a whole build state (ROADMAP
+H3), and per-KEY rather than per-map sharing, which needs a trie.
 
 ## Alternatives considered
 

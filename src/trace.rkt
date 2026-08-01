@@ -27,7 +27,8 @@
          trace-record-input-key-hashes trace-record-source-report
          outcome-glyph
          trace-record->datum
-         datum->trace-record)
+         datum->trace-record
+         KEYED-DATUM-POSITIONS)
 
 ;; One task's actual fate in a build.
 ;;   task          : symbol
@@ -119,6 +120,16 @@
                (source-report-since s))))
 (define (datum->source-report v)
   (and (list? v) (= 3 (length v)) (source-report (car v) (cadr v) (caddr v))))
+
+;; Which datum positions hold the two KEYED layers (output-key-hashes,
+;; input-key-hashes). history.rkt stores those maps as blocks and needs to find
+;; them in the serialized form; it asked to adopt this shape rather than reinvent
+;; it, so the shape names its own positions instead of letting a reader count them.
+;; Positional data is pure, so exporting it costs trace.rkt none of its purity —
+;; and getting the two confused would mislabel an input map as an output one,
+;; which no contract downstream would catch.
+;; KEEP IN SYNC with trace-record->datum's element order below.
+(define KEYED-DATUM-POSITIONS '(7 8))
 
 ;; trace-record->datum : trace-record -> list
 ;; A record as a plain, `read'-able list — the on-disk shape history persists.
