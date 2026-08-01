@@ -1,18 +1,20 @@
 #lang racket/base
 
 ;; PER-KEY BLAME (st-nbu, Horizon 2) — provenance that reaches a KEY, not just a
-;; node. `--why species-maps:Bombus/mixtus.svg` asks a question the existing
-;; `--why` cannot: not "would this artifact rebuild?" but "why does THIS member of
-;; it look the way it does?".
+;; node. `--history notes:'bombus mixtus.json'` asks a question no existing surface
+;; could: not "would this artifact rebuild?" but "why does THIS member of it look
+;; the way it does?".
 ;;
-;; RETROSPECTIVE, and that is the point. Whole-artifact `--why` is PROSPECTIVE — it
-;; fingerprints the world now and reports what would run. The prospective per-key
-;; question is already answered one hop deep by delta-explain.rkt ("these keys of a
-;; changed input are about to move"). What has never been answerable is the
-;; backward one: a file exists, it was published, why does it say what it says?
-;; That is only answerable from the observation history, and it is the half a
-;; renderer structurally cannot do for itself — which is why st-hdm names it as the
-;; reason that could reclaim the render.
+;; IT LIVES UNDER --history BECAUSE TENSE IS WHAT DIVIDES THE TWO FAMILIES.
+;; --why / --explain are PROSPECTIVE: they fingerprint the world now and report what
+;; WOULD run; the prospective per-key question is already answered one hop deep by
+;; delta-explain.rkt ("these keys of a changed input are about to move"). --history
+;; is RETROSPECTIVE: it reads what was recorded. What has never been answerable is
+;; the backward question — a file exists, it was published, why does it say what it
+;; says? That is only answerable from the observation history, and it is the half a
+;; renderer structurally cannot do for itself, which is why st-hdm names it as the
+;; reason that could reclaim the render. So the progression is one flag deep to
+;; shallow: `--history` / `--history A` / `--history A:K`.
 ;;
 ;; NOTHING NEW IS OBSERVED. Every fact the chain needs is already recorded:
 ;;   - a keyed artifact's (key -> hash) map at each build that produced it
@@ -152,6 +154,16 @@
 ;;   move       : key-move — what moved, and where
 ;;   task       : symbol — the task that produced the artifact at that build
 ;;   reason     : (or/c symbol #f) — the reason the build RECORDED, not a fresh one
+;;   origin     : (or/c 'produced 'consumed) — whether this build OBSERVED the
+;;                artifact as a task's output or as a keyed STORE input it read.
+;;                'consumed is a LEAF: nothing in the graph produces the notes
+;;                store, so the build cannot explain why it changed — a CRUD write
+;;                outside the build did. The record attached to a consumed
+;;                observation belongs to the CONSUMER, and its decision explains
+;;                why the consumer ran, not why the store moved; descending into it
+;;                walks straight back into the same artifact. (Found by running the
+;;                chain on a real notes build, not by a test: it recursed
+;;                notes-store.db into itself and stopped only on the diamond guard.)
 ;;   opaque     : (listof (cons symbol symbol)) — (input . why) for inputs the
 ;;                decision named that the chain cannot descend into: 'no-key-layer
 ;;                (no per-key timeline — today's --why granularity, kept rather
@@ -164,7 +176,7 @@
 ;;   children   : (listof blame-node)
 ;;   elided     : boolean — this (artifact . key) already appeared above; its
 ;;                subtree is suppressed, as print-why-tree does for diamonds.
-(struct blame-node (move task reason opaque unresolved children elided)
+(struct blame-node (move task origin reason opaque unresolved children elided)
   #:transparent)
 
 ;; key-blame-tree : symbol string (symbol -> (listof key-observation))
@@ -186,9 +198,14 @@
        (define id (cons artifact key))
        (define rec (key-move-record m))
        (define task (and rec (trace-record-task rec)))
+       ;; observed as a keyed STORE input rather than as an output? Then it is an
+       ;; authoritative leaf, and the record beside it belongs to its READER.
+       (define origin
+         (if (and rec (assq artifact (trace-record-input-key-hashes rec)))
+             'consumed 'produced))
        (cond
          [(hash-ref seen id #f)
-          (blame-node m task #f '() '() '() #t)]
+          (blame-node m task origin #f '() '() '() #t)]
          [else
           (hash-set! seen id #t)
           (define d (and rec (trace-record-decision rec)))
@@ -196,7 +213,11 @@
           ;; Only `input-changed` names inputs. Any other reason (code-changed,
           ;; recipe-changed, boundary, missing-output …) is a complete explanation
           ;; on its own, with no keyed upstream to descend into.
-          (define inputs (if (eq? reason 'input-changed) (decision-details d) '()))
+          ;; A consumed leaf explains nothing further: the change came from outside
+          ;; the build. Only a PRODUCED artifact's decision names upstreams to walk.
+          (define inputs (if (and (eq? origin 'produced) (eq? reason 'input-changed))
+                             (decision-details d)
+                             '()))
           (define at (key-move-build m))
           (define opaque '())
           (define unresolved '())
@@ -216,7 +237,7 @@
                  (if (blame-node? child)
                      (set! children (cons child children))
                      (set! unresolved (cons (cons in k) unresolved))))]))
-          (blame-node m task reason
+          (blame-node m task origin reason
                       (reverse opaque) (reverse unresolved) (reverse children)
                       #f)])])))
 
@@ -265,9 +286,19 @@
        (printf "~a    (shown above)\n" pad)]
       [else
        (define rec (key-move-record m))
-       (printf "~a    by ~a~a\n" pad (or (blame-node-task n) "?")
-               (let ([d (and rec (trace-record-decision rec))])
-                 (if d (format " — ~a" (decision->string d)) "")))
+       (cond
+         ;; An authoritative leaf. Saying "by <task> — inputs changed: <itself>"
+         ;; here would be false twice over: that decision explains why the READER
+         ;; ran, and nothing in the graph produces this artifact at all. The chain
+         ;; ends at the ingestion boundary, which is where provenance genuinely
+         ;; stops — past it is a CRUD write, not a build.
+         [(eq? (blame-node-origin n) 'consumed)
+          (printf "~a    authoritative input — no producer in the graph; it changed outside the build\n" pad)
+          (printf "~a    (read by ~a at that build)\n" pad (or (blame-node-task n) "?"))]
+         [else
+          (printf "~a    by ~a~a\n" pad (or (blame-node-task n) "?")
+                  (let ([d (and rec (trace-record-decision rec))])
+                    (if d (format " — ~a" (decision->string d)) "")))])
        (for ([o (in-list (blame-node-opaque n))])
          (printf "~a      · ~a: ~a\n" pad (car o) (why-opaque->string (cdr o))))
        (for ([u (in-list (blame-node-unresolved n))])

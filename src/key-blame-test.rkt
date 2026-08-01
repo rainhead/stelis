@@ -197,3 +197,34 @@
 ;; tell "no such key" from "nothing to explain".
 (check-equal? (key-blame-tree 'pages "nope" (lookup chain-table)) 'unknown-key)
 (check-equal? (key-blame-tree 'gone "k" (lookup chain-table)) 'no-timeline)
+
+;; --- an authoritative input is a LEAF -------------------------------------------
+;; A keyed STORE input (the notes store, st-2k9) has its per-key map recorded on
+;; its CONSUMER's record, because nothing in the graph produces it. That consumer's
+;; decision explains why the CONSUMER ran — and it names the store itself, so a
+;; naive walk recurses the store into the store and stops only on the diamond
+;; guard. Found by running the chain on a real notes build, not by this test.
+;; The rule: observed-as-consumed means the chain ends there, at the ingestion
+;; boundary, which is where provenance genuinely stops.
+(let* ([reader (trace-record 'harvest (decision 'run 'input-changed '(store))
+                             #f 'ok '() #f '() '() '(("store" . unused)))]
+       ;; the store's own observation carries the READER's record, and names the
+       ;; store in that record's input-key-hashes — the signal.
+       [store-rec (trace-record 'harvest (decision 'run 'input-changed '(store))
+                                #f 'ok '() #f '()
+                                '()                       ; produced nothing keyed
+                                '((store . (("k" . "s2")))))]
+       [table (hash 'out (list (obs 1 '(("f.json" . "o1")))
+                               (obs 2 '(("f.json" . "o2")) reader))
+                    'store (list (obs 1 '(("k" . "s1")) store-rec)
+                                 (obs 2 '(("k" . "s2")) store-rec)))]
+       [node (key-blame-tree 'out "f.json" (lookup table))]
+       [kid (car (blame-node-children node))])
+  (check-equal? (blame-node-origin node) 'produced "a task output is produced")
+  (check-equal? (blame-node-origin kid) 'consumed "a keyed store input is consumed")
+  (check-equal? (blame-node-children kid) '()
+                "a consumed leaf does not descend into its reader's inputs")
+  (check-equal? (blame-node-opaque kid) '()
+                "and names none — the change came from outside the build entirely")
+  (check-false (blame-node-elided kid)
+               "it terminates on the origin rule, not on the diamond guard"))
