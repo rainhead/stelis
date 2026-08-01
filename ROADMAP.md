@@ -59,14 +59,24 @@ engine is host-portable (`BEEATLAS_DIR` / `NOTES_DB_PATH`).
 *Fold in change-over-time and cross the file/value boundary. This is where the
 batch→streaming arc completes and the browser gets fed.*
 
-- **Serve from the build host (ADR 0007)** — the active arc: the 11ty render
-  becomes a Stelis `site` task (st-ak1); beeatlas.net moves to an Apache vhost
-  on maderas serving a directory Stelis owns, retiring S3/CloudFront from
-  serving (st-bgy); a note write commits, then synchronously rebuilds the site
-  before responding — reload-sees-it as a build property (st-nee); post-soak
-  teardown deletes the `/api/notes` kludge and the AWS serving stack (st-vjd).
-  The measured write-path latency is the forcing function that prices any
-  targeted-render work.
+- **Serve from the build host (ADR 0007)** — **delivered.** beeatlas.net serves
+  from an Apache vhost on maderas over a directory Stelis owns (st-bgy);
+  S3/CloudFront left the serving path and the `/api/notes` kludge is gone
+  (st-vjd); a note write commits, then synchronously publishes before responding
+  — reload-sees-it as a build property (st-nee). The render itself LEFT the graph
+  in the Model Y amendment (st-5em): Stelis narrowed to the data engine and the
+  site build consumes the export via `npm run fetch-data`.
+- **The render returns, as two nodes** (ADR 0007's per-page-provenance amendment,
+  st-hdm) — the active arc. Not for speed: beeatlas already won that externally
+  (its ADR 0016/0017/0019 took a note publish 23s → 8.5s). For **per-page
+  provenance** — `--history <pages>:<path>` reaching the note that produced the
+  page, which a renderer structurally cannot do for itself. `app-bundle` and
+  `site-content` have disjoint inputs and are already separate npm scripts. The
+  enabling half is **delivered**: per-key blame (st-nbu) walks the observation
+  history backward and is verified on a real notes build; the missing hop is
+  `notes/` → the pages. Retiring beeatlas's three hand-rolled re-implementations
+  of Stelis machinery (its build receipt, its render-key env var, its bundle gate)
+  is the test that it landed.
 - **Streaming / CRUD ingestion** — `salishsea`'s model: small frequent
   content-addressed snapshots at the ingestion boundary; near-real-time
   incorporation of API data into artifacts.
