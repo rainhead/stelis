@@ -7,7 +7,8 @@
 (require rackunit
          racket/file
          file/sha1
-         "tree-digest.rkt")
+         "tree-digest.rkt"
+         "keyed-block.rkt")
 
 (define tmp (make-temporary-file "stelis-tree-test-~a" 'directory))
 (define (in name) (build-path tmp name))
@@ -55,8 +56,20 @@
               (list (cons "genus/two.txt" (sha1 (open-input-string "beta")))
                     (cons "one.txt"       (sha1 (open-input-string "alpha"))))
               "each file paired with its content hash, sorted by relative path")
-;; the digest is exactly the roll-up of the pairs — same walk, no divergence
-(check-equal? (digest-of-pairs (tree-hashes a)) (tree-digest a)
-              "tree-digest is digest-of-pairs over tree-hashes")
+;; The digest is not merely derived from the pairs, it is their ADDRESS (st-1e5) —
+;; so the two granularities cannot drift apart, and there is no second computation.
+(check-equal? (keyed-block-digest (tree-hashes a)) (tree-digest a)
+              "tree-digest is the CID of tree-hashes as a keyed block")
+
+;; Order-independence now belongs to the ENCODING, not to the caller's sorting:
+;; DRISL orders map keys canonically, so a shuffled pair list is the same address.
+(check-equal? (keyed-block-digest (reverse (tree-hashes a))) (tree-digest a)
+              "the same map digests identically however the pairs were ordered")
+
+;; The old "<key>=<value>" line join could be spelled two ways — {"a=b" -> "c"} and
+;; {"a" -> "b=c"} both rendered "a=b=c". A block has no delimiter to smuggle.
+(check-not-equal? (keyed-block-digest '(("a=b" . "c")))
+                  (keyed-block-digest '(("a" . "b=c")))
+                  "keys and values can no longer collide through the separator")
 
 (delete-directory/files tmp)

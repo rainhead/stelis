@@ -20,7 +20,8 @@
          racket/format
          racket/string
          "model.rkt"
-         "tree-digest.rkt")
+         "tree-digest.rkt"
+         "keyed-block.rkt")
 
 (provide (struct-out decision)
          snapshot snapshot? snapshot-recipe-hash snapshot-input-hashes
@@ -334,7 +335,7 @@
 ;;              (or/c path-string #f)
 ;;              -> (or/c string #f)
 ;; One input's content hash, by artifact kind, or #f if not content-addressable:
-;; a keyed 'file store by digest-of-pairs over its per-key digests (the same
+;; a keyed 'file store by the CID of its per-key digests as a block (the same
 ;; boundary read the observation layer records — decision and delta can never
 ;; disagree); any other file by its bytes; a dir by its order-independent tree
 ;; digest (st-cly); a db-relation by `resolve-relation'; a gate token by
@@ -354,7 +355,7 @@
     [else
      (define keys (and resolve-store-keys (resolve-store-keys in)))
      (cond
-       [keys (digest-of-pairs keys)]
+       [keys (keyed-block-digest keys)]
        [else
         (define p (resolve in))
         (and p (file-exists? p) (file-sha1 p))])]))
@@ -388,7 +389,8 @@
 ;; as a sorted (artifact -> digest) alist — the cutoff/observation basis. Second
 ;; value: for each 'dir output, its sorted (relative-path -> hash) pairs — the
 ;; per-KEY observations (st-6dv). A 'dir's digest is the roll-up of exactly those
-;; pairs (digest-of-pairs), so the two granularities can never disagree; a 'file
+;; pairs — the digest IS their block's CID (st-1e5), so the two granularities
+;; cannot disagree by construction rather than by assertion; a 'file
 ;; has a digest but no keys, and tokens/relations have no path and drop out.
 ;; Authoritative outputs are excluded — cutoff applies only to derived state
 ;; (forward-only writes are effects; "rebuilt to identical bytes" isn't a claim we
@@ -431,7 +433,7 @@
 ;; One derived output's observation: (digest . parts), or #f when there's nothing
 ;; to hash. The PARTS come from the shared artifact-key-parts; the DIGEST stays
 ;; kind-specific here because it is NOT always a roll-up of the parts:
-;;   'dir         digest-of-pairs over its parts (they agree by construction)
+;;   'dir         the CID of its parts as a keyed block — the parts' ADDRESS
 ;;   'db-relation the row-coherent resolve-relation digest — per-column parts alone
 ;;                CANNOT reconstruct it (a cross-row value swap, st-d5d); taken here
 ;;                AFTER the producer released the db lock
@@ -440,7 +442,7 @@
 (define (observe-output a out env)
   (define parts (artifact-key-parts out (artifact-kind a) env))
   (case (artifact-kind a)
-    [(dir) (and parts (cons (digest-of-pairs parts) parts))]
+    [(dir) (and parts (cons (keyed-block-digest parts) parts))]
     [(db-relation)
      (define rr (build-env-resolve-relation env))
      (define h (and rr (rr out)))

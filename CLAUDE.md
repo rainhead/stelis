@@ -104,8 +104,8 @@ per-table row `count(*)` as the attribute-level observation (`relation-columns`,
 notes STORE (a SQLite `'file` leaf) PER `canonical_name` over approved notes —
 the ingestion-boundary read that turns a CRUD on one note into a keyed delta
 (`notes-store-keys`, st-2k9); reuses duckdb.rkt's SQLite scanner + the count:sum
-idiom. The store's cache-decision input address is the ROLL-UP of these per-key
-digests, never its file bytes (WAL freezes the main file while committed rows
+idiom. The store's cache-decision input address is the CID of these per-key digests
+as a keyed block, never its file bytes (WAL freezes the main file while committed rows
 live in the -wal); the per-key pairs are also recorded across builds as a trace
 `input-key-hashes` snapshot, so `--why notes-harvest` names the changed
 species ·
@@ -126,9 +126,18 @@ not hand-transcribed (fixes the places_maps→species_maps→config drift); the
 cache partitions inputs by kind, so a helper edit still reports `'code-changed`
 naming the file. `#:code` survives only as the escape hatch for imports a scan
 can't see (dynamic/importlib, baked-in data files) ·
-[`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
-order-independent digest over its sorted (relative-path → content-hash) tree, and
-exposes those per-file pairs (`tree-hashes`) for per-key observations ·
+[`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact by its
+(relative-path → content-hash) tree, and exposes those per-file pairs
+(`tree-hashes`) for per-key observations ·
+[`keyed-block.rkt`](src/keyed-block.rkt) the roll-up itself (st-1e5): a keyed
+artifact's per-key map as a DRISL block, whose CID **is** the artifact's digest — so
+the roll-up and the parts are ONE object and cache.rkt's old assertion that "the two
+granularities can never disagree" holds by construction. Retires `digest-of-pairs`,
+whose `key=value` line join was genuinely ambiguous (`{"a=b"→"c"}` and `{"a"→"b=c"}`
+collided) and whose order-independence lived in its callers' sorting rather than in
+itself. Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
+NOT a caller** — its identity is the row-coherent digest, because per-column
+multiset digests false-skip on a cross-row value swap (st-d5d) ·
 [`dasl.rkt`](src/dasl.rkt) + [`drisl.rkt`](src/drisl.rkt) the CID and the
 deterministic CBOR profile it addresses (ADR 0010, st-b7v): one value, exactly one
 byte sequence, so a sha-256 over it is an IDENTITY rather than a fingerprint of

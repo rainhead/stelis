@@ -71,6 +71,22 @@ content-addressed, already write-once, and has exactly one reader — so a wrong
 costs one snapshot. sha1 remains the live content hash for artifacts and cache
 decisions until the keyed-observation layer moves (st-1e5).
 
+**D6. A keyed artifact's digest is its per-key block's CID — but only where the
+parts constitute the identity** (st-1e5). True for a `'dir` tree and for the keyed
+notes store. **Not** true for a `db-relation`, whose identity is
+`relation-digest.rkt`'s row-coherent digest: per-column multiset digests alone
+false-skip on a cross-row value swap, which st-d5d proved. Its per-column parts ride
+*alongside* its identity rather than constituting it. The asymmetry is load-bearing,
+and D1's "the codec travels in the address" is the same instinct — what a digest is
+*of* is part of what it means.
+
+Two defects fall out rather than being chased. `digest-of-pairs` joined
+`"<key>=<value>"` with newlines, so `{"a=b" → "c"}` and `{"a" → "b=c"}` produced one
+digest for two maps — and paths containing `=` are legal on every filesystem we run
+on. And its order-independence lived in the *callers* all sorting their pairs, not
+in the function; DRISL orders map keys as part of encoding, so the property now
+belongs to the format.
+
 ## Consequences
 
 **The snapshot's filename becomes a claim you can check.** `graphs/<cid>.drisl` is
