@@ -115,6 +115,20 @@ history becomes a hash-linked chain, the `parent` link must stay browsing-only â
 parent link *is* sequence, and letting freshness consult it would reintroduce the
 clock this design refuses.
 
+**Blocks are one store, and dedup is real but shallow** (st-1e5). `.stelis/blocks/`
+holds both the graph snapshot and each record's keyed maps; `block-ref` re-addresses
+what it reads and refuses a mismatch. The observation history stops rewriting an
+unchanged `notes/` map on every build â€” which matters because it is the one part of
+state designed to grow forever. But this is **dedup of identical maps, not per-key
+sharing**: one changed species still writes a whole new block. Real per-key sharing
+needs a trie, and this store is one node deep. Do not describe it as a Merkle tree.
+
+**Binary state needs a way out, so `--block <cid>` exists.** Inspectability was the
+price of the format change; a command that prints any stored block as a readable
+datum is what buys it back. It renders maps as key-sorted alists, because a hash
+prints in no useful order and the entire point of the format is that one value has
+one spelling.
+
 **What it buys next (st-1e5).** The per-key map becomes a block whose CID *is* the
 artifact's roll-up digest, so `digest-of-pairs` disappears and the asserted
 invariant becomes structural. Unchanged keys become shared blocks, so the

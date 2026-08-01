@@ -18,6 +18,7 @@
 ;;   racket src/main.rkt --moved-keys notes                ; which keys moved in the LAST build (machine-readable)
 
 (require racket/cmdline
+         racket/pretty
          racket/set
          racket/list
          racket/file
@@ -33,9 +34,11 @@
          "history.rkt"
          "delta.rkt"
          "delta-explain.rkt"
+         "blockstore.rkt"
+         (only-in "dasl.rkt" cid? cid->string)
          "determinism.rkt")
 
-(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history | 'moved-keys
+(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history | 'moved-keys | 'block
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
@@ -61,6 +64,8 @@
                   (mode 'history)]
    [("--moved-keys") "print the keys of ARTIFACT that moved in the LAST build, one per line (for a caller that rebuilds per key)"
                      (mode 'moved-keys)]
+   [("--block") "print the stored block named by CID as a readable datum (state is content-addressed and binary; this is the way back out)"
+                (mode 'block)]
    #:once-each
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
@@ -81,6 +86,18 @@
 ;; (--explain --last, --history), and --all (the whole graph — no target).
 (unless (or name (all?) (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
+
+;; block->datum : any -> any
+;; A decoded block, rendered for reading: maps become alists SORTED by key (a hash
+;; prints in no useful order, and the whole point of the format is that one value
+;; has one spelling), and a CID link prints as its `b` string rather than a struct.
+(define (block->datum v)
+  (cond
+    [(hash? v) (for/list ([p (in-list (sort (hash->list v) string<? #:key car))])
+                 (cons (car p) (block->datum (cdr p))))]
+    [(list? v) (map block->datum v)]
+    [(cid? v) (cid->string v)]
+    [else v]))
 
 ;; short-hash : (or/c string #f) -> string — a hash's first 10 chars for display
 (define (short-hash h)
@@ -286,6 +303,20 @@
                 (if (< i 10) " " "") i
                 (outcome-glyph (trace-record-outcome r)) (trace-record-task r)
                 why note))])]
+
+  ;; --- read one block back out -------------------------------------------
+  ;; State is content-addressed and binary now (ADR 0010), so it needs a way back
+  ;; out: `--block <cid>` prints any stored block — a graph snapshot, a keyed
+  ;; artifact's map — as a readable datum. Inspectability was the price of the
+  ;; format change, and this is what buys it back.
+  [(eq? (mode) 'block)
+   (define v (block-ref stelis-state (symbol->string name)))
+   (cond
+     [(not v)
+      (eprintf "No block ~a under ~a/ — absent, unreadable, or not addressed by that CID.\n"
+               name (path->string stelis-state))
+      (exit 1)]
+     [else (pretty-print (block->datum v))])]
 
   ;; --- browse the build history ------------------------------------------
   ;; No name: the list of builds (append order — for BROWSING, not freshness).

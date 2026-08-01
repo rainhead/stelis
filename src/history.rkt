@@ -28,7 +28,8 @@
          racket/string
          "model.rkt"
          "cache.rkt"    ; read-versioned — the shared versioned-file reader
-         (only-in "drisl.rkt" drisl-encode drisl-decode)
+         "blockstore.rkt"
+         (only-in "keyed-block.rkt" keyed-block)
          "trace.rkt")
 
 (provide (struct-out build-record)
@@ -51,7 +52,7 @@
 ;; One build's persisted result.
 ;;   target     : symbol — the artifact this build was asked to produce
 ;;   graph-hash : string — the topology it ran against (graph-digest); the full
-;;                snapshot lives once under graphs/<graph-hash>.rktd
+;;                snapshot lives once in the block store, under its own CID
 ;;   epoch      : string — the build's SOURCE_DATE_EPOCH (source snapshot clock);
 ;;                sequence metadata for BROWSING, never consulted for freshness
 ;;   records    : (listof trace-record) — per task, in build order
@@ -76,19 +77,18 @@
 (struct key-observation (build keys record) #:transparent)
 
 (define (history-file state-dir) (build-path state-dir "history.rktd"))
-(define (graphs-dir state-dir)   (build-path state-dir "graphs"))
-;; Named by the snapshot's CID (st-b7v), so the filename IS the content address
-;; rather than a separate naming scheme that could disagree with it. The `.drisl`
-;; extension is for humans; v2's `<sha1>.rktd` files simply stop being looked up.
-(define (graph-file state-dir h) (build-path (graphs-dir state-dir) (format "~a.drisl" h)))
 
 ;; history-append! : path-string symbol graph string (listof trace-record) -> string
-;; Append one build to the log (creating .stelis/ as needed) and, once per
-;; distinct topology, write its graph snapshot under graphs/<hash>.rktd. Returns
-;; the graph-hash it recorded. Append-only: existing lines are never rewritten.
+;; Append one build to the log (creating .stelis/ as needed), storing the topology
+;; snapshot and each record's keyed maps as blocks. Returns the graph-hash it
+;; recorded. Append-only: existing lines are never rewritten.
+;;
+;; The snapshot needs no envelope of its own — no 'version or 'graph-hash beside
+;; the payload — because the version is a field INSIDE the snapshot value
+;; (model.rkt's GRAPH-SNAPSHOT-VERSION) and the hash is the filename, verifiable by
+;; re-hashing the bytes rather than by trusting a field that sits next to them.
 (define (history-append! state-dir target g epoch records)
-  (define h (graph-digest g))
-  (write-graph-snapshot! state-dir g h)
+  (define h (block-put! state-dir (graph->drisl g)))
   (make-directory* state-dir)
   (call-with-output-file (history-file state-dir) #:exists 'append
     (lambda (o)
@@ -99,26 +99,68 @@
                    'target target
                    'graph-hash h
                    'epoch epoch
-                   'records (map trace-record->datum records))
+                   'records (for/list ([r (in-list records)])
+                              (externalize-keyed state-dir (trace-record->datum r))))
              o)
       (newline o)))
   h)
 
-;; write-graph-snapshot! : path-string graph string -> void
-;; Persist the topology snapshot once per graph-hash (content-addressed, so a
-;; repeat is a no-op). Never overwrites an existing snapshot.
+;; --- Keyed maps as blocks (st-1e5) --------------------------------------------
+;; A record's two keyed layers — output-key-hashes and input-key-hashes — used to
+;; ride INLINE in the log line, so every build that re-produced `notes/` rewrote a
+;; line naming every species even when none of them moved. They now live in the
+;; block store and the line names them by CID, so two builds that observed the same
+;; map share one block.
 ;;
-;; The block carries no envelope — no separate 'version or 'graph-hash beside the
-;; payload — because it no longer needs one: the version is a field INSIDE the
-;; snapshot value (model.rkt's GRAPH-SNAPSHOT-VERSION), and the hash is the
-;; filename, verifiable by re-hashing the bytes rather than by trusting a field
-;; that sits next to them.
-(define (write-graph-snapshot! state-dir g h)
-  (define f (graph-file state-dir h))
-  (unless (file-exists? f)
-    (make-directory* (graphs-dir state-dir))
-    (call-with-output-file f #:exists 'error
-      (lambda (o) (write-bytes (drisl-encode (graph->drisl g)) o)))))
+;; The swap happens at SERIALIZATION, not in the struct: trace-record still carries
+;; real maps, so no reader — delta.rkt, --moved-keys, explain — learns about blocks.
+;; trace.rkt stays pure (DESIGN: effects at the boundary); the state directory is
+;; history's business, and this is the only place that knows both.
+;;
+;; The datum positions are trace.rkt's: 7 = output-key-hashes, 8 = input-key-hashes.
+
+(define KEYED-DATUM-POSITIONS '(7 8))
+
+(define (update-positions datum positions f)
+  (for/list ([x (in-list datum)] [i (in-naturals)])
+    (if (memv i positions) (f x) x)))
+
+;; Each (artifact . pairs) entry becomes (artifact . "<cid>"). The block is exactly
+;; keyed-block.rkt's, so for a 'dir output this CID is the SAME string as the
+;; artifact's recorded digest — the map is stored once no matter which side names it.
+(define (externalize-keyed state-dir datum)
+  (update-positions datum KEYED-DATUM-POSITIONS
+                    (lambda (entries)
+                      (for/list ([e (in-list entries)])
+                        (cons (car e) (block-put! state-dir (keyed-block (cdr e))))))))
+
+;; The inverse. Tolerant of BOTH shapes on purpose: a pre-st-1e5 line carries its
+;; pairs inline and is read as-is, so the accumulated history survives the change
+;; without a HISTORY-VERSION bump — which would have discarded the very timeline
+;; this layer exists to keep. A CID whose block is missing or corrupt yields no
+;; entry at all, so the artifact simply has no observation at that build (the same
+;; shape a cache-skip already produces) rather than a wrong one.
+(define (internalize-keyed state-dir datum)
+  (update-positions datum KEYED-DATUM-POSITIONS
+                    (lambda (entries)
+                      (for*/list ([e (in-list entries)]
+                                  [pairs (in-value (resolve-keyed state-dir (cdr e)))]
+                                  #:when pairs)
+                        (cons (car e) pairs)))))
+
+;; resolve-keyed : path-string any -> (or/c (listof (cons string string)) #f)
+(define (resolve-keyed state-dir v)
+  (cond
+    [(list? v) v]                                   ; pre-st-1e5: inline pairs
+    [(string? v) (block->pairs (block-ref state-dir v))]
+    [else #f]))
+
+;; A keyed block is a DRISL map; the timeline wants sorted pairs, and sorting here
+;; (rather than trusting the decoder) keeps the shape identical to what the inline
+;; form produced, so delta.rkt cannot tell the two apart.
+(define (block->pairs v)
+  (and (hash? v)
+       (sort (hash->list v) string<? #:key car)))
 
 ;; history-load : path-string -> (listof build-record)
 ;; Every readable build, in append (build) order. Missing history ⇒ '(). A line
@@ -131,7 +173,7 @@
     [else
      (for*/list ([line (in-list (file->lines f))]
                  #:unless (string=? "" (string-trim line))
-                 [br (in-value (line->build-record line))]
+                 [br (in-value (line->build-record state-dir line))]
                  #:when br)
        br)]))
 
@@ -207,14 +249,12 @@
 ;; A v2 snapshot (`<sha1>.rktd`, a versioned s-expression) is not looked up at all
 ;; and so reads as absent, which is the same answer a corrupt block gives.
 (define (history-graph state-dir h)
-  (define f (graph-file state-dir h))
-  (and (file-exists? f)
-       (with-handlers ([exn:fail? (lambda (_) #f)])
-         (drisl->graph-datum (drisl-decode (file->bytes f))))))
+  (define v (block-ref state-dir h))
+  (and v (drisl->graph-datum v)))
 
 ;; --- Parsing (a bad line is a miss, never an error) ---------------------------
 
-(define (line->build-record line)
+(define (line->build-record state-dir line)
   (define e (with-handlers ([exn:fail? (lambda (_) #f)])
               (read (open-input-string line))))
   (and (hash? e)
@@ -224,4 +264,5 @@
          (build-record (hash-ref e 'target)
                        (hash-ref e 'graph-hash #f)
                        (hash-ref e 'epoch #f)
-                       (map datum->trace-record (hash-ref e 'records))))))
+                       (for/list ([r (in-list (hash-ref e 'records))])
+                         (datum->trace-record (internalize-keyed state-dir r)))))))

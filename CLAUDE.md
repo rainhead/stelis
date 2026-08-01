@@ -46,6 +46,8 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   last `--build` actually did) ·
   `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog) ·
   `--history` (browse recorded builds; `--history <artifact>` for its hash timeline) ·
+  `--block <cid>` (print a stored block as a readable datum — state is
+  content-addressed and binary since ADR 0010, and this is the way back out) ·
   `--moved-keys <artifact>` (which keys moved in the LAST build, machine-readable —
   bare keys on stdout, everything else on stderr; exit 1 = no basis, rebuild in full) ·
   `--run <task>` (execute one task in its hermetic runtime) ·
@@ -156,9 +158,16 @@ st-243) gates IDENTITY vs. the store keyset — both strays and gaps fail ·
 [`history.rkt`](src/history.rkt) append-only, content-addressed build history under
 `.stelis/` — per-build observation records (artifact→hash, plus a per-PART
 refinement: path→hash for `'dir`, column→digest:count for `'db-relation`) + a
-once-per-topology graph snapshot, now a DRISL block at `graphs/<cid>.drisl` whose
-FILENAME is the CID of its own bytes (ADR 0010), so corruption is detectable and
-not merely unparseable; freshness never reads its sequence (ADR 0005) ·
+once-per-topology graph snapshot. Both the snapshot AND each record's keyed maps
+now live in [`blockstore.rkt`](src/blockstore.rkt) (`.stelis/blocks/<cid>`, st-1e5),
+with the log line naming them by CID — so a build that re-produced an UNCHANGED
+`notes/` map adds no storage, where before it rewrote a line naming every species.
+The swap happens at SERIALIZATION, so `trace-record` still carries real maps and no
+reader (delta, `--moved-keys`, explain) knows about blocks; reading is tolerant of
+the old inline shape, so the accumulated timeline survived without a version bump.
+A block's FILENAME is the CID of its own bytes and `block-ref` re-checks it, so
+corruption is detected rather than decoded; freshness never reads its sequence
+(ADR 0005) ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`delta.rkt`](src/delta.rkt) the H2 delta substrate entry point (st-066): the pure
 per-key delta core — folds a keyed artifact's key-observation timeline into a named

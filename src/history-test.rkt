@@ -13,6 +13,7 @@
          "trace.rkt"
          "dasl.rkt"
          "drisl.rkt"
+         "blockstore.rkt"
          "history.rkt")
 
 (define tmp (make-temporary-file "stelis-history-test-~a" 'directory))
@@ -63,10 +64,10 @@
 
 ;; --- the graph snapshot ------------------------------------------------------
 
-(define snapshot-file (build-path tmp "graphs" (format "~a.drisl" gh1)))
+(define snapshot-file (block-path tmp gh1))
 
 (check-true (file-exists? snapshot-file)
-            "the topology snapshot is written under graphs/<cid>.drisl")
+            "the topology snapshot is a block, filed under its own CID")
 (check-equal? (history-graph tmp gh1) (graph->datum g)
               "and reads back as the topology datum")
 (check-false (history-graph tmp "deadbeef") "an unknown graph-hash is #f")
@@ -122,14 +123,44 @@
 (define kobs (history-key-observations kd 'species-maps))
 (check-equal? (map key-observation-build kobs) '(1 2)
               "one per-key point per producing build")
+;; Sorted by key: the map is stored as a block (st-1e5) and a block has no order
+;; to preserve, so the timeline presents one canonical order rather than whichever
+;; the producer happened to emit. diff-key-maps hashes both sides, so nothing
+;; downstream can tell — and now nothing downstream can accidentally depend on it.
 (check-equal? (key-observation-keys (first kobs))
-              '(("genus/Bombus.svg" . "b0") ("genus/Apis.svg" . "a0"))
-              "build 1's full (path -> hash) map")
+              '(("genus/Apis.svg" . "a0") ("genus/Bombus.svg" . "b0"))
+              "build 1's full (path -> hash) map, canonically ordered")
 (check-equal? (key-observation-keys (second kobs))
               '(("genus/Bombus.svg" . "b1"))
               "build 2's map — Bombus changed, Apis dropped")
 (check-equal? (history-key-observations kd 'taxa) '()
               "a 'file artifact has no per-key layer")
+
+;; The payoff (st-1e5): a keyed map lives in the block store and the log line names
+;; it, so a build that re-produced an UNCHANGED map costs no new storage. This is
+;; the growth property the observation history needs — it is designed to grow
+;; forever, and before this it rewrote every species on every build.
+(let ([before (length (directory-list (blocks-dir kd)))])
+  (history-append! kd 'species-maps kg "3"
+                   (list (rec-maps "t1" '(("genus/Bombus.svg" . "b1")))))
+  (check-equal? (length (directory-list (blocks-dir kd))) before
+                "re-observing an identical map adds no block")
+  (check-equal? (key-observation-keys (third (history-key-observations kd 'species-maps)))
+                '(("genus/Bombus.svg" . "b1"))
+                "...and the third build still has its own full observation"))
+
+;; A missing block degrades to "no observation at that build" rather than a wrong
+;; one — the same shape a cache-skip already produces.
+(let ([kd2 (make-temporary-file "stelis-history-gone-~a" 'directory)])
+  (history-append! kd2 'species-maps kg "1"
+                   (list (rec-maps "t0" '(("genus/Apis.svg" . "a0")))))
+  (delete-directory/files (blocks-dir kd2))
+  (check-equal? (history-key-observations kd2 'species-maps) '()
+                "a keyed map whose block is gone yields no point, not a partial one")
+  (check-equal? (length (history-load kd2)) 1
+                "and the build itself still loads — the record is not lost with it")
+  (delete-directory/files kd2))
+
 (delete-directory/files kd)
 
 ;; --- graceful degradation ----------------------------------------------------
