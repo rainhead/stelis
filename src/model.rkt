@@ -9,7 +9,8 @@
 
 (require racket/list
          racket/set
-         file/sha1)
+         (only-in "dasl.rkt" cid->string)
+         (only-in "drisl.rkt" drisl-cid))
 
 (provide (struct-out artifact)
          (struct-out task)
@@ -30,6 +31,8 @@
          plan
          GRAPH-SNAPSHOT-VERSION
          graph->datum
+         graph->drisl
+         drisl->graph-datum
          graph-digest)
 
 ;; --- Node types -------------------------------------------------------------
@@ -282,7 +285,11 @@
 ;; v2 (st-whi): artifact entries gained a fourth element, the `imports' edge
 ;; list — helper→helper import edges ARE topology (a new import changes what a
 ;; task transitively depends on), so they must move the graph digest.
-(define GRAPH-SNAPSHOT-VERSION 2)
+;; v3 (st-b7v): the snapshot is written as a DRISL block and addressed by its CID.
+;; The DATUM below is unchanged; what changed is how it is written down and named,
+;; so every v2 snapshot on disk is simply unreadable and re-written on next build —
+;; in policy, since .stelis/ is derived, disposable, format-versioned state.
+(define GRAPH-SNAPSHOT-VERSION 3)
 
 ;; graph->datum : graph -> list
 ;; A `read'-able TOPOLOGY snapshot: nodes (artifact name/kind/provenance/imports)
@@ -306,8 +313,66 @@
                       (task-inputs t) (task-outputs t)))
               symbol<? #:key car)))
 
+;; --- The snapshot as a DRISL block (st-b7v) ----------------------------------
+;; The datum above is a Racket shape; this is how it is WRITTEN DOWN. The two are
+;; kept apart on purpose: `read'-ability is what makes the datum convenient in
+;; Racket, and it is exactly what made the old digest — sha1 over `(format "~s"
+;; ...)` — canonical only by habit, resting on Racket's printer rather than on a
+;; spec. A DRISL block has one spelling per value by definition, so its sha-256 is
+;; the graph's IDENTITY rather than a fingerprint of a printing.
+;;
+;; Symbols are the whole of the impedance: DRISL has text strings and no symbols,
+;; so every name crosses as a string and crosses back through `string->symbol'.
+;; Field names are spelled out rather than positional — a block should be legible
+;; to a reader that has never seen graph->datum.
+
+(define GRAPH-BLOCK-FORMAT "stelis-graph")
+
+(define (syms->strings xs) (map symbol->string xs))
+(define (strings->syms xs) (map string->symbol xs))
+
+;; graph->drisl : graph -> hash
+;; The snapshot as a DRISL value, ready for `drisl-encode'.
+(define (graph->drisl g)
+  (define d (graph->datum g))
+  (hash "format" GRAPH-BLOCK-FORMAT
+        "version" (cadr d)
+        "artifacts" (for/list ([a (in-list (caddr d))])
+                      (hash "name" (symbol->string (car a))
+                            "kind" (symbol->string (cadr a))
+                            "provenance" (symbol->string (caddr a))
+                            "imports" (syms->strings (cadddr a))))
+        "tasks" (for/list ([t (in-list (cadddr d))])
+                  (hash "name" (symbol->string (car t))
+                        "kind" (symbol->string (cadr t))
+                        "inputs" (syms->strings (caddr t))
+                        "outputs" (syms->strings (cadddr t))))))
+
+;; drisl->graph-datum : any -> (or/c list #f)
+;; The inverse, back to the graph->datum shape — #f for anything that is not a
+;; snapshot block of the version this Stelis speaks. Total and non-raising: a
+;; foreign or stale block is a MISS, exactly as an unparseable history line is.
+(define (drisl->graph-datum v)
+  (define (field h k pred) (define x (hash-ref h k #f)) (and (pred x) x))
+  (with-handlers ([exn:fail? (lambda (_) #f)])
+    (and (hash? v)
+         (equal? GRAPH-BLOCK-FORMAT (field v "format" string?))
+         (equal? GRAPH-SNAPSHOT-VERSION (field v "version" exact-integer?))
+         (list? (hash-ref v "artifacts" #f))
+         (list? (hash-ref v "tasks" #f))
+         (list 'stelis-graph GRAPH-SNAPSHOT-VERSION
+               (for/list ([a (in-list (hash-ref v "artifacts"))])
+                 (list (string->symbol (hash-ref a "name"))
+                       (string->symbol (hash-ref a "kind"))
+                       (string->symbol (hash-ref a "provenance"))
+                       (strings->syms (hash-ref a "imports"))))
+               (for/list ([t (in-list (hash-ref v "tasks"))])
+                 (list (string->symbol (hash-ref t "name"))
+                       (string->symbol (hash-ref t "kind"))
+                       (strings->syms (hash-ref t "inputs"))
+                       (strings->syms (hash-ref t "outputs"))))))))
+
 ;; graph-digest : graph -> string
-;; Content hash of the topology snapshot — the graph's identity in history.
-;; Same topology twice ⇒ same digest (canonical datum, day-one determinism).
-(define (graph-digest g)
-  (sha1 (open-input-bytes (string->bytes/utf-8 (format "~s" (graph->datum g))))))
+;; The graph's identity in history: the CID of its snapshot block, in the `b`
+;; base32 string form. Same topology twice ⇒ same CID, now by specification.
+(define (graph-digest g) (cid->string (drisl-cid (graph->drisl g))))

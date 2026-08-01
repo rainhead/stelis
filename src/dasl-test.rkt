@@ -7,12 +7,18 @@
 ;;      The encoder is the piece with no DASL fixture behind it (every fixture
 ;;      encodes a CID *inside* CBOR, never its string form), so it is pinned here
 ;;      against the RFC directly.
-;;   2. The CID cases from hyphacoop/dasl-testing's fixtures/cbor/cid.json,
-;;      transcribed as the link bytes they carry under tag 42 — each `invalid_in`
-;;      case named after the restriction it exists to enforce. Transcribed rather
-;;      than read from the repo on purpose: the suite is not a checkout here, and
-;;      CI has no network. A real harness that runs the whole suite is separate
-;;      work; this is the subset that pins THIS module.
+;;   2. The CID cases from fixtures/cbor/cid.json, transcribed as the link bytes
+;;      they carry under tag 42 — each `invalid_in` case named after the
+;;      restriction it exists to enforce.
+;;
+;; Those same cases ALSO run, from the vendored fixtures, in drisl-test.rkt's
+;; conformance runner, so the overlap is deliberate and worth justifying. The
+;; runner reaches this module only transitively — it hands whole CBOR documents to
+;; `drisl-decode` and asserts merely that something raised. These pin dasl.rkt
+;; directly, and they pin WHICH refusal: the module's rule is that every rejection
+;; names the restriction it enforces, and a `check-exn` on the message is the only
+;; thing that can hold it to that. A SHA-1 CID silently starting to report a size
+;; mismatch would still pass upstream's suite and would fail here.
 ;;
 ;; The end-to-end anchor is the empty raw CID, which is widely published and
 ;; therefore checks the entire path — sha-256, the 4-byte header, base32, and the

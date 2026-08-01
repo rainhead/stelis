@@ -137,3 +137,25 @@
               "two hashes with the same contents get the same address")
 (check-not-equal? (drisl-cid (hash "a" 1)) (drisl-cid (hash "a" 2))
                   "and different contents get different ones")
+
+;; --- Regressions from the st-b7v review ---------------------------------------
+
+;; An eq?-keyed hash can hold two DISTINCT string objects that are `equal?`, which
+;; would encode as a duplicate map key — bytes this module's own decoder refuses.
+(let ([a (string-copy "k")] [b (string-copy "k")])
+  (check-equal? (hash-count (hasheq a 1 b 2)) 2 "eq? keys really can collide this way")
+  (check-exn #rx"equal\\?-keyed" (lambda () (drisl-encode (hasheq a 1 b 2)))
+             "so an eq?-keyed hash is refused outright")
+  (check-exn #rx"equal\\?-keyed" (lambda () (drisl-encode (hasheq "k" 1)))
+             "...even when it happens to hold only one key"))
+(check-equal? (drisl-decode (drisl-encode (make-hash '(("k" . 1))))) (hash "k" 1)
+              "a MUTABLE equal?-keyed hash is fine: mutability was never the risk")
+
+;; The one-byte simple-value form (major 7, ai 24) puts the value in the NEXT byte,
+;; so a diagnostic that reports the nibble names the head instead of the fault.
+(check-exn #rx"simple value 32 is unassigned"
+           (lambda () (drisl-decode (hex-string->bytes "f820")))
+           "f820 is simple value 32, not 24")
+(check-exn #rx"simple value 0 is written in two bytes"
+           (lambda () (drisl-decode (hex-string->bytes "f800")))
+           "and a value under 32 in that form is non-minimal besides")

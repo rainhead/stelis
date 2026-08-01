@@ -122,6 +122,12 @@
   (write-bytes (real->floating-point-bytes v 8 #t) out))
 
 (define (encode-map v out)
+  ;; An eq?/eqv?-keyed hash can hold two DISTINCT string objects that are `equal?`
+  ;; — which would encode as a duplicate map key, bytes this module's own decoder
+  ;; refuses. Requiring equal?-keyed makes that unrepresentable rather than
+  ;; detected after the fact. (Mutability is not the issue and is allowed.)
+  (unless (hash-equal? v)
+    (error 'drisl-encode "DRISL maps must be equal?-keyed; an eq?/eqv? hash can hold two `equal?` keys"))
   (define pairs (hash->list v))
   (for ([p (in-list pairs)])
     (unless (string? (car p))
@@ -151,18 +157,48 @@
     [(> (bytes-length ab) (bytes-length bb)) #f]
     [else (bytes<? ab bb)]))
 
+;; The head forms, shortest first: the additional-information nibble, how many
+;; argument bytes follow it, and the smallest argument the form may legally carry.
+;; ONE table, read by both directions on purpose — `least` is exactly what makes
+;; `1801` an error on the way in and what picks the shortest form on the way out,
+;; so a writer and a reader that disagreed about it would produce bytes this
+;; module could not read back.
+(struct head-form (ai width least) #:transparent)
+
+(define HEAD-FORMS
+  (list (head-form 24 1 24)
+        (head-form 25 2 256)
+        (head-form 26 4 65536)
+        (head-form 27 8 4294967296)))
+
+;; Arguments below 24 need no following bytes at all — they ride in the nibble.
+(define INLINE-LIMIT 24)
+
+(define (head-form-limit f) (arithmetic-shift 1 (* 8 (head-form-width f))))
+
+;; integer->integer-bytes has no 1-byte size, so the narrowest form writes direct.
+(define (write-argument n width out)
+  (if (= width 1)
+      (write-byte n out)
+      (write-bytes (integer->integer-bytes n width #f #t) out)))
+
+(define (read-argument in width)
+  (if (= width 1)
+      (read-byte! in)
+      (integer-bytes->integer (read-bytes! in width) #f #t)))
+
 ;; write-head : nat nat output-port -> void
 ;; Major type plus argument in the SHORTEST form that holds it — the rule that
 ;; makes every `unnecessary N-byte ...` fixture an invalid input.
 (define (write-head major n out)
   (define (tag ai) (write-byte (+ (arithmetic-shift major 5) ai) out))
   (cond
-    [(< n 24) (tag n)]
-    [(< n 256) (tag 24) (write-byte n out)]
-    [(< n 65536) (tag 25) (write-bytes (integer->integer-bytes n 2 #f #t) out)]
-    [(< n 4294967296) (tag 26) (write-bytes (integer->integer-bytes n 4 #f #t) out)]
-    [(<= n MAX-UINT64) (tag 27) (write-bytes (integer->integer-bytes n 8 #f #t) out)]
-    [else (error 'drisl-encode "argument ~a exceeds 2^64-1" n)]))
+    [(< n INLINE-LIMIT) (tag n)]
+    [else
+     (define f (for/first ([f (in-list HEAD-FORMS)] #:when (< n (head-form-limit f))) f))
+     (unless f (error 'drisl-encode "argument ~a exceeds 2^64-1" n))
+     (tag (head-form-ai f))
+     (write-argument n (head-form-width f) out)]))
 
 ;; --- Decoding -----------------------------------------------------------------
 
@@ -210,16 +246,15 @@
 ;; function is what makes `1801` (1 written in two bytes) an error rather than 1 —
 ;; and it is load-bearing for content addressing, not pedantry.
 (define (read-count in ai)
-  (define (wide n bytes least)
-    (when (< n least)
-      (fail "~a is written in ~a bytes but fits in fewer; DRISL heads are minimal" n bytes))
-    n)
+  (define f (for/first ([f (in-list HEAD-FORMS)] #:when (= ai (head-form-ai f))) f))
   (cond
-    [(< ai 24) ai]
-    [(= ai 24) (wide (read-byte! in) 1 24)]
-    [(= ai 25) (wide (integer-bytes->integer (read-bytes! in 2) #f #t) 2 256)]
-    [(= ai 26) (wide (integer-bytes->integer (read-bytes! in 4) #f #t) 4 65536)]
-    [(= ai 27) (wide (integer-bytes->integer (read-bytes! in 8) #f #t) 8 4294967296)]
+    [(< ai INLINE-LIMIT) ai]
+    [f
+     (define n (read-argument in (head-form-width f)))
+     (when (< n (head-form-least f))
+       (fail "~a is written in ~a byte~a but fits in fewer; DRISL heads are minimal"
+             n (head-form-width f) (if (= 1 (head-form-width f)) "" "s")))
+     n]
     [(= ai 31) (fail "indefinite lengths are not in DRISL")]
     [else (fail "additional information ~a is reserved" ai)]))
 
@@ -271,4 +306,12 @@
        (fail "NaN and infinities are not in the DRISL data model"))
      x]
     [(31) (fail "indefinite-length break outside any indefinite-length item")]
+    ;; ai 24 puts the simple value in the NEXT byte, so the nibble is not the
+    ;; value — read it, or the message names the head instead of what was wrong.
+    [(24)
+     (define v (read-byte! in))
+     (if (< v 32)
+         (fail "simple value ~a is written in two bytes but fits in one; DRISL heads are minimal" v)
+         (fail "simple value ~a is unassigned" v))]
+    [(28 29 30) (fail "additional information ~a is reserved" ai)]
     [else (fail "simple value ~a is unassigned" ai)]))

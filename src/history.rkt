@@ -28,6 +28,7 @@
          racket/string
          "model.rkt"
          "cache.rkt"    ; read-versioned — the shared versioned-file reader
+         (only-in "drisl.rkt" drisl-encode drisl-decode)
          "trace.rkt")
 
 (provide (struct-out build-record)
@@ -76,7 +77,10 @@
 
 (define (history-file state-dir) (build-path state-dir "history.rktd"))
 (define (graphs-dir state-dir)   (build-path state-dir "graphs"))
-(define (graph-file state-dir h) (build-path (graphs-dir state-dir) (format "~a.rktd" h)))
+;; Named by the snapshot's CID (st-b7v), so the filename IS the content address
+;; rather than a separate naming scheme that could disagree with it. The `.drisl`
+;; extension is for humans; v2's `<sha1>.rktd` files simply stop being looked up.
+(define (graph-file state-dir h) (build-path (graphs-dir state-dir) (format "~a.drisl" h)))
 
 ;; history-append! : path-string symbol graph string (listof trace-record) -> string
 ;; Append one build to the log (creating .stelis/ as needed) and, once per
@@ -103,15 +107,18 @@
 ;; write-graph-snapshot! : path-string graph string -> void
 ;; Persist the topology snapshot once per graph-hash (content-addressed, so a
 ;; repeat is a no-op). Never overwrites an existing snapshot.
+;;
+;; The block carries no envelope — no separate 'version or 'graph-hash beside the
+;; payload — because it no longer needs one: the version is a field INSIDE the
+;; snapshot value (model.rkt's GRAPH-SNAPSHOT-VERSION), and the hash is the
+;; filename, verifiable by re-hashing the bytes rather than by trusting a field
+;; that sits next to them.
 (define (write-graph-snapshot! state-dir g h)
   (define f (graph-file state-dir h))
   (unless (file-exists? f)
     (make-directory* (graphs-dir state-dir))
     (call-with-output-file f #:exists 'error
-      (lambda (o) (write (hash 'version GRAPH-SNAPSHOT-VERSION
-                               'graph-hash h
-                               'snapshot (graph->datum g))
-                         o)))))
+      (lambda (o) (write-bytes (drisl-encode (graph->drisl g)) o)))))
 
 ;; history-load : path-string -> (listof build-record)
 ;; Every readable build, in append (build) order. Missing history ⇒ '(). A line
@@ -197,9 +204,13 @@
 ;; history-graph : path-string string -> (or/c list #f)
 ;; The persisted topology snapshot (graph->datum shape) for a graph-hash, or #f
 ;; when absent/unreadable — reconstruct a past build's graph without Racket.
+;; A v2 snapshot (`<sha1>.rktd`, a versioned s-expression) is not looked up at all
+;; and so reads as absent, which is the same answer a corrupt block gives.
 (define (history-graph state-dir h)
-  (define e (read-versioned (graph-file state-dir h) GRAPH-SNAPSHOT-VERSION))
-  (and e (hash-ref e 'snapshot #f)))
+  (define f (graph-file state-dir h))
+  (and (file-exists? f)
+       (with-handlers ([exn:fail? (lambda (_) #f)])
+         (drisl->graph-datum (drisl-decode (file->bytes f))))))
 
 ;; --- Parsing (a bad line is a miss, never an error) ---------------------------
 

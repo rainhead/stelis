@@ -129,24 +129,15 @@ can't see (dynamic/importlib, baked-in data files) ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
 order-independent digest over its sorted (relative-path → content-hash) tree, and
 exposes those per-file pairs (`tree-hashes`) for per-key observations ·
-[`dasl.rkt`](src/dasl.rkt) the DASL profile of CIDv1 (st-b7v) — sha-256, codec raw
-`0x55` or DRISL `0x71`, RFC 4648 lowercase base32, written clean-room because the
-`base32` package is CROCKFORD. NOT yet wired to anything: sha1 is still the live
-content hash. It exists to retire the three ad-hoc canonical forms (raw bytes,
-`digest-of-pairs`'s `path=hash` lines, `graph-digest`'s `~s` print) with one spec,
-and its parsers REJECT rather than soften, because the DASL suite types every
-malformed CID as `invalid_in` — the decoder is the conformant side ·
-[`drisl.rkt`](src/drisl.rkt) the deterministic CBOR profile those CIDs address:
-one value, exactly one byte sequence, so a sha-256 over it is an IDENTITY rather
-than a fingerprint of some printing. Map keys sort length-first (which is
-simultaneously dag-cbor's rule and RFC 8949's, since DRISL admits no non-string
-keys); `drisl-cid` is the primitive st-1e5 needs — a value's block address.
-Conformance is a RUNNER over [`vendor/dasl-testing`](vendor/dasl-testing), not
-transcribed cases; it runs the `dag-cbor`/`basic`/`dasl-cid` tags and asserts the
-skip count, because the suite's tags contradict each other by design and no one
-implementation passes them all. Still unwired — sha1 remains the live content
-hash, and the payoff (an artifact's roll-up digest BECOMING the CID of its per-key
-block) is st-1e5 ·
+[`dasl.rkt`](src/dasl.rkt) + [`drisl.rkt`](src/drisl.rkt) the CID and the
+deterministic CBOR profile it addresses (ADR 0010, st-b7v): one value, exactly one
+byte sequence, so a sha-256 over it is an IDENTITY rather than a fingerprint of
+some printing. Parsers REJECT rather than soften — the conformance suite types
+every deviation as `invalid_in`, because each would be a SECOND spelling of a value
+that already has one. Conformance is a runner over the pinned
+[`vendor/dasl-testing`](vendor/dasl-testing), not transcribed cases. Adoption is
+incremental: only the graph snapshot is wired so far, so sha1 remains the live
+content hash for artifacts and cache decisions until st-1e5 ·
 [`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted
@@ -156,7 +147,9 @@ st-243) gates IDENTITY vs. the store keyset — both strays and gaps fail ·
 [`history.rkt`](src/history.rkt) append-only, content-addressed build history under
 `.stelis/` — per-build observation records (artifact→hash, plus a per-PART
 refinement: path→hash for `'dir`, column→digest:count for `'db-relation`) + a
-once-per-topology graph snapshot; freshness never reads its sequence (ADR 0005) ·
+once-per-topology graph snapshot, now a DRISL block at `graphs/<cid>.drisl` whose
+FILENAME is the CID of its own bytes (ADR 0010), so corruption is detectable and
+not merely unparseable; freshness never reads its sequence (ADR 0005) ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`delta.rkt`](src/delta.rkt) the H2 delta substrate entry point (st-066): the pure
 per-key delta core — folds a keyed artifact's key-observation timeline into a named

@@ -11,6 +11,8 @@
          "model.rkt"
          "cache.rkt"
          "trace.rkt"
+         "dasl.rkt"
+         "drisl.rkt"
          "history.rkt")
 
 (define tmp (make-temporary-file "stelis-history-test-~a" 'directory))
@@ -61,19 +63,29 @@
 
 ;; --- the graph snapshot ------------------------------------------------------
 
-(check-true (file-exists? (build-path tmp "graphs" (format "~a.rktd" gh1)))
-            "the topology snapshot is written under graphs/<hash>.rktd")
+(define snapshot-file (build-path tmp "graphs" (format "~a.drisl" gh1)))
+
+(check-true (file-exists? snapshot-file)
+            "the topology snapshot is written under graphs/<cid>.drisl")
 (check-equal? (history-graph tmp gh1) (graph->datum g)
               "and reads back as the topology datum")
 (check-false (history-graph tmp "deadbeef") "an unknown graph-hash is #f")
 
+;; The filename is not a name BESIDE the content, it is a name OF the content
+;; (st-b7v): re-addressing the bytes on disk must reproduce it, which is what makes
+;; a silently-corrupted snapshot detectable rather than merely unparseable.
+(check-equal? (cid->string (content->cid (file->bytes snapshot-file) 'drisl)) gh1
+              "the snapshot's filename is the CID of its own bytes")
+
 ;; the snapshot is gated on GRAPH-SNAPSHOT-VERSION, not the build log's version —
 ;; so bumping the record shape can never orphan an unchanged topology snapshot.
-(check-equal? (hash-ref (call-with-input-file
-                            (build-path tmp "graphs" (format "~a.rktd" gh1)) read)
-                        'version)
+;; The version now rides INSIDE the block rather than in an envelope beside it.
+(check-equal? (hash-ref (drisl-decode (file->bytes snapshot-file)) "version")
               GRAPH-SNAPSHOT-VERSION
               "graph snapshots carry their own shape version, decoupled from history's")
+(check-equal? (hash-ref (drisl-decode (file->bytes snapshot-file)) "format")
+              "stelis-graph"
+              "...and say what they are, so a foreign block is not mistaken for one")
 
 ;; --- the observation timeline ------------------------------------------------
 
