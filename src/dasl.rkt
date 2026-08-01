@@ -13,7 +13,7 @@
 ;;
 ;; THIS SLICE IS CID ONLY. DRISL (the CBOR profile) is the next commit, and the
 ;; keyed-observation payoff — where an artifact's roll-up digest BECOMES the CID of
-;; its per-key block, so cache.rkt's asserted "the two granularities can never
+;; the block holding its whole keyed map, so cache.rkt's asserted "the two granularities can never
 ;; disagree" turns structural — is st-1e5. Nothing here is wired into the cache or
 ;; the history yet; sha1 remains the live content hash until it is.
 ;;

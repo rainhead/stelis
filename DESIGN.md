@@ -90,9 +90,10 @@ Each of these is decided. The reason is recorded so it isn't relitigated.
   conventional Datalog domain model. Where "the hash of content" is *heading* is
   settled by [ADR 0010](docs/adr/0010-dasl-primitives-for-state.md) — DASL CIDs
   over DRISL blocks, so a canonical form is a specification rather than a
-  property of Racket's printer — but adoption is deliberately incremental: today
-  only the graph snapshot is addressed that way, and artifacts and cache
-  decisions still hash with sha1 until st-1e5 moves the keyed layer.
+  property of Racket's printer — but adoption is deliberately incremental. CIDs
+  now address the graph snapshot, a `'dir` artifact, and the keyed notes store;
+  sha1 still addresses a plain `'file`, recipe and code hashes, and gate tokens,
+  and remains the per-key leaf value inside a block.
 - **Effects at the boundary.** The derivation core is pure. IO, external API
   ingestion, secrets, and rendering live at declared edges as first-class node
   types — not scattered through the core. Ingestion sits *outside* the hermetic

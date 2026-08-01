@@ -147,8 +147,11 @@ some printing. Parsers REJECT rather than soften — the conformance suite types
 every deviation as `invalid_in`, because each would be a SECOND spelling of a value
 that already has one. Conformance is a runner over the pinned
 [`vendor/dasl-testing`](vendor/dasl-testing), not transcribed cases. Adoption is
-incremental: only the graph snapshot is wired so far, so sha1 remains the live
-content hash for artifacts and cache decisions until st-1e5 ·
+incremental, and the split matters when reading a hash: **CIDs** address the graph
+snapshot, a `'dir` artifact, and the keyed notes store; **sha1** still addresses a
+plain `'file` artifact, recipe and code hashes, and gate tokens, and it is still the
+per-key LEAF value inside a block. So a `'dir` digest and a `'file` digest are not
+the same kind of string — st-1e5 changed the former, not the latter ·
 [`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted
@@ -161,7 +164,9 @@ refinement: path→hash for `'dir`, column→digest:count for `'db-relation`) + 
 once-per-topology graph snapshot. Both the snapshot AND each record's keyed maps
 now live in [`blockstore.rkt`](src/blockstore.rkt) (`.stelis/blocks/<cid>`, st-1e5),
 with the log line naming them by CID — so a build that re-produced an UNCHANGED
-`notes/` map adds no storage, where before it rewrote a line naming every species.
+`notes/` map writes no new BLOCK, where before it rewrote a line naming every
+species. (The log line itself still grows by one line per build; what stops growing
+with the species count is the payload.)
 The swap happens at SERIALIZATION, so `trace-record` still carries real maps and no
 reader (delta, `--moved-keys`, explain) knows about blocks; reading is tolerant of
 the old inline shape, so the accumulated timeline survived without a version bump.

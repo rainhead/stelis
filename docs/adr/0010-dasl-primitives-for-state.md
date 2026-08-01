@@ -71,8 +71,8 @@ content-addressed, already write-once, and has exactly one reader — so a wrong
 costs one snapshot. sha1 remains the live content hash for artifacts and cache
 decisions until the keyed-observation layer moves (st-1e5).
 
-**D6. A keyed artifact's digest is its per-key block's CID — but only where the
-parts constitute the identity** (st-1e5). True for a `'dir` tree and for the keyed
+**D6. A keyed artifact's digest is the CID of the block holding its WHOLE keyed map
+— but only where the parts constitute the identity** (st-1e5). True for a `'dir` tree and for the keyed
 notes store. **Not** true for a `db-relation`, whose identity is
 `relation-digest.rkt`'s row-coherent digest: per-column multiset digests alone
 false-skip on a cross-row value swap, which st-d5d proved. Its per-column parts ride
