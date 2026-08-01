@@ -36,7 +36,9 @@ Stelis is the build system. `~/dev/beeatlas` and `~/dev/salishsea-io` are
 
 Toolchain: **Racket v9.2 CS** (on `PATH` at `/Applications/Racket v9.2`). Core is
 `#lang racket/base` under [`src/`](src/); the Datalog planner needs the `datalog`
-package (`raco pkg install datalog`). No build step — Racket compiles on demand.
+package (`raco pkg install datalog`) and the DASL CIDs need `sha`
+(`raco pkg install sha` — unlike `datalog`, it is NOT in the full distribution, so
+CI installs it explicitly). No build step — Racket compiles on demand.
 
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
@@ -127,6 +129,15 @@ can't see (dynamic/importlib, baked-in data files) ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact via an
 order-independent digest over its sorted (relative-path → content-hash) tree, and
 exposes those per-file pairs (`tree-hashes`) for per-key observations ·
+[`dasl.rkt`](src/dasl.rkt) the DASL profile of CIDv1 (st-b7v) — sha-256, codec raw
+`0x55` or DRISL `0x71`, RFC 4648 lowercase base32, written clean-room because the
+`base32` package is CROCKFORD. NOT yet wired to anything: sha1 is still the live
+content hash. It exists to retire the three ad-hoc canonical forms (raw bytes,
+`digest-of-pairs`'s `path=hash` lines, `graph-digest`'s `~s` print) with one spec,
+and its parsers REJECT rather than soften, because the DASL suite types every
+malformed CID as `invalid_in` — the decoder is the conformant side. DRISL and the
+payoff (an artifact's roll-up digest BECOMING the CID of its per-key block) are
+st-1e5 ·
 [`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted

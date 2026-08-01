@@ -28,6 +28,12 @@ jobs:
           variant: 'CS'
           distribution: 'full'
 
+      # `sha` (sha-256, for the DASL CIDs in dasl.rkt) is NOT in the full
+      # distribution — unlike datalog above — so it does install as a user package,
+      # with no wider-scope conflict to avoid.
+      - name: Install sha
+        run: raco pkg install --auto --batch sha
+
       # The suite is hermetic and undemanding: pure-core units over synthetic
       # graphs plus integration checks against the in-repo beeatlas graph. No
       # network and no external checkout. The DuckDB-backed tests (relation
