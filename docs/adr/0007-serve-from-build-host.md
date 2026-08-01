@@ -2,6 +2,8 @@
 
 **Status:** accepted · **Horizon:** 2 · **Date:** 2026-07-17
 **Amended:** 2026-07-17 (Model Y — see Amendment below; revises decision #2).
+**Amended:** 2026-08-01 (multi-author — see Amendment below; records decision #3's
+expired premise and corrects Model Y's cost line).
 
 Resolves the open server pivot (`docs/server-pivot-discussion.md`) by splitting
 it: the **serving substrate moves to the build host now** (beeatlas.net served by
@@ -141,3 +143,26 @@ loss is ~18s on a rare no-op nightly. Fine single-user, for now.
 (postbuild + slim manifest, slim `manifest.ts`); (C) `nightly.sh` shrink +
 duckdb-local; (D) CDK duckdb-backup relocation; (E) st-nee write path. st-vjd
 teardown last (now also depends on D).
+
+## Amendment — the single-author premise expires (2026-08-01, st-1aw)
+
+Advertising the site and inviting authors retires decision #3's "Slow POSTs are
+accepted (single author)". (Decision #1's "single-user stakes, downtime accepted"
+governed the DNS flip — a one-time act, completed 2026-07-17, not re-violable.)
+
+Whether the POST must still block on the publish was re-opened and **decided in
+beeatlas**, not here: ADR 0018 (coalescing publish queue) — it still blocks.
+Recorded there rather than re-argued here.
+
+**Correction to the Model Y amendment.** Its "Cost accepted: the render runs
+unconditionally (~18s) per note write AND per nightly — Stelis's
+content-addressed early-cutoff render-skip is gone" is **superseded**. The
+render-skip came back, but not the way Model Y gave it up: not as early cutoff
+over a `site` node in the graph (that node left, and stays out), but as
+beeatlas's own build receipt gated by Stelis's per-key delta — `--moved-keys`
+over the `notes/` observation history (`delta.rkt`, st-066), consumed by
+beeatlas's ADR 0017 (scoped note render). That is the first consumer of a Stelis
+delta by a targeted step *outside* the engine.
+
+Decision #4's deferral and Model Y #1's "provisional" both stand; the reason that
+could reclaim the render is per-page provenance (st-hdm), not render speed.
