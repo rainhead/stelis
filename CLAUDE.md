@@ -135,9 +135,18 @@ exposes those per-file pairs (`tree-hashes`) for per-key observations ·
 content hash. It exists to retire the three ad-hoc canonical forms (raw bytes,
 `digest-of-pairs`'s `path=hash` lines, `graph-digest`'s `~s` print) with one spec,
 and its parsers REJECT rather than soften, because the DASL suite types every
-malformed CID as `invalid_in` — the decoder is the conformant side. DRISL and the
-payoff (an artifact's roll-up digest BECOMING the CID of its per-key block) are
-st-1e5 ·
+malformed CID as `invalid_in` — the decoder is the conformant side ·
+[`drisl.rkt`](src/drisl.rkt) the deterministic CBOR profile those CIDs address:
+one value, exactly one byte sequence, so a sha-256 over it is an IDENTITY rather
+than a fingerprint of some printing. Map keys sort length-first (which is
+simultaneously dag-cbor's rule and RFC 8949's, since DRISL admits no non-string
+keys); `drisl-cid` is the primitive st-1e5 needs — a value's block address.
+Conformance is a RUNNER over [`vendor/dasl-testing`](vendor/dasl-testing), not
+transcribed cases; it runs the `dag-cbor`/`basic`/`dasl-cid` tags and asserts the
+skip count, because the suite's tags contradict each other by design and no one
+implementation passes them all. Still unwired — sha1 remains the live content
+hash, and the payoff (an artifact's roll-up digest BECOMING the CID of its per-key
+block) is st-1e5 ·
 [`fan-out-key.rkt`](src/fan-out-key.rkt) verifies a `'dir` output is the right SET —
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted
