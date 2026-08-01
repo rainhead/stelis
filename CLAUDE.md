@@ -44,7 +44,8 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
   `--explain <target>` (why would each task run or skip?; `--last` for what the
   last `--build` actually did) ·
-  `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog) ·
+  `--why <task-or-artifact>` (the transitive why-stale chain, via Datalog — PROSPECTIVE;
+  as `<artifact>:<key>` it flips to the RETROSPECTIVE per-key question, st-nbu) ·
   `--history` (browse recorded builds; `--history <artifact>` for its hash timeline) ·
   `--block <cid>` (print a stored block as a readable datum — state is
   content-addressed and binary since ADR 0010, and this is the way back out) ·
@@ -187,6 +188,17 @@ species moved. Its three answers stay distinct on purpose — a delta, 'not-prod
 `'input-changed` decision into that named delta for a PENDING build, so `--why` /
 `--explain` name WHICH keys of a changed input are about to move (`explain.rkt`/
 `decision->string` stay pure; this is the only IO seam) ·
+[`key-blame.rkt`](src/key-blame.rkt) provenance that reaches a KEY (st-nbu, the
+capability st-hdm's per-page-provenance case rests on): `--why <artifact>:<key>` walks
+BACKWARD through the observation history — key K moved at build B, the trace-record
+there carries the decision that build RECORDED (read, never re-derived), and each named
+input with a per-key timeline contributes its own moved keys AT B, recursively. The
+`at-or-before` bound is what keeps a branch pinned to the build that moved its consumer
+instead of drifting to the newest thing that ever happened to it. Deliberately maps NO
+key onto another artifact's keys (beeatlas ADR 0017: that would put a beeatlas naming
+convention in the engine), so the chain fans out — exact in the one-note-one-page case,
+honest otherwise; fan-out-key's manifest arm is the declared hook if narrowing is ever
+earned. Pure walk over a `kobs-of` lookup, IO seam in main.rkt ·
 [`taxon-inherit.rkt`](src/taxon-inherit.rkt) the H2 reasoning beachhead's PURE core
 (st-ozp, ADR 0008): curated trait assertions at a high rank inherited down the
 taxonomic rank tree by Datalog closure, each derived fact carrying the asserting

@@ -6,7 +6,8 @@
 ;;   racket src/main.rkt --commands occurrences.db         ; dry-run: print commands
 ;;   racket src/main.rkt --explain occurrences.db          ; why would each task run/skip?
 ;;   racket src/main.rkt --why occurrences.db              ; why is it stale? (transitive;
-;;   racket src/main.rkt --why dbt-build                   ;  a task or an artifact)
+;;   racket src/main.rkt --why dbt-build                   ;  a task or an artifact) — PROSPECTIVE
+;;   racket src/main.rkt --why species-maps:genus/Bombus.svg  ; why does ONE KEY look like that? — RETROSPECTIVE
 ;;   racket src/main.rkt --explain --last                  ; what did the last build do?
 ;;   racket src/main.rkt --run generate-sqlite             ; execute one TASK
 ;;   racket src/main.rkt --build occurrences.db            ; execute the whole plan
@@ -34,6 +35,7 @@
          "history.rkt"
          "delta.rkt"
          "delta-explain.rkt"
+         "key-blame.rkt"
          "blockstore.rkt"
          (only-in "dasl.rkt" cid? cid->string)
          "determinism.rkt")
@@ -52,7 +54,7 @@
                    (mode 'commands)]
    [("--explain") "print why each task in TARGET's plan would run or be skipped"
                   (mode 'explain)]
-   [("--why") "why is NAME (a task or artifact) stale? the transitive chain, via Datalog"
+   [("--why") "why is NAME (a task or artifact) stale? the transitive chain, via Datalog. NAME as ARTIFACT:KEY instead asks the retrospective per-key question: why does that member look the way it does?"
               (mode 'why)]
    [("--run") "execute the named TASK as a subprocess (output to a scratch dir)"
               (mode 'run)]
@@ -520,6 +522,56 @@
                                  (list (cons "SOURCE_DATE_EPOCH"
                                              (beeatlas-source-date-epoch))))
              0 1))]
+
+  ;; --- why does ONE KEY of a keyed artifact look the way it does? ---------
+  ;; `--why <artifact>:<key>` (st-nbu) — provenance that reaches a KEY, not just a
+  ;; node. Split on the FIRST colon: no task or artifact name in the graph carries
+  ;; one, while keys are relative paths that freely carry `/` and `.`.
+  ;;
+  ;; THIS ARM IS RETROSPECTIVE; the whole-artifact arm below is PROSPECTIVE. The
+  ;; same flag asks two tenses, and the header says so on every run, because the
+  ;; difference is not cosmetic: "what would rebuild this now" and "why does this
+  ;; published file say what it says" have different answers the moment anything
+  ;; has changed since the last build. The backward question is the one no
+  ;; renderer can answer for itself (st-hdm), and it is only answerable from the
+  ;; recorded history — so it reads decisions as they were RECORDED and never
+  ;; re-fingerprints the world.
+  [(and (eq? (mode) 'why) (regexp-match #rx"^([^:]+):(.+)$" (symbol->string name)))
+   => (lambda (m)
+        (define art (string->symbol (cadr m)))
+        (define key (caddr m))
+        ;; A name that isn't in the graph is a typo, and must not reach the walk —
+        ;; there it is indistinguishable from a real artifact never built.
+        (unless (hash-ref (graph-artifacts beeatlas-graph) art #f)
+          (eprintf "~a — no artifact by that name in the graph.\n" art)
+          (exit 1))
+        (define builds (history-load stelis-state))
+        (when (null? builds)
+          (eprintf "~a — no build history under ~a/; nothing to explain.\n~a"
+                   art (path->string stelis-state) (state-dir-note))
+          (exit 1))
+        ;; one read per artifact, not one per node: history-key-observations
+        ;; re-parses the whole log, and the chain revisits artifacts.
+        (define cache (make-hash))
+        (define (kobs-of a)
+          (hash-ref! cache a (lambda () (history-key-observations stelis-state a))))
+        (define node (key-blame-tree art key kobs-of))
+        (case node
+          [(no-timeline)
+           (printf "~a has no per-key observations — nothing to ask about a key.\n" art)
+           (printf "  (not a keyed artifact, or never built. Ask `--why ~a`.)\n" art)
+           (exit 1)]
+          [(unknown-key)
+           (printf "~a — no key `~a` in ~a's recorded timeline.\n" art key art)
+           (printf "  (`--history ~a` lists the keys it has carried.)\n" art)
+           (exit 1)]
+          [(never-moved)
+           (printf "~a:~a has never moved — present since ~a's first recorded observation, unchanged since.\n"
+                   art key art)]
+          [else
+           (printf "~a:~a — why this key last moved (RETROSPECTIVE, from the observation history).\n" art key)
+           (printf "  (`--why ~a` asks the prospective question: what would rebuild it now.)\n\n" art)
+           (print-key-blame node short-hash)]))]
 
   ;; --- why is NAME stale? (a task or an artifact) -------------------------
   ;; The subject scopes its own plan: an artifact's plan is its minimal
