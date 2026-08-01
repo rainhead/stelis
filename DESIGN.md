@@ -87,10 +87,12 @@ Each of these is decided. The reason is recorded so it isn't relitigated.
   content, not mtime. Datasets are modeled functionally as transformations over
   other datasets, versioned by hash; this refines down toward records as
   functions of records and attributes as functions of attributes, landing at a
-  conventional Datalog domain model. What "the hash of content" *means* is
-  settled by [ADR 0010](docs/adr/0010-dasl-primitives-for-state.md): DASL CIDs
+  conventional Datalog domain model. Where "the hash of content" is *heading* is
+  settled by [ADR 0010](docs/adr/0010-dasl-primitives-for-state.md) — DASL CIDs
   over DRISL blocks, so a canonical form is a specification rather than a
-  property of Racket's printer.
+  property of Racket's printer — but adoption is deliberately incremental: today
+  only the graph snapshot is addressed that way, and artifacts and cache
+  decisions still hash with sha1 until st-1e5 moves the keyed layer.
 - **Effects at the boundary.** The derivation core is pure. IO, external API
   ingestion, secrets, and rendering live at declared edges as first-class node
   types — not scattered through the core. Ingestion sits *outside* the hermetic
