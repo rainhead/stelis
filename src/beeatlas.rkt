@@ -57,7 +57,11 @@
          beeatlas-resolve-relation-columns
          beeatlas-resolve-store-keys
          beeatlas-partial-tasks
-         beeatlas-source-date-epoch)
+         beeatlas-source-date-epoch
+         ;; exported for the drift check in beeatlas-contract-test.rkt (st-ljy):
+         ;; this list mirrors beeatlas's own by hand, so something has to compare them
+         precompressed-artifacts
+         BEEATLAS)
 
 ;; --- Hermetic runtimes ------------------------------------------------------
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
@@ -144,14 +148,21 @@
                              "stelis-node")
                        "node/.nvmrc")))
 
-;; The `node' runtime's PIN, as task code (st-top). The launch prefix sources nvm and
-;; runs `nvm use', so which interpreter a node task actually gets is decided by
-;; beeatlas's .nvmrc — not by anything in the argv, which is all the recipe hash covers.
-;; The two are not interchangeable: gzip -9 of the same 33.8 MB database is 5,208,681
-;; bytes under node 24.18 and 5,203,283 under 26 (measured 2026-08-02, st-ljy). Both are
-;; valid gzip and decode identically, so nothing breaks — the output simply changes for a
-;; reason the cache could not see, which is the failure mode content-addressing exists to
-;; prevent. Every `node' recipe hashes it.
+;; The `node' runtime's PIN, as task code (st-top). The interpreter is an input to the
+;; BYTES, not just to the behaviour: gzip -9 of the same 33.8 MB database is 5,208,681
+;; bytes under node 24.18 and 5,203,283 under 26 (measured 2026-08-02, st-ljy — the zlib
+;; builds differ; brotli 1.2.0 was byte-identical across both). Both decode identically,
+;; so nothing breaks — the output simply moves for a reason the cache cannot see, which
+;; is what content-addressing exists to prevent. The launch prefix sources nvm and runs
+;; `nvm use', so none of this is in the argv the recipe hash covers. Every `node' recipe
+;; hashes .nvmrc.
+;;
+;; PARTIAL, deliberately, and the gap is worth knowing: .nvmrc holds `24.18', a RANGE.
+;; Installing 24.18.1 changes the interpreter with the file unmoved, and on a host with
+;; no nvm the runtime warns and uses whatever `node' is on PATH (see the runtime above).
+;; So this catches a deliberate pin edit, not every interpreter change. Closing it means
+;; hashing the resolved `node --version', which is a probe at PLAN time — the same
+;; question SOURCE_DATE_EPOCH answers by deferring to exec time (st-7lm territory).
 (define node-runtime-code (list (build-path BEEATLAS ".nvmrc")))
 
 ;; --- Physical placement, declared once (st-bft) ------------------------------
@@ -984,9 +995,11 @@
    ;; The list is beeatlas's own (scripts/build-app.mjs BUNDLE_INPUTS), which is
    ;; the gate this replaces — package-lock.json because a dependency bump
    ;; changes the emitted chunks, and the env files because Vite bakes VITE_*
-   ;; values INTO them (VITE_MAPBOX_TOKEN, VITE_DATA_BASE_URL,
-   ;; VITE_NOTES_API_BASE_URL). Only a file's HASH is recorded, never its
-   ;; content, so a secret never reaches the history or a log.
+   ;; values INTO them — VITE_DATA_BASE_URL and VITE_NOTES_API_BASE_URL, which
+   ;; are the whole of it since beeatlas-q73 self-hosted the basemap and retired
+   ;; VITE_MAPBOX_TOKEN (beeatlas src/env.d.ts says so; a stale line survives in
+   ;; the local .env, which is what made it look current). Only a file's HASH is
+   ;; recorded, never its content, so a secret never reaches the history or a log.
    ;;
    ;; All FOUR env files Vite loads in production mode are declared, though only
    ;; `.env` exists (st-e4y): as `optional-code', an absent one addresses to a

@@ -97,10 +97,14 @@ a pure function of a content-addressed input, so here early cutoff runs it when 
 DATA moves and the publish copies (measured 2.75s → 0.15s). WHICH artifacts rides
 on argv rather than being read from beeatlas's own list by the script — a script
 compressing more than the graph declared would move this dir's digest with no
-declared input change, which is a wrong skip. Both node tasks now hash `.nvmrc` as
-code (`node-runtime-code`): the launch prefix sources nvm, so the PIN decides the
-interpreter and nothing in the argv does — gzip -9 of the same db is 5,208,681
-bytes under node 24.18 and 5,203,283 under 26 ·
+declared input change, which is a wrong skip. A sibling is named for its source's
+CONTENT hash, so a `compressed/` the publish path did not just rebuild is not found
+and the publish falls back — without that, `publish-notes.sh` (which never runs this
+node) would ship yesterday's db under today's immutable URL. Both node tasks also
+hash `.nvmrc` as code (`node-runtime-code`) — the interpreter is an input to the
+BYTES: gzip -9 of the same db is 5,208,681 under node 24.18 and 5,203,283 under 26.
+PARTIAL: `.nvmrc` is a RANGE (`24.18`), so a patch bump moves the interpreter with
+the file unmoved ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
 rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and
