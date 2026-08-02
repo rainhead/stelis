@@ -1008,6 +1008,16 @@
    ;; exists would make a `.env.production` appearing later invisible to the
    ;; cache — beeatlas ADR 0019's expensive case (rotate the token, the gate
    ;; skips nightly, the live site keeps serving the revoked one).
+   ;;
+   ;; INCLUDING `.env`, which does exist here — raised in review (2026-08-02) on
+   ;; the grounds that it is gitignored and host-local, so making it optional lets
+   ;; a host WITHOUT one skip forever on a bundle built with no VITE_* values,
+   ;; where before it would have reran forever. Peter's call, and it is the right
+   ;; one: absence is a legitimate state for all four, and beeatlas's own gate
+   ;; agrees (build-app.mjs's walk() returns [] for a path that isn't there, so a
+   ;; missing .env contributes nothing to its digest either). Declaring `.env`
+   ;; required would make Stelis stricter than the gate it replaces about a file
+   ;; whose absence Vite itself treats as ordinary.
    (make-task 'app-bundle 'transform
               #:inputs '() #:outputs '(app-bundle)
               #:invoke (recipe 'node (list "npm" "run" "build:bundle")
