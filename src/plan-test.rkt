@@ -23,18 +23,21 @@
 ;;    DOWNSTREAM of occurrences.db, it is disconnected from it entirely — the
 ;;    bundle has no data inputs at all (st-hdm step 2), so no data target ever
 ;;    reaches it.
+;;    precompress is pruned for the ordinary reason, and is worth a word anyway:
+;;    it CONSUMES occurrences.db (st-ljy), so it is downstream of the target rather
+;;    than upstream of it — building the db does not compress it.
 (check-equal? (list->set pruned)
               (set 'dedup-candidates 'dedup-gate 'topology-postprocess
                    'species-export 'species-maps 'places-export 'taxon-presence-export
                    'collectors-export 'collectors-events-export
                    'notes-harvest 'taxon-reasoning
-                   'places-maps 'feeds 'place-marts 'app-bundle)
+                   'places-maps 'feeds 'place-marts 'app-bundle 'precompress)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
 (check-equal? (length ordered) 24
               "24 tasks upstream of occurrences.db (+ the integrity gate st-0vz, + the correction drift gate st-t4t, + dem-elevation beeatlas-sn8)")
-(check-equal? (+ (length ordered) (set-count pruned)) 39
-              "39 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t, + dem-elevation beeatlas-sn8, + taxon-presence-export beeatlas-0of.2, + app-bundle st-hdm)")
+(check-equal? (+ (length ordered) (set-count pruned)) 40
+              "40 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t, + dem-elevation beeatlas-sn8, + taxon-presence-export beeatlas-0of.2, + app-bundle st-hdm, + precompress st-ljy)")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download

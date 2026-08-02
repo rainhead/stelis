@@ -144,6 +144,16 @@
                              "stelis-node")
                        "node/.nvmrc")))
 
+;; The `node' runtime's PIN, as task code (st-top). The launch prefix sources nvm and
+;; runs `nvm use', so which interpreter a node task actually gets is decided by
+;; beeatlas's .nvmrc — not by anything in the argv, which is all the recipe hash covers.
+;; The two are not interchangeable: gzip -9 of the same 33.8 MB database is 5,208,681
+;; bytes under node 24.18 and 5,203,283 under 26 (measured 2026-08-02, st-ljy). Both are
+;; valid gzip and decode identically, so nothing breaks — the output simply changes for a
+;; reason the cache could not see, which is the failure mode content-addressing exists to
+;; prevent. Every `node' recipe hashes it.
+(define node-runtime-code (list (build-path BEEATLAS ".nvmrc")))
+
 ;; --- Physical placement, declared once (st-bft) ------------------------------
 ;; Where each file artifact lives is one fact per artifact, kept in the four lists
 ;; below; everything downstream (the @export copies, place-marts' copy edge,
@@ -182,6 +192,18 @@
     taxon_presence.json
     species_reasoning.json))
 
+;; The artifacts the CLIENT fetches at runtime, and so the ones worth compressing
+;; ahead of the publish (st-ljy). Mirrors the `source' values in beeatlas's
+;; lib/runtime-artifacts.js, which is the contract's home — this list is the SET the
+;; precompress node declares as inputs and passes on argv, so the graph edge and the
+;; work stay the same set. Drift (beeatlas publishes an eighth artifact, this list
+;; doesn't) degrades safely: postbuild-data compresses that one in-process, slowly and
+;; correctly, rather than this node's output changing without a declared input change.
+(define precompressed-artifacts
+  '(occurrences.db
+    counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
+    places.geojson places.json taxon_presence.json))
+
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
 ;; land as a directory of per-entity files under EXPORT_DIR — species_maps writes
 ;; EXPORT_DIR/species-maps/, places_maps EXPORT_DIR/place-maps/, feeds EXPORT_DIR/
@@ -198,7 +220,12 @@
 ;; top-level, consuming these artifacts via `npm run fetch-data`. The `site`
 ;; task + site-src leaves that briefly lived here (st-ak1) were reverted; the
 ;; EXPORT_DIR reader seam (beeatlas lib/build-data-dir.js) is what survives.
-(define export-dir-dirs '(species-maps place-maps feeds notes))
+;; `compressed' (st-ljy) is the odd one: not a per-entity fan-out but the compressed
+;; REPRESENTATIONS of the runtime artifacts, which the site build copies to their hashed
+;; names at publish (beeatlas ADR 0024). Still a 'dir for the same reason the others are
+;; — a derived output SET with one producer, and the set is data-dependent because a
+;; variant is only written when it clears a size threshold.
+(define export-dir-dirs '(species-maps place-maps feeds notes compressed))
 
 ;; The authoritative notes STORE (st-msn): the SQLite file notes-harvest reads
 ;; read-only. A fixed absolute path OUTSIDE the beeatlas repo (D-15), from
@@ -552,6 +579,22 @@
                                 (list (list "collector" "ecdysis_data.occurrences" "recorded_by")
                                       (list "genus"     "ecdysis_data.occurrences" "genus"))
                                 (list "index.json" "determinations.xml")))
+   ;; --- the compressed representations (st-ljy) ---
+   ;; `compressed/`: one `<artifact><.br|.gz>` per runtime artifact worth compressing.
+   ;; NOT a second copy of the data — the same bytes in the representation a client
+   ;; actually downloads, which beeatlas ADR 0024 established and put in the publish
+   ;; step. This node is the half that moves it off that path: `postbuild-data.mjs`
+   ;; runs on `build:content`, the NOTE-PUBLISH path, and rebuilds `_site/data`
+   ;; wholesale with no cache, so a note write spent ~2.9 s recompressing a 34 MB
+   ;; database that changes once a night. Compression is a pure function of a
+   ;; content-addressed input, which is the definition of an edge here, so early
+   ;; cutoff produces these when the DATA moves and not when a note does.
+   ;;
+   ;; A plain 'dir with no #:keyed-by: its members ARE the declared inputs' names
+   ;; (plus a suffix), so a fan-out key would restate the input list rather than check
+   ;; anything the graph doesn't already say. The producer prunes what it didn't write,
+   ;; which is what makes the tree digest settle — the same argument as app-bundle's.
+   (make-artifact 'compressed                   'dir)
    ;; --- the site's app bundle (st-hdm step 2) ---
    ;; `_site/assets`: the hashed JS/CSS/wasm chunks Vite emits. The FIRST half of
    ;; reclaiming the render into the graph (ADR 0007's per-page-provenance
@@ -896,6 +939,36 @@
    (make-task 'feeds 'transform
               #:inputs '(ecdysis_data) #:outputs '(feeds)
               #:invoke (py "feeds" "main"))
+   ;; --- pre-compression (st-ljy) -------------------------------------------
+   ;; The runtime artifacts' `.br`/`.gz` representations, produced once per data
+   ;; change instead of once per publish. See the artifact for why it is a node at
+   ;; all; what is worth saying here is the two things holding it together.
+   ;;
+   ;; WHICH ARTIFACTS travels on argv rather than being read from
+   ;; lib/runtime-artifacts.js by the script. Both would work until they disagreed,
+   ;; and disagreement has a direction that matters: a script compressing MORE than
+   ;; the graph declared would change this dir's digest with no declared input
+   ;; change — a wrong skip. Passing the set makes the edge authoritative, and the
+   ;; args are part of the recipe hash, so editing the list reads as
+   ;; `recipe-changed`.
+   ;;
+   ;; ITS CODE is hand-listed, unlike the `py` tasks (st-6ga scans their imports) —
+   ;; there is no JS import scan here, so the two local modules the script pulls in
+   ;; are named explicitly. The st-egh failure mode applies: a NEW import inside
+   ;; lib/precompress.js would change what this node does while its recorded
+   ;; code-hashes sit still. Compression policy lives in that one file, which is why
+   ;; the list is short enough to keep honest by eye.
+   (make-task 'precompress 'transform
+              #:inputs precompressed-artifacts
+              #:outputs '(compressed)
+              #:invoke (recipe 'node
+                               (append (list "node" "scripts/precompress-artifacts.mjs")
+                                       (map ~a precompressed-artifacts))
+                               (append
+                                (list (build-path BEEATLAS "scripts" "precompress-artifacts.mjs")
+                                      (build-path BEEATLAS "lib" "precompress.js")
+                                      (build-path BEEATLAS "lib" "build-data-dir.js"))
+                                node-runtime-code)))
    ;; --- the app bundle (st-hdm step 2) ------------------------------------
    ;; The first task with NO data inputs. The bundle is a function of source
    ;; code and nothing else — no artifact upstream of it, so its plan is one
@@ -931,6 +1004,7 @@
                                       (build-path BEEATLAS "vite.sw.config.ts")
                                       (build-path BEEATLAS "package.json")
                                       (build-path BEEATLAS "package-lock.json"))
+                                node-runtime-code
                                 (for/list ([f (in-list VITE-ENV-FILES)])
                                   (optional-code (build-path BEEATLAS f))))))
    ;; --- taxon reasoning: the first transform INSIDE the engine (st-ozp) ---

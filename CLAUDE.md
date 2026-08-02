@@ -88,7 +88,19 @@ the cache (beeatlas ADR 0019: rotate the token, the gate skips nightly, the live
 site keeps serving the revoked one). The step-3 cutover is still pending — the
 site build's `build:app` rebuilds the bundle itself, so this node's run is
 redundant — but it is NOT un-called: the nightly's `--all` covers every target,
-which now includes it (st-hdm notes, 2026-08-02) ·
+which now includes it (st-hdm notes, 2026-08-02). `precompress` (st-ljy) is the
+second non-data node, and the first whose output is a REPRESENTATION rather than a
+dataset: `compressed/`, the `.br`/`.gz` siblings of the seven runtime artifacts.
+beeatlas ADR 0024 established those and put them in the PUBLISH step, where they
+cost ~2.9s on every note write for a 34 MB db that changes nightly; compression is
+a pure function of a content-addressed input, so here early cutoff runs it when the
+DATA moves and the publish copies (measured 2.75s → 0.15s). WHICH artifacts rides
+on argv rather than being read from beeatlas's own list by the script — a script
+compressing more than the graph declared would move this dir's digest with no
+declared input change, which is a wrong skip. Both node tasks now hash `.nvmrc` as
+code (`node-runtime-code`): the launch prefix sources nvm, so the PIN decides the
+interpreter and nothing in the argv does — gzip -9 of the same db is 5,208,681
+bytes under node 24.18 and 5,203,283 under 26 ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
 rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and
