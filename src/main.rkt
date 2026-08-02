@@ -36,6 +36,7 @@
          "delta.rkt"
          "delta-explain.rkt"
          "key-blame.rkt"
+         "rebuild-policy.rkt"
          "blockstore.rkt"
          (only-in "dasl.rkt" cid? cid->string)
          "determinism.rkt")
@@ -186,10 +187,15 @@
 ;; The run-plan #:rebuild-keys-of hook (st-pd1): the (rebuild-keys . removed-relpaths)
 ;; that makes a partial-capable task a TARGETED rebuild, or #f for a full one. For a
 ;; partial-capable task about to rerun on a changed keyed input, fold the H1
-;; prospective delta into the canonical_names to re-harvest (added+changed) and the
-;; output files to prune (removed → "<name>.json"). #f (full) unless there is a real
-;; per-key delta; run-plan additionally requires the prior 'dir output to match its
-;; last clean-run receipt (prior-complete-build?, st-243) — a verified merge basis.
+;; prospective delta into the two lists. #f (full) unless there is a real per-key
+;; delta; run-plan additionally requires the prior 'dir output to match its last
+;; clean-run receipt (prior-complete-build?, st-243) — a verified merge basis.
+;;
+;; WHAT EACH DELTA ARM MEANS is rebuild-policy.rkt's job, not this one's (st-qxq).
+;; It used to be inlined here as one fixed partition — rebuild = added+changed,
+;; prune = removed + ".json" — which is right for notes-harvest and wrong for any
+;; task whose output is not keyed by the input it read. This function now decides
+;; only WHETHER to go partial; the policy module decides what partial means.
 (define (beeatlas-rebuild-keys-of name)
   (and (memq name beeatlas-partial-tasks)
        (let-values ([(dec _snap) (decision+snapshot beeatlas-graph name benv)])
@@ -197,13 +203,7 @@
               (eq? 'input-changed (decision-reason dec))
               (let ([deltas (input-key-deltas beeatlas-graph dec benv stelis-state)])
                 (and (pair? deltas)
-                     (cons (remove-duplicates
-                            (append-map (lambda (d)
-                                          (append (key-delta-added d) (key-delta-changed d)))
-                                        deltas))
-                           (remove-duplicates
-                            (map (lambda (k) (string-append k ".json"))
-                                 (append-map key-delta-removed deltas))))))))))
+                     (deltas->rebuild+prune beeatlas-graph name deltas)))))))
 
 ;; verify-seeds (st-dtq): the (src . basename) files to copy into a --verify
 ;; suffix's fresh build dir. The suffix's EXTERNAL input artifacts — those not
@@ -519,6 +519,12 @@
    (define to-run (plan-suffix ordered))
    ;; st-6qc: refuse to build a plan whose file/dir outputs can't be verified.
    (check-output-paths-resolvable beeatlas-graph to-run benv)
+   ;; st-qxq: and refuse if a partial-capable task has a shape whose REMOVALS have
+   ;; no safe answer. Checked here, over the whole declared set rather than the
+   ;; plan, because it is a property of how the graph is AUTHORED — it should fail
+   ;; while someone is editing it, not on the rare later build where a key finally
+   ;; disappears and the wrong thing silently happens.
+   (check-partial-tasks beeatlas-graph beeatlas-partial-tasks)
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            (or name "the whole graph") (length to-run)

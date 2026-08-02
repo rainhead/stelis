@@ -136,3 +136,36 @@ SH
 (check-equal? (content2 "a") "a:v3" "…merging into the intact prior build")
 
 (delete-directory/files root)
+
+;; --- the READER arm, end to end (st-qxq) -----------------------------------------
+;; The site-render shape, proven hermetically: a task that CONSUMES a keyed input
+;; but whose own output is not keyed by it. A removed upstream key must reach the
+;; exporter as a key to REBUILD — so the affected file is rewritten WITHOUT the
+;; removed thing — and must NOT be pruned, because the file still belongs in the
+;; output. Under the policy this replaces, that removal was excluded from the
+;; rebuild set AND its prune path did not exist, so it vanished entirely: green
+;; build, stale page, nothing reported.
+;;
+;; The exporter here writes "<key>:<TAG>" exactly as above; what matters is which
+;; keys arrive in STELIS_REBUILD_KEYS and that nothing is deleted.
+(let* ([root3 (make-temporary-file "stelis-reader-~a" 'directory)]
+       [maps3 (build-path root3 "maps")]
+       [env3 (lambda (tag) (list (cons "EXPORT_DIR" (path->string root3)) (cons "TAG" tag)))]
+       [files3 (lambda () (sort (map path->string (directory-list maps3)) string<?))]
+       [content3 (lambda (k) (file->string (build-path maps3 k)))]
+       ;; the reader's own delta partition: removals JOIN the rebuild set
+       [reader-keys (cons '("b" "c") '())])
+  ;; a full build to establish the set
+  (check-eqv? 0 (run-task g 'export runtimes #:env (env3 "v1")))
+  (check-equal? (files3) '("a" "b" "c"))
+  ;; "c" was REMOVED upstream; on the reader arm it is handed back as a rebuild key
+  (check-eqv? 0 (run-task g 'export runtimes #:env (env3 "v2")
+                          #:rebuild-keys (car reader-keys)))
+  (prune-keys! maps3 (cdr reader-keys))
+  (check-equal? (files3) '("a" "b" "c")
+                "the reader arm deletes nothing — the output still belongs in the set")
+  (check-equal? (content3 "c") "c:v2"
+                "the removed upstream key REBUILT its file rather than deleting it")
+  (check-equal? (content3 "b") "b:v2" "and the changed key rebuilt too")
+  (check-equal? (content3 "a") "a:v1" "while an untouched key merged through")
+  (delete-directory/files root3))

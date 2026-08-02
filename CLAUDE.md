@@ -195,6 +195,21 @@ that steers a targeted rebuild inside the engine, handed to a targeted step outs
 so beeatlas's scoped 11ty render and the notes harvest cannot disagree about which
 species moved. Its three answers stay distinct on purpose — a delta, 'not-produced
 (nothing moved, an ANSWER), and 'no-basis (refuse; the caller must rebuild in full) ·
+[`rebuild-policy.rkt`](src/rebuild-policy.rkt) what a delta ARM means to the task
+that consumes it (st-qxq). delta.rkt says which keys moved; this says what to do
+about each, PER TASK, because the answer differs: notes-harvest's output keyspace
+IS its input's, so a removal must delete the file — while the site render's keys
+are page paths, so a removal must RE-RENDER the page without its notes section and
+delete nothing (beeatlas ADR 0017). The policy is READ, not declared twice: `notes`
+is already `(store-keyed 'notes-store.db "{}.json")`, which states the keyspace
+correspondence AND the filename transform as data, so an output store-keyed on the
+changed input takes the prune arm and everything else takes the rebuild arm. An
+`#:on-removed` slot would have been a second source of truth able to contradict it.
+Shapes with no safe answer are refused by `check-partial-tasks` at PRE-BUILD
+validation — so a graph-authoring mistake fails while the graph is being edited,
+not on the rare later build where a key finally disappears. Pruning stays reserved
+to store-keyed identity: a `fan-out` output is a FILTERED subset, so a key can also
+leave by dropping out of the filter, which pruning would not catch ·
 [`delta-explain.rkt`](src/delta-explain.rkt) the impure adapter that refines a pure
 `'input-changed` decision into that named delta for a PENDING build, so `--why` /
 `--explain` name WHICH keys of a changed input are about to move (`explain.rkt`/
