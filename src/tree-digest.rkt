@@ -27,6 +27,7 @@
 ;; address for "a directory with nothing in it", distinct from #f's "no directory".
 
 (require racket/path
+         racket/list
          racket/string
          file/sha1
          "keyed-block.rkt")
@@ -37,9 +38,25 @@
 ;; Every regular file under `dir', as a SORTED list of "/"-joined relative paths
 ;; (posix separators, so a template like "genus/{}.svg" matches regardless of OS).
 ;; The single directory-walk primitive both tree-digest and fan-out-key.rkt share.
-(define (dir-relpaths dir)
+(define (dir-relpaths dir #:exclude [exclude '()])
   (define root (path->complete-path dir))
-  (sort (for/list ([f (in-directory dir)] #:when (file-exists? f))
+  ;; Excluded roots, as complete paths. A file is skipped when it lies under one
+  ;; of them — which is how a 'dir artifact whose tree also holds ANOTHER
+  ;; artifact's output names only its own extent (st-hdm: _site holds the pages,
+  ;; but assets/ belongs to app-bundle and data/ to the data placement step).
+  ;; Derived from the graph rather than declared, so a new producer carves itself
+  ;; out and cannot be forgotten — see dir-extent.rkt.
+  ;; Exploded elements, not path objects: `/a/b` and `/a/b/` are not `equal?` in
+  ;; Racket. Prefix-on-elements also means `assetsX.html` is not inside `assets/`.
+  (define roots (map (lambda (e) (explode-path (path->complete-path e))) exclude))
+  (define (excluded? f)
+    (define fe (explode-path f))
+    (for/or ([re (in-list roots)])
+      (and (>= (length fe) (length re))
+           (equal? re (take fe (length re))))))
+  (sort (for/list ([f (in-directory dir)]
+                   #:when (file-exists? f)
+                   #:unless (excluded? (path->complete-path f)))
           (string-join (map path->string
                             (explode-path (find-relative-path root (path->complete-path f))))
                        "/"))
@@ -52,9 +69,9 @@
 ;; map the digest rolls up — exposed so per-KEY observations (st-6dv) can record
 ;; which fan-out members changed, and H2 delta propagation can attribute change to
 ;; one key rather than rebuilding the whole set.
-(define (tree-hashes dir)
+(define (tree-hashes dir #:exclude [exclude '()])
   (and (directory-exists? dir)
-       (for/list ([rel (in-list (dir-relpaths dir))])
+       (for/list ([rel (in-list (dir-relpaths dir #:exclude exclude))])
          (cons rel (call-with-input-file (rel->path dir rel) sha1)))))
 
 ;; tree-digest : path-string -> (or/c string #f)
@@ -64,8 +81,8 @@
 ;; It is the CID of `tree-hashes' as a keyed block (st-1e5) — so the digest does not
 ;; merely AGREE with the per-key pairs, it IS their address, and order-independence
 ;; is now the encoding's property rather than a habit of every caller.
-(define (tree-digest dir)
-  (define pairs (tree-hashes dir))
+(define (tree-digest dir #:exclude [exclude '()])
+  (define pairs (tree-hashes dir #:exclude exclude))
   (and pairs (keyed-block-digest pairs)))
 
 ;; rebuild the on-disk path of a "/"-joined relative path under `dir'.

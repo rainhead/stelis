@@ -195,6 +195,22 @@ that steers a targeted rebuild inside the engine, handed to a targeted step outs
 so beeatlas's scoped 11ty render and the notes harvest cannot disagree about which
 species moved. Its three answers stay distinct on purpose — a delta, 'not-produced
 (nothing moved, an ANSWER), and 'no-basis (refuse; the caller must rebuild in full) ·
+[`dir-extent.rkt`](src/dir-extent.rkt) which files a `'dir` artifact actually OWNS
+(st-hdm). A `'dir` meant "this whole tree", which stops being true the moment two
+producers share one: beeatlas's `_site` holds Vite's `assets/`, the data step's
+`data/`, and Eleventy's pages — and the page tree is not a subtree of anything, it
+is `_site` minus two carve-outs plus four loose files at the root. So an artifact
+rooted at P excludes the root of every OTHER `'dir` artifact strictly inside P,
+DERIVED from the graph rather than declared: a `#:excluding` list would be a
+hand-kept mirror of other producers' extents whose failure mode is silent (forget
+it and the outer digest absorbs output it doesn't produce). A new producer carves
+itself out automatically, and an EXACT root collision is refused by
+`check-dir-extents` — a graph bug Stelis previously could not see. Cost accepted:
+an artifact's digest is now a fact about the graph, not the directory alone.
+Applied at ONE seam because `tree-digest` IS `keyed-block-digest` over
+`tree-hashes` (st-1e5), so the roll-up and the parts cannot disagree. Path
+comparison is element-wise (`explode-path` + `simplify-path`): `/a/b` and `/a/b/`
+are not `equal?` in Racket, and `<root>/../elsewhere` is a SIBLING, not a child ·
 [`rebuild-policy.rkt`](src/rebuild-policy.rkt) what a delta ARM means to the task
 that consumes it (st-qxq). delta.rkt says which keys moved; this says what to do
 about each, PER TASK, because the answer differs: notes-harvest's output keyspace

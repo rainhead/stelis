@@ -36,6 +36,8 @@
          input-snapshot
          input-store-snapshot
          artifact-key-parts
+         env-dir-exclusions
+         build-env-resolve-dir-exclusions
          output-snapshot
          output-snapshot+keys
          compare-outputs
@@ -165,7 +167,8 @@
 ;;                      consistent within any env, so no thrash either way.
 (struct build-env
   (resolve export-dir cache-dir
-   resolve-relation resolve-relation-columns resolve-store-keys runtimes)
+   resolve-relation resolve-relation-columns resolve-store-keys runtimes
+   resolve-dir-exclusions)
   #:transparent)
 
 ;; make-build-env : (symbol export-dir -> path?) path-string path-string
@@ -181,10 +184,21 @@
                         #:resolve-relation [resolve-relation #f]
                         #:resolve-relation-columns [resolve-relation-columns #f]
                         #:resolve-store-keys [resolve-store-keys #f]
-                        #:runtimes [runtimes #f])
+                        #:runtimes [runtimes #f]
+                        ;; st-hdm: which nested artifacts a 'dir must NOT count as
+                        ;; its own. Absent, a 'dir means its whole tree — the
+                        ;; behaviour before any directory had two producers.
+                        #:resolve-dir-exclusions [resolve-dir-exclusions #f])
   (build-env resolve export-dir cache-dir
              resolve-relation resolve-relation-columns resolve-store-keys
-             runtimes))
+             runtimes resolve-dir-exclusions))
+
+;; env-dir-exclusions : build-env? symbol -> (listof path)
+;; The roots inside `a` that belong to another artifact. '() when no resolver is
+;; installed, which is every graph where no directory has two producers.
+(define (env-dir-exclusions env a)
+  (define f (build-env-resolve-dir-exclusions env))
+  (if f (f a) '()))
 
 ;; env-resolve : build-env? symbol -> (or/c path-string #f)
 (define (env-resolve env a)
@@ -247,7 +261,7 @@
 ;; whose file is absent by its path).
 ;; With resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
 (define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f]
-                        [runtimes #f] [cache-dir #f])
+                        [runtimes #f] [cache-dir #f] [resolve-dir-exclusions #f])
   (define t (hash-ref (graph-tasks g) name))
   (cond
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
@@ -261,7 +275,7 @@
      (define pairs
        (for/list ([in (in-list data-inputs)])
          (cons in (input-hash g in resolve resolve-relation resolve-store-keys
-                              cache-dir))))
+                              cache-dir resolve-dir-exclusions))))
      ;; each closure member -> (path . hash); a #f hash carries what to NAME —
      ;; the artifact symbol (no path) or the path string (file absent).
      (define code-input-pairs
@@ -342,14 +356,17 @@
 ;; `token-address' (st-ysf). #f (absent/unresolvable) forces a rerun — a keyed
 ;; store whose scan fails falls back to file bytes, and an absent file to #f, so
 ;; unreadable stays conservative.
-(define (input-hash g in resolve resolve-relation resolve-store-keys cache-dir)
+(define (input-hash g in resolve resolve-relation resolve-store-keys cache-dir
+                    [resolve-dir-exclusions #f])
   (define a (hash-ref (graph-artifacts g) in #f))
   (cond
     [(and a (eq? (artifact-kind a) 'db-relation))
      (and resolve-relation (resolve-relation in))]
     [(and a (eq? (artifact-kind a) 'dir))
      (define p (resolve in))
-     (and p (tree-digest p))]
+     (and p (tree-digest p #:exclude (if resolve-dir-exclusions
+                                         (resolve-dir-exclusions in)
+                                         '())))]
     [(and a (eq? (artifact-kind a) 'token))
      (and cache-dir (token-address g in cache-dir))]
     [else
@@ -423,7 +440,8 @@
 ;;   else (token/external) -> #f
 (define (artifact-key-parts a kind env)
   (case kind
-    [(dir) (let ([p (env-resolve env a)]) (and p (tree-hashes p)))]
+    [(dir) (let ([p (env-resolve env a)])
+             (and p (tree-hashes p #:exclude (env-dir-exclusions env a))))]
     [(db-relation) (let ([rrc (build-env-resolve-relation-columns env)]) (and rrc (rrc a)))]
     [(file) (let ([rsk (build-env-resolve-store-keys env)]) (and rsk (rsk a)))]
     [else #f]))
@@ -611,7 +629,8 @@
                                (build-env-resolve-relation env)
                                (build-env-resolve-store-keys env)
                                (build-env-runtimes env)
-                               (build-env-cache-dir env)))
+                               (build-env-cache-dir env)
+                               (lambda (a) (env-dir-exclusions env a))))
   (if (decision? snap)
       (values snap #f)
       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])

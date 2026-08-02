@@ -37,6 +37,7 @@
          "delta-explain.rkt"
          "key-blame.rkt"
          "rebuild-policy.rkt"
+         "dir-extent.rkt"
          "blockstore.rkt"
          (only-in "dasl.rkt" cid? cid->string)
          "determinism.rkt")
@@ -171,7 +172,15 @@
                   #:resolve-store-keys beeatlas-resolve-store-keys
                   ;; st-top: recipe hashes cover the resolved argv +
                   ;; named code files, so script/pin edits invalidate
-                  #:runtimes beeatlas-runtimes))
+                  #:runtimes beeatlas-runtimes
+                  ;; st-hdm: a 'dir artifact holding ANOTHER artifact's output
+                  ;; counts only its own files. Derived from the graph, so a new
+                  ;; producer carves itself out and cannot be forgotten — the
+                  ;; alternative, a declared exclusion list, is a hand-kept mirror
+                  ;; of other producers' extents whose failure mode is silent.
+                  #:resolve-dir-exclusions
+                  (make-dir-exclusions beeatlas-graph
+                                       (lambda (a) (beeatlas-path a export-dir)))))
 
 (define benv (beeatlas-env (scratch-out-path) stelis-cache))
 
@@ -525,6 +534,11 @@
    ;; while someone is editing it, not on the rare later build where a key finally
    ;; disappears and the wrong thing silently happens.
    (check-partial-tasks beeatlas-graph beeatlas-partial-tasks)
+   ;; st-hdm: and refuse if two 'dir artifacts claim the same root. Nesting is how
+   ;; a carve-out is expressed; an exact collision means neither carves out the
+   ;; other, so both would content-address the same bytes while both claimed to
+   ;; produce them.
+   (check-dir-extents beeatlas-graph (lambda (a) (beeatlas-path a (scratch-out-path))))
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            (or name "the whole graph") (length to-run)
