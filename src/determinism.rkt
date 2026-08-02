@@ -67,6 +67,12 @@
                 (error 'verify-determinism "--from ~a not in plan for ~a" from target))]
       [else ordered]))
 
+  ;; DIGEST INSIDE THE BUILD, not after both. For an EXPORT_DIR-relative target
+  ;; the two builds land in different throwaway directories and the order does
+  ;; not matter — but an output at a FIXED path (the app bundle's _site/assets,
+  ;; st-hdm) is written to the same place twice, so digesting afterwards would
+  ;; hash build 2 twice and report DETERMINISTIC unconditionally. The comparison
+  ;; has to observe each build before the next one destroys it.
   (define (build! label)
     (define dir (make-temporary-directory))
     (printf "\n═══ build ~a → ~a ═══\n" label dir)
@@ -75,12 +81,12 @@
     (run-plan g to-run runtimes
               #:env (cons (cons "EXPORT_DIR" (path->string dir)) extra-env)
               #:context (and make-context (make-context dir)))
-    (build-path dir out-file))
+    ;; an absolute out-file is a fixed-path artifact and ignores the export dir
+    (define out (if (absolute-path? out-file) out-file (build-path dir out-file)))
+    (values out (target-digest out)))
 
-  (define f1 (build! 1))
-  (define f2 (build! 2))
-  (define h1 (target-digest f1))
-  (define h2 (target-digest f2))
+  (define-values (f1 h1) (build! 1))
+  (define-values (f2 h2) (build! 2))
   (printf "\nbuild #1  digest ~a  (~a bytes)\n" h1 (path-bytes f1))
   (printf "build #2  digest ~a  (~a bytes)\n" h2 (path-bytes f2))
   (cond

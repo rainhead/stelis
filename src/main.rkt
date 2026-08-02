@@ -555,7 +555,19 @@
    (define target-path (beeatlas-path name (scratch-out-path)))
    (unless (path? target-path)
      (error 'stelis "--verify ~a: target has no resolvable path to compare" name))
-   (define out-file (path->string (file-name-from-path target-path)))
+   ;; A target that does NOT live under the export dir (the app bundle, st-hdm:
+   ;; the site build writes it to _site/assets and EXPORT_DIR does not steer it)
+   ;; must be compared where it actually is. Passing the basename would send the
+   ;; harness looking inside the throwaway build dir, where nothing was written.
+   (define export-relative?
+     (let ([root (path->string (scratch-out-path))]
+           [tgt  (path->string target-path)])
+       (and (>= (string-length tgt) (string-length root))
+            (string=? root (substring tgt 0 (string-length root))))))
+   (define out-file
+     (if export-relative?
+         (path->string (file-name-from-path target-path))
+         (path->string target-path)))
    ;; st-dtq (2): a --from suffix builds into a fresh dir that lacks the @export
    ;; inputs its scripts read from EXPORT_DIR. Seed each build with the suffix's
    ;; EXTERNAL inputs (produced outside the suffix), taken from the populated

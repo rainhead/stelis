@@ -109,7 +109,35 @@
         ;; `sh': a bare shell for file PLACEMENT (not transformation) — used by
         ;; place-marts to copy derived dbt outputs to their export destination.
         ;; No interpreter pin needed; cp is content-preserving.
-        'sh  (runtime 'sh  (list "bash" "-c") "sh")))
+        'sh  (runtime 'sh  (list "bash" "-c") "sh")
+        ;; `node': the site repo's npm scripts, at beeatlas's PINNED node (st-hdm).
+        ;;
+        ;; The pin is the whole reason this is a runtime rather than a bare
+        ;; command. beeatlas pins node in .nvmrc (24.18) and its own callers —
+        ;; data/nightly.sh and data/publish-notes.sh — establish it by sourcing nvm
+        ;; and running `nvm use` before any npm call. Nothing about `npm` itself
+        ;; carries the pin, so an engine that shelled out directly would build the
+        ;; bundle under whatever node happened to be on PATH; on this machine that
+        ;; is 26, not 24.18. Same job as `uv run --directory` for the Python tasks:
+        ;; declare the interpreter once, by name (ADR 0002).
+        ;;
+        ;; cwd matters too and is not negotiable — vite.config.ts resolves
+        ;; `process.cwd()` for the stashed manifest — so the launch cd's into the
+        ;; repo. `exec "$@"` hands the recipe's argv through unchanged, so the
+        ;; command a task declares stays readable in --commands.
+        ;;
+        ;; A missing nvm is a warning, not a failure, matching nightly.sh: on a host
+        ;; where node is already the right version there is nothing to source.
+        'node (runtime 'node
+                       (list "bash" "-c"
+                             (string-append
+                              "set -e; cd " BEEATLAS "; "
+                              "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then "
+                              ". \"$HOME/.nvm/nvm.sh\"; nvm use --silent; "
+                              "else echo \"WARN: no nvm; node may not match .nvmrc\" >&2; fi; "
+                              "exec \"$@\"")
+                             "stelis-node")
+                       "node/.nvmrc")))
 
 ;; --- Physical placement, declared once (st-bft) ------------------------------
 ;; Where each file artifact lives is one fact per artifact, kept in the four lists
@@ -223,6 +251,13 @@
     [(memq artifact export-dir-files) (build-path export-dir s)]
     ;; 'dir outputs: a directory named for the artifact, directly under export-dir.
     [(memq artifact export-dir-dirs) (build-path export-dir s)]
+    ;; The app bundle (st-hdm step 2) is the first output that is NOT
+    ;; EXPORT_DIR-relative. It cannot be: the site build writes it, `_site` is
+    ;; where Vite's `outDir` puts it, and Eleventy reads the manifest describing
+    ;; it in place. EXPORT_DIR steers the DATA artifacts to a chosen destination;
+    ;; the bundle has one home in the site repo, so it resolves at a fixed path
+    ;; like the raw inputs above rather than moving with the export.
+    [(eq? artifact 'app-bundle) (build-path BEEATLAS "_site" "assets")]
     [else #f]))
 
 ;; --- db-relation content-addressing (st-d5d) --------------------------------
@@ -512,6 +547,21 @@
                                 (list (list "collector" "ecdysis_data.occurrences" "recorded_by")
                                       (list "genus"     "ecdysis_data.occurrences" "genus"))
                                 (list "index.json" "determinations.xml")))
+   ;; --- the site's app bundle (st-hdm step 2) ---
+   ;; `_site/assets`: the hashed JS/CSS/wasm chunks Vite emits. The FIRST half of
+   ;; reclaiming the render into the graph (ADR 0007's per-page-provenance
+   ;; amendment), and deliberately the half that carries no provenance value — it
+   ;; is here to prove the extent model before `site-content`, which is where the
+   ;; note-to-page chain lands.
+   ;;
+   ;; A plain 'dir with NO #:keyed-by. Its members are content-hashed filenames
+   ;; with no key structure to check a set against — there is no relation whose
+   ;; keys they are, which is what a fan-out key means. The set is instead made
+   ;; exact by the producer: `npm run build:bundle` ends in finish-bundle.mjs,
+   ;; which deletes anything the Vite manifest does not name (beeatlas-8df). So
+   ;; the tree digest settles because the directory is exactly the manifest, not
+   ;; because Stelis polices it.
+   (make-artifact 'app-bundle                   'dir)
    ;; --- taxon reasoning (st-ozp) ---
    ;; The curated high-rank trait assertions. Hand-authored, no producer — the
    ;; graph structurally cannot rebuild it, which IS the forward-only guarantee
@@ -841,6 +891,43 @@
    (make-task 'feeds 'transform
               #:inputs '(ecdysis_data) #:outputs '(feeds)
               #:invoke (py "feeds" "main"))
+   ;; --- the app bundle (st-hdm step 2) ------------------------------------
+   ;; The first task with NO data inputs. The bundle is a function of source
+   ;; code and nothing else — no artifact upstream of it, so its plan is one
+   ;; task and its only reason to run is `code-changed`.
+   ;;
+   ;; Which is why the inputs are declared as recipe CODE rather than as
+   ;; artifacts. `code` already takes directories (st-0ql, dbt's models/) and
+   ;; expands them per-file, so `src` gives the same per-file grain a 'dir
+   ;; artifact would, and an edit reports 'code-changed naming the exact file.
+   ;; Authoring six producerless leaf artifacts to say the same thing would put
+   ;; six nodes in the graph snapshot whose only purpose is to be hashed.
+   ;;
+   ;; The list is beeatlas's own (scripts/build-app.mjs BUNDLE_INPUTS), which is
+   ;; the gate this replaces — package-lock.json because a dependency bump
+   ;; changes the emitted chunks, and `.env` because Vite bakes VITE_* values
+   ;; INTO them (VITE_MAPBOX_TOKEN, VITE_DATA_BASE_URL, VITE_NOTES_API_BASE_URL).
+   ;; Only the file's HASH is recorded, never its content, so a secret never
+   ;; reaches the history or a log.
+   ;;
+   ;; INCOMPLETE, KNOWINGLY: Vite also loads `.env.local`, `.env.production` and
+   ;; `.env.production.local` in production mode. None exist here, and a code
+   ;; path that does not exist hashes as #f -> 'inputs-unresolvable -> rerun
+   ;; forever, so listing them would pin this task permanently un-skippable.
+   ;; Listing only what exists means one appearing later is INVISIBLE — ADR
+   ;; 0019's expensive case exactly (rotate the token, the gate skips, the live
+   ;; site serves the revoked one). Stelis has no way to say "absent is a value
+   ;; that can change", and that gap blocks making this node AUTHORITATIVE
+   ;; (st-b5f); it does not block authoring it, because nothing consumes it yet.
+   (make-task 'app-bundle 'transform
+              #:inputs '() #:outputs '(app-bundle)
+              #:invoke (recipe 'node (list "npm" "run" "build:bundle")
+                               (list (build-path BEEATLAS "src")
+                                     (build-path BEEATLAS "vite.config.ts")
+                                     (build-path BEEATLAS "vite.sw.config.ts")
+                                     (build-path BEEATLAS "package.json")
+                                     (build-path BEEATLAS "package-lock.json")
+                                     (build-path BEEATLAS ".env"))))
    ;; --- taxon reasoning: the first transform INSIDE the engine (st-ozp) ---
    ;; Reads the rank tree off the species mart and the curated assertions off the
    ;; fact artifact; writes species_reasoning.json. species_traits.parquet is read

@@ -69,9 +69,19 @@ rule set · [`beeatlas.rkt`](src/beeatlas.rkt) the authored beeatlas graph, per-
 recipes, and the runtimes (incl. the per-species `notes/` dir — the TERMINAL notes
 artifact since beeatlas-6x9 retired the `notes.json` roll-up; `_data/notes.js`
 reads the dir — and `beeatlas-partial-tasks` (st-pd1)).
-Data only — the 11ty render left the graph in Model Y (ADR 0007 Amendment,
-st-5em): the site build is top-level in beeatlas and consumes the export via
-`npm run fetch-data` ·
+Data only until st-hdm: the 11ty render left the graph in Model Y (ADR 0007
+Amendment, st-5em), and ADR 0007's per-page-provenance amendment is bringing it
+back as TWO nodes. `app-bundle` is the first (step 2, delivered): `_site/assets`
+as a plain 'dir at a FIXED path — the only output not steered by EXPORT_DIR,
+because the site build has one home for it. No data inputs at all, so its only
+reason to run is `code-changed`; its inputs ride as recipe `code` (src/ expands
+per-file like dbt's models/), which is why `--why app-bundle` names the exact
+edited file. The `node` runtime pins beeatlas's .nvmrc node by sourcing nvm, the
+way nightly.sh does — nothing about `npm` carries that pin, and the default here
+is 26, not 24.18. NOT YET AUTHORITATIVE: nothing in the publish path calls it,
+and st-e4y (no representation for a legitimately-absent input) blocks the
+cutover, because Vite's unwritten `.env.production*` cannot be declared without
+pinning the task permanently un-skippable ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
 rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and

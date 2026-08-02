@@ -19,18 +19,22 @@
 
 ;; 1. The whole point: occurrences.db prunes the post-dbt tail (the 11 export/
 ;;    render/gate steps + place-marts, which serves those exports, not the db).
+;;    app-bundle is pruned for a different reason from all the others: it is not
+;;    DOWNSTREAM of occurrences.db, it is disconnected from it entirely — the
+;;    bundle has no data inputs at all (st-hdm step 2), so no data target ever
+;;    reaches it.
 (check-equal? (list->set pruned)
               (set 'dedup-candidates 'dedup-gate 'topology-postprocess
                    'species-export 'species-maps 'places-export 'taxon-presence-export
                    'collectors-export 'collectors-events-export
                    'notes-harvest 'taxon-reasoning
-                   'places-maps 'feeds 'place-marts)
+                   'places-maps 'feeds 'place-marts 'app-bundle)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
 (check-equal? (length ordered) 24
               "24 tasks upstream of occurrences.db (+ the integrity gate st-0vz, + the correction drift gate st-t4t, + dem-elevation beeatlas-sn8)")
-(check-equal? (+ (length ordered) (set-count pruned)) 38
-              "38 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t, + dem-elevation beeatlas-sn8, + taxon-presence-export beeatlas-0of.2)")
+(check-equal? (+ (length ordered) (set-count pruned)) 39
+              "39 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t, + dem-elevation beeatlas-sn8, + taxon-presence-export beeatlas-0of.2, + app-bundle st-hdm)")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download
