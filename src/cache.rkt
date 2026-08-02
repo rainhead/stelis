@@ -33,6 +33,7 @@
          env-resolve
          env-output-paths
          check-output-paths-resolvable
+         ABSENT-ADDRESS
          input-snapshot
          input-store-snapshot
          artifact-key-parts
@@ -258,7 +259,9 @@
 ;; input that isn't content-addressable here ('inputs-unresolvable) — including a
 ;; named code file missing on disk (conservative: unreadable code forces a run;
 ;; a 'code artifact with no resolved path is named by its artifact symbol, one
-;; whose file is absent by its path).
+;; whose file is absent by its path). A code entry declared `optional-code'
+;; (st-e4y) is the exception: its absence addresses to ABSENT-ADDRESS rather than
+;; #f, so it never reaches this list.
 ;; With resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
 (define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f]
                         [runtimes #f] [cache-dir #f] [resolve-dir-exclusions #f])
@@ -307,19 +310,32 @@
                    (make-immutable-hash pairs)
                    (make-immutable-hash code-pairs)))]))
 
-;; code-path-hashes : path-string -> (listof (cons string (or/c string #f)))
+;; The content address of a declared-OPTIONAL code entry that isn't there
+;; (st-e4y). Deliberately not a hash of anything: it can't collide with a real
+;; sha1 (40 hex chars), and it must not read as "an empty file" either — absent
+;; and zero-byte are different observations. Stable across builds and machines,
+;; which is the whole point: absence is a value the cache can compare, so a task
+;; whose optional inputs stay absent skips, and one appearing or disappearing is
+;; an ordinary 'code-changed naming the path.
+(define ABSENT-ADDRESS "absent")
+
+;; code-path-hashes : code-entry -> (listof (cons string (or/c string #f)))
 ;; One recipe-code entry's (path -> content-hash) pairs. A FILE hashes by its
 ;; bytes. A DIRECTORY (st-0ql: dbt's models/, seeds/, …) expands to one pair per
 ;; file inside — "<dir>/<rel>" -> hash, the same per-file grain tree-hashes gives
 ;; 'dir artifacts — so 'code-changed names the exact model file, and an added or
 ;; removed file surfaces as a key change rather than an opaque digest flip. A
-;; missing path yields a single #f pair (-> 'inputs-unresolvable, conservative).
-(define (code-path-hashes p)
+;; missing path yields a single #f pair (-> 'inputs-unresolvable, conservative)
+;; — UNLESS it was declared `optional-code', in which case its absence is the
+;; observation and it addresses to ABSENT-ADDRESS.
+(define (code-path-hashes entry)
+  (define p (code-entry-path entry))
   (cond
     [(directory-exists? p)
      (for/list ([kv (in-list (tree-hashes p))])
        (cons (string-append (~a p) "/" (car kv)) (cdr kv)))]
     [(file-exists? p) (list (cons (~a p) (file-sha1 p)))]
+    [(optional-code? entry) (list (cons (~a p) ABSENT-ADDRESS))]
     [else (list (cons (~a p) #f))]))
 
 ;; invoke-basis : any (or/c hash #f) -> string
@@ -341,7 +357,7 @@
      (~s (recipe->argv inv runtimes))]
     [(derivation? inv)
      (~s (list 'derivation (derivation-label inv)
-               (map ~a (derivation-code inv))))]
+               (for/list ([e (in-list (derivation-code inv))]) (~a (code-entry-path e)))))]
     [else (~s inv)]))
 
 ;; input-hash : graph symbol (symbol -> path?) (or/c (symbol -> string?) #f)

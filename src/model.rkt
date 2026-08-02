@@ -18,6 +18,8 @@
          (struct-out runtime)
          recipe recipe? recipe-runtime recipe-args recipe-code
          derivation derivation? derivation-label derivation-run derivation-code
+         (struct-out optional-code)
+         code-entry-path
          invoke-code
          recipe->argv
          make-artifact
@@ -107,12 +109,46 @@
 ;; shared helper declares it in `code' explicitly.
 ;;   runtime : symbol
 ;;   args    : (listof string)
-;;   code    : (listof path-string) — each a FILE (hashed by its bytes) or a
-;;             DIRECTORY (st-0ql: expanded per-file, e.g. dbt's models/); '()
-;;             when the command carries no code on disk (an inline sh script)
+;;   code    : (listof code-entry) — each a FILE (hashed by its bytes), a
+;;             DIRECTORY (st-0ql: expanded per-file, e.g. dbt's models/), or
+;;             either of those wrapped in `optional-code' (st-e4y: absence is a
+;;             value, not a failure to look); '() when the command carries no
+;;             code on disk (an inline sh script)
 (struct recipe (runtime args code) #:transparent
   #:omit-define-syntaxes #:constructor-name make-recipe)
 (define (recipe runtime args [code '()]) (make-recipe runtime args code))
+
+;; A code entry whose ABSENCE is a legitimate steady state (st-e4y). An ordinary
+;; code path that isn't on disk is UNREADABLE — the cache can't address the task,
+;; so it stays conservative and reruns forever ('inputs-unresolvable). That is
+;; right when absence means "I cannot tell" (an unmounted store, an unbuilt mart)
+;; and wrong when absence is a fact the build can observe and that can END.
+;;
+;; Vite's env files are the case: it loads `.env`, `.env.local`, `.env.production`
+;; and `.env.production.local` in production mode and bakes VITE_* values into the
+;; emitted chunks. Only `.env` exists. Declaring all four as ordinary code pins the
+;; bundle task permanently un-skippable; declaring only the one that exists makes a
+;; `.env.production` appearing later INVISIBLE to the cache — beeatlas ADR 0019's
+;; expensive failure (rotate the token, the gate skips nightly, the live site keeps
+;; serving the revoked one).
+;;
+;; Wrapping resolves the ambiguity in the only place that knows it: the DECLARATION.
+;; `#f` keeps its single meaning, "not addressable"; an optional entry that is
+;; absent addresses to a stable sentinel instead (cache.rkt's ABSENT-ADDRESS), so
+;; appearing and disappearing are ordinary content changes and a task whose optional
+;; inputs are all still absent can skip.
+;;
+;; Code entries only, deliberately: an absent ARTIFACT keeps the conservative
+;; reading, because nothing yet asks for a legitimately-absent one and the two cases
+;; differ — a missing artifact is usually an unbuilt upstream, which is exactly the
+;; "I cannot tell" that should force a rerun.
+(struct optional-code (path) #:transparent)
+
+;; code-entry-path : code-entry -> path-string
+;; The path inside a code entry, wrapped or not — for callers that want the path
+;; and not the optionality.
+(define (code-entry-path e)
+  (if (optional-code? e) (optional-code-path e) e))
 
 ;; A DERIVATION (st-ozp): a task whose transform runs IN-PROCESS and produces an
 ;; artifact. The third `invoke' variant, beside `recipe' (shell out) and

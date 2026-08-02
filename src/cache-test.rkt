@@ -257,6 +257,48 @@
               (decision 'run 'inputs-unresolvable (list (path->string code-dir)))
               "a missing code directory is conservative, named as the dir")
 
+;; --- an OPTIONAL code entry: absence is a value (st-e4y) ----------------------
+;; A code path whose absence is a legitimate steady state (Vite's .env.production,
+;; unwritten here) addresses to a stable sentinel instead of #f. So the task still
+;; SKIPS while the file is missing — where the required script above would rerun
+;; forever — and the file appearing or disappearing is an ordinary 'code-changed
+;; naming it, which is the whole point: a rotated token cannot arrive unnoticed.
+(define env-file (build-path tmp ".env.production"))
+(define env-str (path->string env-file))
+(define gopt
+  (build-graph
+   (list (make-task 'bundle 'transform #:inputs '(raw) #:outputs '(out)
+                    #:invoke (recipe 'node '("build")
+                                     (list script-str (optional-code env-str)))))
+   (list (make-artifact 'raw 'file) (make-artifact 'out 'file))))
+(define snap-o (input-snapshot gopt 'bundle resolve))
+(check-pred snapshot? snap-o
+            "an absent optional entry is still addressable — not 'inputs-unresolvable")
+(check-equal? (hash-ref (snapshot-code-hashes snap-o) env-str #f)
+              ABSENT-ADDRESS
+              "absence addresses to the sentinel")
+(cache-store! cache-dir 'bundle snap-o (list out-path) (output-snapshot gopt 'bundle env))
+(check-equal? (task-decision gopt 'bundle env)
+              (decision 'skip 'cached '())
+              "still absent -> cached; the task is skippable, not pinned")
+(display-to-file "VITE_TOKEN=rotated" env-file)
+(check-equal? (task-decision gopt 'bundle env)
+              (decision 'run 'code-changed (list env-str))
+              "the file APPEARING is a content change, named (beeatlas ADR 0019)")
+(define-values (_dec-o snap-o2) (decision+snapshot gopt 'bundle env))
+(cache-store! cache-dir 'bundle snap-o2 (list out-path) (output-snapshot gopt 'bundle env))
+(check-equal? (task-decision gopt 'bundle env)
+              (decision 'skip 'cached '())
+              "present and unchanged -> cached again")
+(display-to-file "VITE_TOKEN=rotated-again" env-file #:exists 'replace)
+(check-equal? (task-decision gopt 'bundle env)
+              (decision 'run 'code-changed (list env-str))
+              "editing it reads like any other code file")
+(delete-file env-file)
+(check-equal? (task-decision gopt 'bundle env)
+              (decision 'run 'code-changed (list env-str))
+              "and DISAPPEARING is a change too, not a suddenly-unaddressable input")
+
 ;; runtime identity (st-top): with a runtimes map on the env, the recipe hash
 ;; covers the RESOLVED argv, so a launch/pin change invalidates — with '()
 ;; details (the command moved, not the code).

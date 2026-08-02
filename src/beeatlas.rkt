@@ -68,6 +68,11 @@
 (define BEEATLAS (or (getenv "BEEATLAS_DIR") "/Users/rainhead/dev/beeatlas"))
 (define DATA (string-append BEEATLAS "/data"))
 
+;; Every env file Vite loads in PRODUCTION mode, most specific last — the order
+;; Vite itself applies them, and the reason all four are the app bundle's inputs
+;; whether or not they exist (see the app-bundle task).
+(define VITE-ENV-FILES '(".env" ".env.local" ".env.production" ".env.production.local"))
+
 ;; Taxon reasoning's three files (st-ozp; see the section further down for what
 ;; each is for). These are STELIS's own paths, not beeatlas's — the first task
 ;; whose code is the engine itself — so they resolve relative to this module and
@@ -905,29 +910,29 @@
    ;;
    ;; The list is beeatlas's own (scripts/build-app.mjs BUNDLE_INPUTS), which is
    ;; the gate this replaces — package-lock.json because a dependency bump
-   ;; changes the emitted chunks, and `.env` because Vite bakes VITE_* values
-   ;; INTO them (VITE_MAPBOX_TOKEN, VITE_DATA_BASE_URL, VITE_NOTES_API_BASE_URL).
-   ;; Only the file's HASH is recorded, never its content, so a secret never
-   ;; reaches the history or a log.
+   ;; changes the emitted chunks, and the env files because Vite bakes VITE_*
+   ;; values INTO them (VITE_MAPBOX_TOKEN, VITE_DATA_BASE_URL,
+   ;; VITE_NOTES_API_BASE_URL). Only a file's HASH is recorded, never its
+   ;; content, so a secret never reaches the history or a log.
    ;;
-   ;; INCOMPLETE, KNOWINGLY: Vite also loads `.env.local`, `.env.production` and
-   ;; `.env.production.local` in production mode. None exist here, and a code
-   ;; path that does not exist hashes as #f -> 'inputs-unresolvable -> rerun
-   ;; forever, so listing them would pin this task permanently un-skippable.
-   ;; Listing only what exists means one appearing later is INVISIBLE — ADR
-   ;; 0019's expensive case exactly (rotate the token, the gate skips, the live
-   ;; site serves the revoked one). Stelis has no way to say "absent is a value
-   ;; that can change", and that gap blocks making this node AUTHORITATIVE
-   ;; (st-b5f); it does not block authoring it, because nothing consumes it yet.
+   ;; All FOUR env files Vite loads in production mode are declared, though only
+   ;; `.env` exists (st-e4y): as `optional-code', an absent one addresses to a
+   ;; stable sentinel instead of #f, so the task still skips while they stay
+   ;; absent AND one appearing is a `code-changed` naming it. Listing only what
+   ;; exists would make a `.env.production` appearing later invisible to the
+   ;; cache — beeatlas ADR 0019's expensive case (rotate the token, the gate
+   ;; skips nightly, the live site keeps serving the revoked one).
    (make-task 'app-bundle 'transform
               #:inputs '() #:outputs '(app-bundle)
               #:invoke (recipe 'node (list "npm" "run" "build:bundle")
-                               (list (build-path BEEATLAS "src")
-                                     (build-path BEEATLAS "vite.config.ts")
-                                     (build-path BEEATLAS "vite.sw.config.ts")
-                                     (build-path BEEATLAS "package.json")
-                                     (build-path BEEATLAS "package-lock.json")
-                                     (build-path BEEATLAS ".env"))))
+                               (append
+                                (list (build-path BEEATLAS "src")
+                                      (build-path BEEATLAS "vite.config.ts")
+                                      (build-path BEEATLAS "vite.sw.config.ts")
+                                      (build-path BEEATLAS "package.json")
+                                      (build-path BEEATLAS "package-lock.json"))
+                                (for/list ([f (in-list VITE-ENV-FILES)])
+                                  (optional-code (build-path BEEATLAS f))))))
    ;; --- taxon reasoning: the first transform INSIDE the engine (st-ozp) ---
    ;; Reads the rank tree off the species mart and the curated assertions off the
    ;; fact artifact; writes species_reasoning.json. species_traits.parquet is read

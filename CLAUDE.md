@@ -60,7 +60,10 @@ CI installs it explicitly). No build step — Racket compiles on demand.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner,
 plus the recipe/runtime TYPES (st-top: the cache hashes a recipe's named code
-files into the task's input address) and `'code` artifacts with `imports` edges +
+files into the task's input address; `optional-code` wraps one whose ABSENCE is a
+legitimate steady state, st-e4y — it addresses to a stable sentinel instead of
+`#f`, so absent-but-could-appear stops meaning "unresolvable, rerun forever", and
+`#f` keeps its one meaning) and `'code` artifacts with `imports` edges +
 `code-closure` (st-whi: shared helpers are producerless graph nodes, helper→helper
 import edges are topology, and transitive code dependence is a walk, never a
 stored flattened list) ·
@@ -78,10 +81,14 @@ reason to run is `code-changed`; its inputs ride as recipe `code` (src/ expands
 per-file like dbt's models/), which is why `--why app-bundle` names the exact
 edited file. The `node` runtime pins beeatlas's .nvmrc node by sourcing nvm, the
 way nightly.sh does — nothing about `npm` carries that pin, and the default here
-is 26, not 24.18. NOT YET AUTHORITATIVE: nothing in the publish path calls it,
-and st-e4y (no representation for a legitimately-absent input) blocks the
-cutover, because Vite's unwritten `.env.production*` cannot be declared without
-pinning the task permanently un-skippable ·
+is 26, not 24.18. All four env files Vite loads in production mode are declared,
+though only `.env` exists, via `optional-code` (st-e4y) — so a `.env.production`
+appearing later reads as `code-changed` naming it instead of being invisible to
+the cache (beeatlas ADR 0019: rotate the token, the gate skips nightly, the live
+site keeps serving the revoked one). The step-3 cutover is still pending — the
+site build's `build:app` rebuilds the bundle itself, so this node's run is
+redundant — but it is NOT un-called: the nightly's `--all` covers every target,
+which now includes it (st-hdm notes, 2026-08-02) ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
 rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and
