@@ -351,6 +351,14 @@
     [(geographies_places)     '("geographies.places")]
     ;; county GEOMETRY species_maps reads straight from the duckdb (st-4cm edge fix)
     [(geographies_us_counties) '("geographies.us_counties")]
+    ;; the other three geography tables dbt reads (st-7hw). One artifact per table,
+    ;; not one grouped `geographies-geometry': geographies_places already set that
+    ;; precedent in this schema, the layers reload independently (padus_wilderness is
+    ;; its own manual step), and per-table is what makes `--why counties.geojson' name
+    ;; the layer that actually moved.
+    [(geographies_ecoregions)       '("geographies.ecoregions")]
+    [(geographies_us_states)        '("geographies.us_states")]
+    [(geographies_padus_wilderness) '("geographies.padus_wilderness")]
     [else #f]))
 
 ;; beeatlas-resolve-relation : symbol -> (or/c string #f)
@@ -494,6 +502,19 @@
    (make-artifact 'dem_elevations           'db-relation)
    (make-artifact 'geographies_places       'db-relation)
    (make-artifact 'geographies_us_counties  'db-relation) ; county geometry (st-4cm)
+   ;; The remaining geography tables dbt's stg_geo__* models read (st-7hw). PRODUCERLESS
+   ;; on purpose: unlike geographies_places (places-load writes it), these are loaded
+   ;; out of band, so the graph names them without claiming to make them — the shape
+   ;; `code' artifacts and the correction seeds already use. What matters is that they
+   ;; are db-relations rather than folded into the `geographies' EXTERNAL below: an
+   ;; external resolves to #f and can only ever report 'inputs-unresolvable, where a
+   ;; relation gets a real digest and can say 'input-changed naming the layer.
+   ;; padus_wilderness resolves even where nobody has loaded PAD-US — dbt_project.yml's
+   ;; on-run-start hook CREATEs it empty — so this doesn't strand a fresh host on
+   ;; 'inputs-unresolvable.
+   (make-artifact 'geographies_ecoregions       'db-relation)
+   (make-artifact 'geographies_us_states        'db-relation)
+   (make-artifact 'geographies_padus_wilderness 'db-relation)
    (make-artifact 'geographies              'external)
    (make-artifact 'anti-entropy-applied     'token)
    (make-artifact 'checklist-resolution-verified 'token)
@@ -757,14 +778,33 @@
 
    ;; --- the transform hinge: one opaque task, many outputs ---
    (make-task 'dbt-build 'transform
+              ;; ONE input per source() table dbt's models read — 22 tables across
+              ;; these 19 artifacts. st-7hw closed a gap in exactly this list: it
+              ;; named 14 of the 22, and the eight it missed included the geography
+              ;; that three of the nine sandbox marts below are made OF. The failure
+              ;; is silent and it bit: maderas's counties.geojson mart carries 1,305
+              ;; vertices against 20,657 for the same 39 counties locally, because its
+              ;; geographies.us_counties.geom is ~15x coarser — and a reload to fix
+              ;; that would have changed nothing this task hashed, so dbt-build would
+              ;; have cache-skipped and left the degraded marts in place.
+              ;; checklist_raw is here for the same reason and is NOT redundant with
+              ;; checklist_resolved: `resolved' digests inaturalist_data.canonical_to_
+              ;; taxon_id, a DIFFERENT table, so it is an ancestor (the order was
+              ;; already right) but never a witness to the four checklist_data tables
+              ;; stg_checklist__* reads. Being transitively upstream orders a task;
+              ;; only being NAMED here puts a table in its input address.
               #:inputs '(ecdysis_data ecdysis_links inat_observations inat_projects
                          waba_data anti-entropy-applied
+                         checklist_raw
                          checklist_resolved checklist-resolution-verified
                          inat_obs_data inat-obs-count-verified
                          corrections-verified
                          canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
-                         taxon_lineage_extended host_plant_lineage geographies_places
+                         taxon_lineage_extended host_plant_lineage
+                         geographies_places geographies_us_counties
+                         geographies_ecoregions geographies_us_states
+                         geographies_padus_wilderness
                          dem_elevations)
               #:outputs sandbox-marts   ; exactly the nine sandbox marts (st-bft)
               ;; Recipe is `run.sh build' only — it writes the marts to the dbt
