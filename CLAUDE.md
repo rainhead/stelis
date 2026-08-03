@@ -12,12 +12,19 @@ making predictable mistakes.
 - Treat `ROADMAP.md`'s **horizons as the scope guard.** **Horizon 1 is delivered**
   (2026-07-16): provenance, the observation history (`.stelis/`, with per-key and
   per-column granularity), early cutoff, data-quality rules-as-nodes + the integrity
-  gate, and full target coverage all shipped and verified. **Horizon 2 is next** —
-  its natural entry point is **delta propagation (st-066)**, which folds over the H1
-  observation history. If a request would build an H2 feature (streaming/CRUD
-  ingestion, delta propagation, editorial data-quality flags, compile-to-TS
-  emission, anything needing change-over-time or non-linear time), it is now in
-  scope — but flag when a task crosses that line so the horizon move is deliberate.
+  gate, and full target coverage all shipped and verified. Horizon 2 is open.
+- **The pull is data modeling, not build features (2026-08-03).** The build detour
+  has paid out — see `DESIGN.md`, "The detour has paid out". Two things are active:
+  **`st-hdm`'s per-page provenance**, which closes out the build work, and the
+  **taxon reasoning arc** (type the host/parasite edges over the inherited traits,
+  then the at-risk closure — ADR 0008), which is the data-modeling line. The rest of
+  Horizon 2 — delta propagation, streaming/CRUD ingestion, compile-to-TS emission,
+  demand-directed evaluation — is **recorded, not queued**: it waits for something
+  in the data work to need it.
+- So the first question about any proposed build feature is **which data question
+  does it answer** (ROADMAP's slotting rule). If a request would build one with no
+  such question behind it, say so rather than building it — and if the user asks
+  anyway, that IS the pull; build it.
 
 ## What this is (one line)
 

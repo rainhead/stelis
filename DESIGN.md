@@ -38,6 +38,25 @@ is recorded as a conscious trade of "sensible" for "satisfying and general," wit
 the value-first discipline below as the guardrail against it becoming
 substrate-for-its-own-sake.
 
+**The detour has paid out (2026-08-03).** That trade is now called, and the
+guardrail is what called it. Stelis does what Phase 1 and Horizon 1 asked: `run.py`
+is retired, the build explains itself, remembers across builds, cuts off
+propagation on unchanged content, and runs `beeatlas`'s pipeline nightly on real
+hardware. What remains interesting is the thing this section named as the *more
+sensible* starting point in the first place — **modeling the data**. So the centre
+of gravity moves there, and build machinery becomes something Stelis grows when a
+data question pulls on it, rather than on its own schedule.
+
+Three things this does **not** mean. It is not a reversal: it is the value-first
+ordering working exactly as written, arriving where the paragraph above said the
+sensible road went. Nothing in *Settled commitments* changes — those were decided
+on their merits, and the build system still has to obey them. And it is not a
+freeze: one arc is still owed, `st-hdm`'s per-page provenance, which is
+half-delivered and is the whole reason the render comes back into the graph at all.
+After that, a new build feature has to name the data question it answers. See
+`ROADMAP.md`'s Horizon 2 for what stays active, and its slotting rule for that
+test.
+
 **Working mode.** Development is interactive and didactic — deliberate about what
 functionality is taken on in what order, since the design space is large and open
 and the project's known failure mode is getting lost in it.

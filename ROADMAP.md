@@ -59,6 +59,23 @@ engine is host-portable (`BEEATLAS_DIR` / `NOTES_DB_PATH`).
 *Fold in change-over-time and cross the file/value boundary. This is where the
 batch→streaming arc completes and the browser gets fed.*
 
+**Re-ordered 2026-08-03 — most of this now waits.** This horizon was written as a
+list of things to build next. The build detour has paid out (`DESIGN.md`, "The
+detour has paid out") and the pull is data modeling, so it is now a list of things
+that **wait for a pull**, with two exceptions:
+
+- **`st-hdm`'s per-page provenance closes out the build work.** Half-delivered, and
+  the last item here still claimed on build-infrastructure grounds. When the
+  `notes/` → pages hop lands, the build arc is done.
+- **The taxon reasoning arc is the active line** — it is the one entry in this
+  horizon that *is* data modeling, and the ADR 0008 argument for it was always a
+  value argument rather than a substrate one.
+
+Everything else below stays named and reasoned, because a good idea with nobody
+waiting on it should be *recorded*, not built — which is exactly what the slotting
+rule at the bottom already said, now applied to Stelis's own build features. The
+entries are unchanged; what changed is that they need a pull to start.
+
 - **Serve from the build host (ADR 0007)** — **delivered.** beeatlas.net serves
   from an Apache vhost on maderas over a directory Stelis owns (st-bgy);
   S3/CloudFront left the serving path and the `/api/notes` kludge is gone
@@ -159,6 +176,12 @@ batch→streaming arc completes and the browser gets fed.*
 
 ## Slotting rule of thumb
 
+- **Is it build-system machinery? → name the data question it answers.** As of
+  2026-08-03 this is the *first* test, not the last: Stelis has enough build
+  system to run the pipelines it was built for, so a new build feature is
+  premature unless something in the data work is waiting on it. `st-hdm` passes
+  (a page's provenance is a question about the data, and no renderer can answer
+  it); "delta propagation would be elegant" does not.
 - Does it require change-over-time or streaming? → Horizon 2 at the earliest.
 - Does it require branching/merging or non-linear time? → Horizon 3.
 - Does it require provenance or persistence? → Horizon 1 at the earliest.
