@@ -193,26 +193,43 @@
             #:when (and (hash? e) (andmap (lambda (s) (present? (hash-ref e s #f))) syms)))
     (map (lambda (s) (key->string (hash-ref e s))) syms)))
 
+;; sql-key-text : string -> string
+;; How this module reads a key column: as TEXT, with ABSENCE unambiguous. Every
+;; DuckDB read here goes through it, because every one of them then applies the same
+;; drop-rule — "a component that is the empty string keys no file" — and that rule
+;; alone is not enough (st-ubo). The CLI's -list output renders SQL NULL as the
+;; literal text "NULL" (checked on 1.5.5), NOT as empty, so a NULL in a key column
+;; arrives as a phantom key named "NULL" that the drop-rule waves through.
+;;
+;; Coalescing in SQL makes absence the empty string the drop-rule already
+;; understands, and keeps a row whose column genuinely holds the STRING "NULL"
+;; distinguishable from one that holds nothing — the bare form collapses the two.
+;; The CAST is what makes it work on a NUMERIC key column: DuckDB resolves
+;; coalesce(<int>, '') by converting '' to INT32 and errors out.
+;;
+;; The CAST's RENDERING is therefore part of the contract, not an implementation
+;; detail: a key column's expected text is whatever DuckDB spells it as, and it
+;; has to agree with the exporter's filename. Every key column in use today is
+;; VARCHAR or INTEGER, where the spelling is unambiguous; a DOUBLE, DECIMAL, or
+;; TIMESTAMP key would put a version-sensitive spelling on both sides of that
+;; comparison and needs its own thought before it is declared.
+;;
+;; json-column-keys' `present?' is the same rule on the Racket side of the same
+;; drop; it cannot share this shape (Racket values, not SQL) but must never
+;; disagree with it.
+(define (sql-key-text col) (string-append "coalesce(CAST(" col " AS VARCHAR),'')"))
+
 ;; parquet-column-keys : path-string (listof string) -> (setof (listof string))
 ;; DISTINCT `cols' tuples in a parquet file, read via DuckDB (-list output: rows on
-;; newlines, columns on '|'). Rows with an empty component are dropped. Raises if the
-;; file can't be read — a harness precondition, not a defect. Columns are gated on
-;; duckdb.rkt's sql-identifier? before interpolation.
-;;
-;; coalesce is load-bearing (st-ubo): the CLI's -list format renders SQL NULL as the
-;; literal text "NULL" (checked on 1.5.5), NOT as empty, so a NULL in a key column
-;; used to arrive as a phantom expected key named "NULL". Coalescing in SQL makes
-;; absence the empty string, which the drop below already understands — and keeps a
-;; row whose column genuinely holds the STRING "NULL" distinguishable from one that
-;; holds nothing. The CAST is what makes it work on a numeric key column: DuckDB
-;; resolves coalesce(<int>, '') by converting '' to INT32 and errors out.
+;; newlines, columns on '|'). Rows with an empty component are dropped — see
+;; sql-key-text for why the SQL, not that filter, is what makes a NULL empty. Raises
+;; if the file cannot be read: a harness precondition, not a defect. Columns are
+;; gated on duckdb.rkt's sql-identifier? before interpolation.
 (define (parquet-column-keys src cols)
   (unless (andmap (lambda (c) (regexp-match? sql-identifier? c)) cols)
     (error 'parquet-column-keys "not a plain column name: ~a" cols))
   (define sql (string-append "SELECT DISTINCT "
-                             (string-join (for/list ([c (in-list cols)])
-                                            (string-append "coalesce(CAST(" c " AS VARCHAR),'')"))
-                                          ", ")
+                             (string-join (map sql-key-text cols) ", ")
                              " FROM read_parquet('" src "')"))
   (define out (duckdb-query #f sql))
   (unless out (error 'parquet-column-keys "could not read ~a via duckdb" src))
@@ -308,12 +325,19 @@
   (define type->src (for/hash ([s (in-list (manifest-key-sources mk))])
                       (values (car s) (cdr s))))          ; type -> (list relation column)
   (define cache (make-hash))
+  ;; This set is read by BOTH arms below, which is why its NULL handling matters more
+  ;; here than at the column-keys readers (st-ubo). There a phantom key only ADDED to
+  ;; the expected set, so the worst case was a spurious completeness entry. Here arm
+  ;; (b) calls an entry unsound UNLESS its key is a member — so a phantom "NULL" lets
+  ;; an entry keyed "NULL" PASS a gate it should fail. A false negative on soundness,
+  ;; not report noise.
   (define (distinct-of relation column)
     (hash-ref! cache (cons relation column)
       (lambda ()
         (unless (and (regexp-match? sql-qualified-name? relation) (regexp-match? sql-identifier? column))
           (error 'verify-manifest "unsafe source ~a.~a" relation column))
-        (define out (duckdb-query db (string-append "SELECT DISTINCT " column " FROM " relation)))
+        (define out (duckdb-query db (string-append "SELECT DISTINCT " (sql-key-text column)
+                                                   " FROM " relation)))
         (unless out (error 'verify-manifest "could not read ~a.~a via duckdb" relation column))
         (list->set (filter (lambda (s) (not (string=? s ""))) (string-split out "\n"))))))
   ;; (b) each entry's key-value must be a real value of its type's source column

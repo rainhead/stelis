@@ -142,32 +142,36 @@
                                  smaps sresolve))
            "1 column against a 2-placeholder template is a declaration error")
 
-;; --- the parquet key source: NULL must key nothing (st-ubo) -------------------
+;; --- the DuckDB readers: a NULL keys nothing, on every one of them (st-ubo) ---
 ;; Hermetic and duckdb-gated (the mechanism is unexercisable without the CLI, and CI
 ;; has neither it nor beeatlas). The regression: the CLI's -list output renders SQL
 ;; NULL as the literal text "NULL", so a NULL key column arrived as a phantom
-;; EXPECTED key — harmless to soundness (it only ever adds to the expected set) but
-;; a permanent spurious entry in the completeness report. Found in st-ozp, where the
-;; same seam merged every subgenus-less species under one bogus taxon named NULL.
+;; EXPECTED key. Found in st-ozp, where the same seam merged every subgenus-less
+;; species under one bogus taxon named NULL.
 (let ([duckdb (find-executable-path "duckdb")])
+  ;; run one statement through the CLI; error with its stderr if it fails
+  (define (duckdb! . argv)
+    (define-values (sp out in err) (apply subprocess #f #f #f duckdb argv))
+    (close-output-port in)
+    (port->string out)
+    (define e (port->string err))
+    (subprocess-wait sp)
+    (unless (eqv? 0 (subprocess-status sp)) (error 'fixture "duckdb failed: ~a" e)))
+
   (cond
-    [(not duckdb) (printf "fan-out-key-test: duckdb not on PATH — parquet cases skipped.\n")]
+    [(not duckdb) (printf "fan-out-key-test: duckdb not on PATH — DuckDB cases skipped.\n")]
     [else
+     ;; --- the parquet key source (parquet-column-keys) ------------------------
+     ;; Here a phantom only ADDS to the expected set, so the cost is a spurious
+     ;; completeness entry, never a false soundness failure.
      (define species.parquet (path->string (at "species.parquet")))
      ;; genus is VARCHAR, rank_id INTEGER — the numeric column is the point: DuckDB
      ;; resolves coalesce(<int>, '') by converting '' to INT32 and errors, so the
      ;; fix has to CAST before coalescing.
-     (define-values (sp out in err)
-       (subprocess #f #f #f duckdb "-c"
-                   (string-append
+     (duckdb! "-c" (string-append
                     "COPY (SELECT * FROM (VALUES "
                     "('Andrena', 1), ('Bombus', 2), (NULL, 3), ('Osmia', NULL), ('NULL', 4)"
-                    ") t(genus, rank_id)) TO '" species.parquet "'")))
-     (close-output-port in)
-     (port->string out)
-     (define e (port->string err))
-     (subprocess-wait sp)
-     (unless (eqv? 0 (subprocess-status sp)) (error 'fixture "duckdb failed: ~a" e))
+                    ") t(genus, rank_id)) TO '" species.parquet "'"))
 
      (check-equal? (parquet-column-keys species.parquet '("genus"))
                    (set '("Andrena") '("Bombus") '("Osmia") '("NULL"))
@@ -182,7 +186,45 @@
      ;; column-keys dispatches on extension — the same file through the public seam
      (check-equal? (column-keys species.parquet '("genus"))
                    (parquet-column-keys species.parquet '("genus"))
-                   "column-keys routes .parquet to the DuckDB reader")]))
+                   "column-keys routes .parquet to the DuckDB reader")
+
+     ;; --- the manifest source reader (verify-manifest's distinct-of) ----------
+     ;; The THIRD reader, missed by the first pass at st-ubo. It matters more here:
+     ;; the same set feeds BOTH arms, and the soundness arm calls an entry bad
+     ;; UNLESS its key is a member — so a phantom "NULL" lets an entry keyed "NULL"
+     ;; PASS a gate it should fail. That is a false NEGATIVE on soundness, which the
+     ;; bead's "a phantom only adds to the expected keyset" bound does not cover.
+     (define feeds (at "feeds"))
+     (make-directory* feeds)
+     (define feeds.duckdb (path->string (at "feeds.duckdb")))
+     ;; one real collector, one NULL: the NULL must not become an expected key
+     (duckdb! feeds.duckdb "-c"
+              (string-append "CREATE SCHEMA s;"
+                             "CREATE TABLE s.recorded_by (name VARCHAR);"
+                             "INSERT INTO s.recorded_by VALUES ('alice'), (NULL);"))
+     (define (write-index! entries)
+       (write-json-file entries (build-path feeds "index.json")))
+     (define fmk (manifest-key "index.json" "file" "key" "type"
+                               '(("collector" "s.recorded_by" "name"))
+                               '("index.json")))
+
+     (write-index! (list (hasheq 'file "collector-alice.xml" 'key "alice" 'type "collector")))
+     (display-to-file "xml" (build-path feeds "collector-alice.xml"))
+     (let ([v (verify-manifest fmk feeds feeds.duckdb)])
+       (check-true (fan-out-verdict-sound? v) "the real collector's entry is sound")
+       (check-equal? (fan-out-verdict-incomplete v) '()
+                     "a NULL source value is NOT a phantom uncovered key"))
+
+     ;; the soundness direction: an entry keyed by the literal string "NULL", which
+     ;; no row holds. Before the fix the NULL row rendered as "NULL" and vouched for it.
+     (write-index! (list (hasheq 'file "collector-alice.xml" 'key "alice" 'type "collector")
+                         (hasheq 'file "collector-null.xml" 'key "NULL" 'type "collector")))
+     (display-to-file "xml" (build-path feeds "collector-null.xml"))
+     (let ([v (verify-manifest fmk feeds feeds.duckdb)])
+       (check-false (fan-out-verdict-sound? v)
+                    "an entry keyed \"NULL\" is NOT vouched for by a NULL source row")
+       (check-equal? (fan-out-verdict-orphans v) '("unsound:collector-null.xml")
+                     "and it is named as unsound"))]))
 
 ;; --- manifest file classification (st-q6i, the DB-free half) ------------------
 ;; produced files vs {manifest filenames ∪ singletons}: orphans on disk unexplained,

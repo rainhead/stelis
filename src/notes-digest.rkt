@@ -14,7 +14,15 @@
 ;; last note for a species drops the key. The hashed field set is the harvest's
 ;; STORE-DERIVED PROJECTION, field for field; anything narrower is unsound, because a
 ;; field the harvest emits but the digest skips is a wrong SKIP — body_html used to
-;; stand in for body, and markdown->HTML is many-to-one (st-8qj). The value shape
+;; stand in for body, and markdown->HTML is many-to-one (st-8qj).
+;;
+;; STORE-DERIVED is the exact scope: the harvest's `byline' is
+;; _byline(inat_login, collector_index), and its display_name/collector_url half
+;; comes from collectors.json, NOT from this store. That half is not missing from
+;; the address — collectors.json is a declared INPUT of notes-harvest
+;; (beeatlas.rkt), so it moves the task's input address through its own edge. A
+;; digest reaching for it here would be a second, competing definition of the
+;; same dependence. The value shape
 ;; is "<digest>:<count>", the same as relation-digest.rkt's per-column parts, so it
 ;; rides the existing per-key observation / delta machinery unchanged.
 ;;
