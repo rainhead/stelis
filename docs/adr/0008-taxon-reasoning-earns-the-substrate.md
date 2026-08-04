@@ -97,6 +97,8 @@ cheaply give?**
   deferral; only its "first candidate" line is resolved (flags: no).
 - Open forks, deferred to st-ozp's design pass: where the high-rank assertions live
   (curated checked-in config vs a forward-only authored store — start with config,
-  no authoring UI); closed-world default vs explicit negative assertions (defeasible
+  no authoring UI; **settled toward config by [ADR 0011](0011-authored-overrides-live-in-git.md)**,
+  st-ar4, which closes the same fork for corrections at the same time);
+  closed-world default vs explicit negative assertions (defeasible
   override is only needed if assertions conflict along a lineage — decide from the
   real cuckoo taxonomy); and how a proof tree renders to learner prose.

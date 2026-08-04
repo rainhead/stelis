@@ -188,13 +188,15 @@ survives because a *live* correctable source would restore the argument intact.
   because the distinction is real (provenance precedence vs. rank specificity is a
   thinner line than ADR 0008 implied) but because unifying them buys **no
   capability**: `species_traits.sql` already implements one and
-  `taxon-inherit.rkt` the other. Noted in st-ar4 as the shape to converge on if
-  either side needs to grow.
-- **Authoring stays in git.** The seed is forward-only authored data whose store is
-  the repository. A correction-authoring store or UI is deferred (st-ar4) — it is
-  the same fork ADR 0008 left open for high-rank taxon assertions (curated config
-  vs. a forward-only authored store), and the two should be settled together rather
-  than growing two different answers.
+  `taxon-inherit.rkt` the other. ADR 0011 decision 4 keeps that convergence as the
+  shape to take *if* either side needs to grow: the unification and a move off git
+  are the same piece of work, and neither happens without the other.
+- **Authoring stays in git — since [ADR 0011](0011-authored-overrides-live-in-git.md)
+  (st-ar4) as a decision, not a deferral.** The seed is forward-only authored data
+  whose store is the repository, and so are ADR 0008's high-rank taxon assertions;
+  the fork both ADRs left open is settled toward git for both at once, with the
+  conditions that would reopen it named there. A correction-authoring store is not
+  "phase 2".
 - **Nothing is generalized across test beds yet.** The gate's upstream relation is
   beeatlas-shaped SQL — one arm per source column. Generalizing the correction
   overlay waits for a second user, per ROADMAP's premature-feature test.

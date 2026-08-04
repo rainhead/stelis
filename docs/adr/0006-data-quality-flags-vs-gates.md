@@ -75,11 +75,18 @@ reusable investment is the *rule-as-node* mechanism, not this particular rule.
   the **integrity gate** split out as st-0vz and shipped (record-count swing vs.
   history blocks publish; wired as `inat-obs-integrity` before `dbt-build`).
 - The in-process `rule-check` modality is now available for every future
-  data-quality rule; editorial flags reuse it verbatim.
+  data-quality rule. Its consumers turned out to be the *blocking* ones — the
+  integrity gate (st-0vz) and corrections drift (ADR 0009) — not editorial flags,
+  which the fork below sent to dbt.
 - Editorial flags are *published derived data*, which reopens the "transformations
   stay external through Horizon 1" guardrail — whether that logic lives in
-  Stelis-Datalog or a dbt model is an **open fork**, deliberately not decided here;
-  it wants its own design pass before any editorial code.
+  Stelis-Datalog or a dbt model was an **open fork**, deliberately not decided here;
+  it wanted its own design pass before any editorial code. **That pass happened:
+  [ADR 0008](0008-taxon-reasoning-earns-the-substrate.md) decision 1 settles the
+  fork toward dbt** — flags are per-record / per-cluster leaf predicates, no more
+  natural in Datalog than in SQL, so they stay external and earn no substrate.
+  st-8v3, which held the Stelis-Datalog form of this work, is closed by that
+  verdict.
 - Open, later-horizon: per-relation threshold policy (only a global default today),
   and the unified expression of a half-SQL-aggregation, half-Datalog rule as one
   node.

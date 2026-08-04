@@ -39,7 +39,11 @@
 ;; decides how to merge them.
 ;;
 ;; Editing this file re-runs the reasoning node: it is an input ARTIFACT of the
-;; graph, content-addressed like any other data. Its forward-only store is git.
+;; graph, content-addressed like any other data. Its forward-only store is git —
+;; settled by ADR 0011 (st-ar4), not a placeholder for a database: a claim that
+;; outranks a cited source wants the review a commit already carries. The
+;; conditions that would move it (a curator who cannot commit; volume past review;
+;; authoring between builds) are named in that ADR.
 
 (taxon-traits
 
