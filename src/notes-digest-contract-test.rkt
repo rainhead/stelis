@@ -12,10 +12,13 @@
 ;; REAL export_notes over it, and assert notes-store-keys agrees on:
 ;;   1. KEYSET      — the species that get a digest key == the species that get a file
 ;;   2. COUNT       — each key's `:count` == the number of notes in that species' file
-;;   3. SENSITIVITY — between two states differing by one edited body_html, the species
-;;                    whose HARVEST OUTPUT moved == the species whose DIGEST KEY moved
+;;   3. SENSITIVITY — for each single-field edit of one note (body_html; and body with
+;;                    body_html held fixed), the species whose HARVEST OUTPUT moved ==
+;;                    the species whose DIGEST KEY moved
 ;; (1)+(2) catch status-filter / grouping drift; (3) catches the stated risk a keyset
-;; check alone cannot — a field the harvest emits but the digest forgets to hash.
+;; check alone cannot — a field the harvest emits but the digest forgets to hash. The
+;; body-only edit is st-8qj, where hashing the pre-rendered body_html as a PROXY for
+;; body was unsound because markdown->HTML is many-to-one.
 ;;
 ;; The INNER JOIN users case (an orphan author) is NOT exercised here: notes.author_id
 ;; is a FK to users.id with foreign_keys=ON, so an orphan can't exist in a real store.
@@ -91,6 +94,7 @@
    (define summary (run-fixture tmp))
    (define s0-db (build-path tmp "s0" "notes.db"))
    (define s1-db (build-path tmp "s1" "notes.db"))
+   (define s2-db (build-path tmp "s2" "notes.db"))
 
    ;; harvest side: {species -> count} from the emitted files, per state
    (define (harvest-counts state)
@@ -119,16 +123,28 @@
                 "a pending-only species yields no file and no key")
 
    ;; --- (3) field sensitivity: harvest-moved species == digest-moved species -
-   (define harvest-moved
-     (moved-keys (harvest-shas 's0) (harvest-shas 's1)))
-   (define digest-moved
-     (moved-keys (digest-map s0-db) (digest-map s1-db)))
-   (check-equal? (sort harvest-moved string<?) (sort digest-moved string<?)
-                 (string-append
-                  "editing one note's body_html moves exactly the species whose "
-                  "harvest output moved — the digest hashes the fields the harvest emits"))
-   ;; and it really was a non-empty, single-species move (not vacuously equal)
-   (check-equal? harvest-moved (list "apis mellifera")
-                 "the edited species (apis mellifera) is the one that moved")
+   ;; Each state is s0 with ONE note-content field of ONE note edited, so the harvest
+   ;; output of exactly one species moves; the digest must move the same key.
+   (define (check-sensitivity state db what)
+     (define harvest-moved
+       (sort (moved-keys (harvest-shas 's0) (harvest-shas state)) string<?))
+     (define digest-moved
+       (sort (moved-keys (digest-map s0-db) (digest-map db)) string<?))
+     ;; first that the edit is REAL and single-species — otherwise the agreement
+     ;; below would hold vacuously, both sides empty
+     (check-equal? harvest-moved (list "apis mellifera")
+                   (format "editing ~a moves the edited species' harvest output" what))
+     (check-equal? digest-moved harvest-moved
+                   (format (string-append "editing ~a moves exactly the species whose harvest "
+                                          "output moved — the digest hashes the fields the "
+                                          "harvest emits")
+                           what)))
+
+   (check-sensitivity 's1 s1-db "one note's body_html")
+   ;; st-8qj: body_html is a STORED, pre-rendered column, and the digest used it as a
+   ;; proxy for body. markdown->HTML is many-to-one, so a source-only edit can render
+   ;; byte-identically — and the harvest emits body as body_md, so its file moves while
+   ;; a body_html-only digest sits still and notes/<name>.json goes stale.
+   (check-sensitivity 's2 s2-db "one note's body with its body_html held FIXED")
 
    (delete-directory/files tmp)])

@@ -8,18 +8,19 @@ Run inside beeatlas's uv/3.14 runtime (it imports notes_store + notes_harvest):
     uv run --directory <beeatlas>/data python <this> <beeatlas>/data <out-dir>
 
 Building the store from `Base.metadata.create_all` (not a hand-rolled schema)
-means the fixture can't drift from the real models. Two independent full builds
+means the fixture can't drift from the real models. Three independent full builds
 are produced under <out-dir>:
 
   s0/  — the base fixture (varied status + multi-note species)
   s1/  — s0 with ONE note's body_html edited
+  s2/  — s0 with the SAME note's body (markdown SOURCE) edited, body_html held FIXED
 
 Each build writes notes.db + notes/<canonical_name>.json. For each state we
 print, as JSON on stdout, {canonical_name: {"count": N, "sha": <hex>}} over the
 emitted files — the keyset, the per-species note count, and a content hash the
 Racket side uses for the field-sensitivity half (which species' output MOVED
-between s0 and s1). The db paths are <out-dir>/s0/notes.db and .../s1/notes.db,
-which the Racket side digests with notes-store-keys.
+away from s0). The db paths are <out-dir>/<state>/notes.db, which the Racket side
+digests with notes-store-keys.
 """
 
 import contextlib
@@ -35,7 +36,7 @@ def _now(day):
     return datetime.datetime(2026, 7, day, 0, 0, 0, tzinfo=datetime.timezone.utc)
 
 
-# The fixture, as (note_id, canonical_name, author_login, body_html, status, day).
+# The fixture, as (note_id, canonical_name, author_login, body, body_html, status, day).
 # Chosen to exercise every branch the harvest keyset depends on:
 #   - apis mellifera: TWO approved notes (count 2), distinct authors
 #   - osmia lignaria: one approved + one removed by the SAME species (count 1 — the
@@ -47,23 +48,36 @@ def _now(day):
 # unit test (notes-digest-test.rkt) covers it against a hand-rolled FK-less store.
 _USERS = {"alice": 100, "bob": 101, "curator": 102}
 _NOTES = [
-    (1, "apis mellifera", "alice", "<p>honey bee one</p>", "approved", 1),
-    (2, "apis mellifera", "bob", "<p>honey bee two</p>", "approved", 2),
-    (3, "osmia lignaria", "curator", "<p>mason bee</p>", "approved", 3),
-    (6, "osmia lignaria", "alice", "<p>retracted</p>", "removed", 6),
-    (4, "bombus vosnesenskii", "alice", "<p>bumble</p>", "removed", 4),
-    (5, "megachile perihirta", "bob", "<p>leafcutter</p>", "pending", 5),
+    (1, "apis mellifera", "alice", "_honey bee one_", "<p><em>honey bee one</em></p>", "approved", 1),
+    (2, "apis mellifera", "bob", "honey bee two", "<p>honey bee two</p>", "approved", 2),
+    (3, "osmia lignaria", "curator", "mason bee", "<p>mason bee</p>", "approved", 3),
+    (6, "osmia lignaria", "alice", "retracted", "<p>retracted</p>", "removed", 6),
+    (4, "bombus vosnesenskii", "alice", "bumble", "<p>bumble</p>", "removed", 4),
+    (5, "megachile perihirta", "bob", "leafcutter", "<p>leafcutter</p>", "pending", 5),
 ]
-# s1 = s0 with exactly this note's body_html edited — a field the harvest emits AND
-# the digest hashes, so the species' harvest output AND its digest key must move.
+# The note both edited states touch. Editing ONE note of a TWO-note species also
+# checks the digest groups per species rather than per note.
 _EDIT_NOTE_ID = 1
-_EDITED_HTML = "<p>honey bee one (revised)</p>"
+# s1's edit: body_html — a field the harvest emits and the digest has always hashed.
+_EDITED_HTML = "<p><em>honey bee one</em> (revised)</p>"
+# s2's edit (st-8qj): the markdown SOURCE only, with body_html held at its s0 value.
+# This is not a contrived state: markdown->HTML is many-to-one (`_x_` and `*x*` both
+# render <em>x</em>), so a real source edit CAN leave the stored, pre-rendered
+# body_html byte-identical. The harvest emits body as body_md, so its output moves
+# either way — and the digest, which addresses that output, must move with it.
+_EDITED_BODY = "*honey bee one*"
+
+# The states the driver builds, as (name, html-override, body-override).
+_STATES = (("s0", None, None),
+           ("s1", _EDITED_HTML, None),
+           ("s2", None, _EDITED_BODY))
 
 
-def build_store(db_path, models, edit=False):
-    """Create the schema from the real models and insert the fixture. When *edit*,
-    note _EDIT_NOTE_ID gets _EDITED_HTML. Uses beeatlas's own make_engine (WAL),
-    then checkpoints so DuckDB's sqlite scanner reads a complete main db file."""
+def build_store(db_path, models, html=None, body=None):
+    """Create the schema from the real models and insert the fixture. *html* / *body*,
+    when given, replace note _EDIT_NOTE_ID's corresponding column. Uses beeatlas's own
+    make_engine (WAL), then checkpoints so DuckDB's sqlite scanner reads a complete
+    main db file."""
     Base, Note, User, make_engine = models
     from sqlalchemy.orm import Session
 
@@ -77,12 +91,13 @@ def build_store(db_path, models, edit=False):
             session.add(u)
             users[login] = u
         session.flush()  # persist users before the notes that FK-reference them
-        for nid, name, login, html, status, day in _NOTES:
-            if edit and nid == _EDIT_NOTE_ID:
-                html = _EDITED_HTML
+        for nid, name, login, md, rendered, status, day in _NOTES:
+            if nid == _EDIT_NOTE_ID:
+                rendered = rendered if html is None else html
+                md = md if body is None else body
             session.add(Note(
                 id=nid, canonical_name=name, author_id=users[login].id,
-                body="md", body_html=html, status=status,
+                body=md, body_html=rendered, status=status,
                 created_at=_now(day), updated_at=_now(day)))
         session.commit()
     # Fold the -wal back into the main file so the read-only DuckDB scan on the
@@ -115,11 +130,11 @@ def main():
     models = (Base, Note, User, make_engine)
 
     result = {}
-    for state, edit in (("s0", False), ("s1", True)):
+    for state, html, body in _STATES:
         state_dir = out_dir / state
         state_dir.mkdir(parents=True, exist_ok=True)
         db_path = state_dir / "notes.db"
-        build_store(str(db_path), models, edit=edit)
+        build_store(str(db_path), models, html=html, body=body)
         # Swallow export_notes' own progress prints so stdout carries ONLY our JSON.
         with contextlib.redirect_stdout(io.StringIO()):
             export_notes(engine=make_engine(str(db_path)), assets_dir=state_dir)

@@ -82,6 +82,17 @@
    (check-not-equal? (val "osmia lignaria" k1) (val "osmia lignaria" k0)
                      "...and moves osmia's key")
 
+   ;; st-8qj: the markdown SOURCE alone moves, body_html held fixed. body_html is a
+   ;; STORED, pre-rendered column and used to stand in for body — unsound, because
+   ;; markdown->HTML is many-to-one, and the harvest emits body as body_md. Hold
+   ;; updated_at fixed too, so `body' is the ONLY moving field.
+   (sql! "UPDATE notes SET body='*edited source*' WHERE id=1;")
+   (define k2 (keys))
+   (check-not-equal? (val "apis mellifera" k2) (val "apis mellifera" k1)
+                     "editing body alone (body_html unchanged) moves the species' key")
+   (check-equal? (val "osmia lignaria" k2) (val "osmia lignaria" k1)
+                 "...and only that species'")
+
    ;; adding a note under a NEW species adds a key
    (add 5 "megachile perihirta" 100 "<p>new</p>" "approved" "2026-07-10 00:00:00")
    (check-equal? (map car (keys)) '("apis mellifera" "megachile perihirta" "osmia lignaria")

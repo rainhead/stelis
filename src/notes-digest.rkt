@@ -9,9 +9,12 @@
 ;; name>.json per species with status='approved' notes; species with zero
 ;; approved notes have no file. This digests EXACTLY that keyset — approved
 ;; notes, grouped by canonical_name, hashing only the fields that flow into the
-;; harvest output (id, author_id, body_html, the two timestamps) — so adding/
+;; harvest output (id, inat_login, body_html, body, the two timestamps) — so adding/
 ;; editing/removing one note moves only its species' key, and unapproving the
-;; last note for a species drops the key. The value shape
+;; last note for a species drops the key. The hashed field set is the harvest's
+;; STORE-DERIVED PROJECTION, field for field; anything narrower is unsound, because a
+;; field the harvest emits but the digest skips is a wrong SKIP — body_html used to
+;; stand in for body, and markdown->HTML is many-to-one (st-8qj). The value shape
 ;; is "<digest>:<count>", the same as relation-digest.rkt's per-column parts, so it
 ;; rides the existing per-key observation / delta machinery unchanged.
 ;;
@@ -52,7 +55,7 @@
    "ATTACH '" (sql-quote (path-string->string db)) "' AS s (TYPE sqlite, READ_ONLY);\n"
    "SELECT n.canonical_name || chr(9) ||\n"
    "  coalesce(sum(md5_number_lower(to_json({"
-   "'id':n.id,'author':u.inat_login,'html':n.body_html,"
+   "'id':n.id,'author':u.inat_login,'html':n.body_html,'md':n.body,"
    "'created':n.created_at,'updated':n.updated_at})::VARCHAR))::VARCHAR, '0')\n"
    "  || ':' || count(*)::VARCHAR\n"
    ;; INNER JOIN users to MATCH notes_harvest exactly (it joins User; a note whose
