@@ -3,11 +3,15 @@
 ;; Unit tests for the declared fan-out key (st-tul, st-5jt). The pure core (template
 ;; arity, key-tuple extraction, set classification) is filesystem-free; the driver
 ;; (json-column-keys, verify-fan-out-key) runs over tiny JSON fixtures in a scratch
-;; dir. The parquet key source is DuckDB-only and covered by the integration test.
+;; dir. The parquet key source needs the DuckDB CLI: its NULL handling is covered
+;; here over a hermetic one-file fixture (gated on the CLI, the duckdb-skip idiom),
+;; and its use against a real build is covered by the integration test.
 
 (require rackunit
          racket/set
          racket/file
+         racket/port
+         racket/system
          json
          "fan-out-key.rkt")
 
@@ -68,11 +72,17 @@
  (list (hasheq 'genus "Andrena" 'subgenus "Micrandrena" 'slug "Andrena/prunorum")
        (hasheq 'genus "Andrena" 'subgenus "Micrandrena" 'slug "Andrena/wilkella") ; dup pair
        (hasheq 'genus "Bombus"  'subgenus "Pyrobombus"  'slug "Bombus/mixtus")
-       (hasheq 'genus "Halictus" 'slug "Halictus/rubicundus"))                    ; no subgenus
+       (hasheq 'genus "Halictus" 'slug "Halictus/rubicundus")                     ; no subgenus
+       (hasheq 'genus "Osmia" 'subgenus (json-null) 'slug "Osmia/lignaria"))      ; explicit null
  species.json)
 (check-equal? (json-column-keys species.json '("genus" "subgenus"))
               (set '("Andrena" "Micrandrena") '("Bombus" "Pyrobombus"))
               "composite tuples are DISTINCT; a row missing a column is dropped")
+;; the st-ubo twin on the JSON side: read-json decodes null to the SYMBOL 'null,
+;; which is truthy, so a present-but-null column used to key the phantom "null".
+(check-equal? (json-column-keys species.json '("genus"))
+              (set '("Andrena") '("Bombus") '("Halictus") '("Osmia"))
+              "a null column value keys nothing (and does not become the key \"null\")")
 
 ;; --- verify-fan-out-key: single-branch driver (place-maps shape) --------------
 
@@ -131,6 +141,48 @@
              (verify-fan-out-key (list (fan-out 'species.json '("genus") "subgenus/{}/{}.svg"))
                                  smaps sresolve))
            "1 column against a 2-placeholder template is a declaration error")
+
+;; --- the parquet key source: NULL must key nothing (st-ubo) -------------------
+;; Hermetic and duckdb-gated (the mechanism is unexercisable without the CLI, and CI
+;; has neither it nor beeatlas). The regression: the CLI's -list output renders SQL
+;; NULL as the literal text "NULL", so a NULL key column arrived as a phantom
+;; EXPECTED key — harmless to soundness (it only ever adds to the expected set) but
+;; a permanent spurious entry in the completeness report. Found in st-ozp, where the
+;; same seam merged every subgenus-less species under one bogus taxon named NULL.
+(let ([duckdb (find-executable-path "duckdb")])
+  (cond
+    [(not duckdb) (printf "fan-out-key-test: duckdb not on PATH — parquet cases skipped.\n")]
+    [else
+     (define species.parquet (path->string (at "species.parquet")))
+     ;; genus is VARCHAR, rank_id INTEGER — the numeric column is the point: DuckDB
+     ;; resolves coalesce(<int>, '') by converting '' to INT32 and errors, so the
+     ;; fix has to CAST before coalescing.
+     (define-values (sp out in err)
+       (subprocess #f #f #f duckdb "-c"
+                   (string-append
+                    "COPY (SELECT * FROM (VALUES "
+                    "('Andrena', 1), ('Bombus', 2), (NULL, 3), ('Osmia', NULL), ('NULL', 4)"
+                    ") t(genus, rank_id)) TO '" species.parquet "'")))
+     (close-output-port in)
+     (port->string out)
+     (define e (port->string err))
+     (subprocess-wait sp)
+     (unless (eqv? 0 (subprocess-status sp)) (error 'fixture "duckdb failed: ~a" e))
+
+     (check-equal? (parquet-column-keys species.parquet '("genus"))
+                   (set '("Andrena") '("Bombus") '("Osmia") '("NULL"))
+                   (string-append "a SQL NULL keys nothing — while a row whose column "
+                                  "genuinely holds the STRING \"NULL\" still keys a file"))
+     (check-equal? (parquet-column-keys species.parquet '("rank_id"))
+                   (set '("1") '("2") '("3") '("4"))
+                   "a NUMERIC key column is stringified, and its NULL keys nothing")
+     (check-equal? (parquet-column-keys species.parquet '("genus" "rank_id"))
+                   (set '("Andrena" "1") '("Bombus" "2") '("NULL" "4"))
+                   "a composite tuple is dropped when EITHER component is NULL")
+     ;; column-keys dispatches on extension — the same file through the public seam
+     (check-equal? (column-keys species.parquet '("genus"))
+                   (parquet-column-keys species.parquet '("genus"))
+                   "column-keys routes .parquet to the DuckDB reader")]))
 
 ;; --- manifest file classification (st-q6i, the DB-free half) ------------------
 ;; produced files vs {manifest filenames ∪ singletons}: orphans on disk unexplained,

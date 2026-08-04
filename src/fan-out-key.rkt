@@ -195,13 +195,24 @@
 
 ;; parquet-column-keys : path-string (listof string) -> (setof (listof string))
 ;; DISTINCT `cols' tuples in a parquet file, read via DuckDB (-list output: rows on
-;; newlines, columns on '|'; NULL renders empty). Rows with an empty component are
-;; dropped. Raises if the file can't be read — a harness precondition, not a defect.
-;; Columns are gated on duckdb.rkt's sql-identifier? before interpolation.
+;; newlines, columns on '|'). Rows with an empty component are dropped. Raises if the
+;; file can't be read — a harness precondition, not a defect. Columns are gated on
+;; duckdb.rkt's sql-identifier? before interpolation.
+;;
+;; coalesce is load-bearing (st-ubo): the CLI's -list format renders SQL NULL as the
+;; literal text "NULL" (checked on 1.5.5), NOT as empty, so a NULL in a key column
+;; used to arrive as a phantom expected key named "NULL". Coalescing in SQL makes
+;; absence the empty string, which the drop below already understands — and keeps a
+;; row whose column genuinely holds the STRING "NULL" distinguishable from one that
+;; holds nothing. The CAST is what makes it work on a numeric key column: DuckDB
+;; resolves coalesce(<int>, '') by converting '' to INT32 and errors out.
 (define (parquet-column-keys src cols)
   (unless (andmap (lambda (c) (regexp-match? sql-identifier? c)) cols)
     (error 'parquet-column-keys "not a plain column name: ~a" cols))
-  (define sql (string-append "SELECT DISTINCT " (string-join cols ", ")
+  (define sql (string-append "SELECT DISTINCT "
+                             (string-join (for/list ([c (in-list cols)])
+                                            (string-append "coalesce(CAST(" c " AS VARCHAR),'')"))
+                                          ", ")
                              " FROM read_parquet('" src "')"))
   (define out (duckdb-query #f sql))
   (unless out (error 'parquet-column-keys "could not read ~a via duckdb" src))
@@ -211,7 +222,14 @@
                         (andmap (lambda (s) (not (string=? s ""))) tup)))
     tup))
 
-(define (present? v) (and v (not (and (string? v) (string=? v "")))))
+;; A column value that keys no file: absent (#f from hash-ref), JSON null, or the
+;; empty string. json-null is checked explicitly because read-json decodes null to the
+;; SYMBOL 'null, which is TRUTHY — without this a null column read as the key "null",
+;; the JSON-side twin of st-ubo's "NULL" phantom on the parquet side.
+(define (present? v)
+  (and v
+       (not (eq? v (json-null)))
+       (not (and (string? v) (string=? v "")))))
 (define (key->string v) (if (string? v) v (format "~a" v)))
 
 ;; --- driver -----------------------------------------------------------------
