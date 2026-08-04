@@ -80,7 +80,10 @@ cannot be skipped: ~a" (names))]
     [(recipe-changed)      "recipe changed — command or runtime"]
     [(input-changed)       (format "inputs changed: ~a" (names))]
     [(output-missing)      (format "outputs missing: ~a" (names))]
-    [(output-stale)        (format "db-relation output(s) stale in the current DuckDB: ~a" (names))]
+    ;; kind-agnostic since st-zh2: a db-relation swapped under the cache and a file
+    ;; rewritten on disk are the same fact — the output is present but not ours.
+    [(output-stale)        (format "output(s) present but no longer what this task \
+produced: ~a" (names))]
     [(cached)              "cached — inputs unchanged, outputs present"]
     [else                  (format "~a" (decision-reason d))]))
 

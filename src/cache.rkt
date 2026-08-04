@@ -46,6 +46,7 @@
          read-cache-entry
          decide
          stale-relation-outputs
+         stale-disk-outputs
          decision+snapshot
          task-decision
          cache-hit?
@@ -80,10 +81,13 @@
 ;;           | 'recipe-changed       the command/runtime changed
 ;;           | 'input-changed        details name the changed/added/removed inputs
 ;;           | 'output-missing       details name the missing output paths
-;;           | 'output-stale         details name db-relation outputs whose table no
-;;                                   longer matches what this task built (DuckDB
-;;                                   swapped/mutated under the cache, st-84u)
+;;           | 'output-stale         details name outputs that still EXIST but no
+;;                                   longer match what this task built — a db-relation
+;;                                   whose table was swapped/mutated under the cache
+;;                                   (st-84u), or a file/dir rewritten on disk by
+;;                                   something outside the graph (st-zh2)
 ;;           | 'cached               (verdict 'skip) inputs unchanged, outputs exist
+;;                                   AND still match what this task produced
 ;;   details : reason-specific list; '() when there is nothing to name
 (struct decision (verdict reason details) #:transparent)
 
@@ -575,8 +579,9 @@
 ;;          -> decision?
 ;; The pure core: compare a fresh snapshot against the recorded entry (#f = no
 ;; usable entry), given which recorded outputs are missing on disk (`missing-outputs`)
-;; and which db-relation outputs no longer match what this task last produced
-;; (`stale-outputs`, st-84u). The first applicable reason wins; the output reasons
+;; and which recorded outputs still exist but no longer match what this task last
+;; produced (`stale-outputs`: db-relations st-84u, files/dirs st-zh2). The
+;; first applicable reason wins; the output reasons
 ;; are checked after the content reasons so a content change is always reported as
 ;; the content change.
 (define (decide snap entry missing-outputs [stale-outputs '()])
@@ -600,9 +605,11 @@
         (decision 'run 'recipe-changed '())]
        [(pair? changed)          (decision 'run 'input-changed changed)]
        [(pair? missing-outputs)  (decision 'run 'output-missing missing-outputs)]
-       ;; a db-relation output whose table is gone/mutated in the current DuckDB —
-       ;; the db was swapped out from under a content-addressed skip (st-84u). Rerun
-       ;; to re-materialise it, or a downstream dbt read of it silently empties.
+       ;; an output that still EXISTS but is no longer what this task produced: a
+       ;; db-relation whose table was swapped out from under a content-addressed skip
+       ;; (st-84u), or a file/dir something outside the graph rewrote (st-zh2). Rerun
+       ;; to re-materialise it — otherwise a downstream read silently gets the wrong
+       ;; content, having been told the input was unchanged.
        [(pair? stale-outputs)    (decision 'run 'output-stale stale-outputs)]
        [else                     (decision 'skip 'cached '())])]))
 
@@ -623,6 +630,46 @@
                 #:when (let ([a (hash-ref (graph-artifacts g) out #f)])
                          (and a (eq? 'db-relation (artifact-kind a))))
                 #:unless (equal? (rr out) (hash-ref recorded out #f)))
+       out)]))
+
+;; stale-disk-outputs : graph symbol build-env? (or/c hash? #f) -> (listof symbol)
+;; A task's 'file and 'dir OUTPUTS whose content on disk no longer matches the digest
+;; this task recorded producing (st-zh2) — the on-disk twin of stale-relation-outputs.
+;;
+;; Until this existed the cache asked only whether a recorded output still EXISTED, so
+;; an output that was still there but no longer ours read as a clean skip forever. That
+;; is not hypothetical: beeatlas's topology_postprocess used to rewrite the region marts
+;; place-marts had just produced, in place, and place-marts went on reporting 'cached
+;; against a file it did not write (beeatlas-hyq). One-producer-per-artifact removed
+;; that particular cause; nothing inside the graph can rule out the general one, because
+;; the mutation comes from OUTSIDE the graph — a stray script, a restored backup, a
+;; human with a text editor.
+;;
+;; Same conservative reading as st-84u on a missing recorded digest: no basis means
+;; rerun, not "assume fine". Cheap in practice — 'file outputs are a sha1 of bytes we
+;; already hash as INPUTS elsewhere in the same pass, and a 'dir is the tree-hash that
+;; its own digest is made of. Measured across beeatlas's whole 40-task graph on the
+;; serving host: ~1.6s, against ~6.5s that stale-relation-outputs was already spending
+;; on DuckDB digests in the very same eager position.
+(define (stale-disk-outputs g name env entry)
+  (cond
+    [(not entry) '()]
+    [else
+     (define recorded (make-immutable-hash (hash-ref entry 'output-hashes '())))
+     (for/list ([out (in-list (task-outputs (hash-ref (graph-tasks g) name)))]
+                #:do [(define a (hash-ref (graph-artifacts g) out #f))]
+                #:when (and a (memq (artifact-kind a) '(file dir))
+                            ;; DERIVED only, exactly as output-snapshot+keys filters.
+                            ;; An authoritative output is never recorded, so comparing
+                            ;; it against a recorded digest would find #f every time
+                            ;; and rerun forever — and "it changed since we wrote it"
+                            ;; is not a defect for forward-only state, it is the point.
+                            (eq? 'derived (artifact-provenance a)))
+                ;; #f = absent or unresolvable; 'output-missing owns that report and is
+                ;; checked first, so naming it here too would only muddy the reason.
+                #:do [(define now (observe-output a out env))]
+                #:when now
+                #:unless (equal? (car now) (hash-ref recorded out #f)))
        out)]))
 
 ;; names whose hash differs between the two maps, or that exist in only one.
@@ -652,7 +699,11 @@
       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])
         (values (decide snap entry
                         (missing (env-output-paths env t))
-                        (stale-relation-outputs g name env entry))
+                        ;; both kinds of "still there, but no longer what we made"
+                        ;; feed the one 'output-stale arm (st-84u + st-zh2)
+                        (sort (append (stale-relation-outputs g name env entry)
+                                      (stale-disk-outputs g name env entry))
+                              symbol<?))
                 snap))))
 
 ;; task-decision : graph symbol build-env? -> decision?

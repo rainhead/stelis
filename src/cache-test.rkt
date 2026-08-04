@@ -187,6 +187,85 @@
               "inputs unchanged but the output is gone")
 (display-to-file "db-bytes" out-path)
 
+;; --- an output MUTATED on disk, not lost (st-zh2) -----------------------------
+;; The gap 'output-missing left open: the file is still there, so existence says
+;; nothing, but it is no longer what this task wrote. Somebody outside the graph
+;; rewrote it — the shape beeatlas hit when one step overwrote a sibling's output
+;; in place and the sibling went on reporting 'cached (beeatlas-hyq).
+(check-equal? (task-decision g 'xform env)
+              (decision 'skip 'cached '())
+              "baseline: the restored output matches, so this is a clean skip")
+(display-to-file "TAMPERED" out-path #:exists 'replace)
+(check-equal? (task-decision g 'xform env)
+              (decision 'run 'output-stale '(out))
+              "the output still EXISTS but is not ours -> rerun, naming it")
+(check-equal? (stale-disk-outputs g 'xform env (read-cache-entry cache-dir 'xform))
+              '(out)
+              "stale-disk-outputs names the mutated output")
+;; content, not mtime: rewriting the same bytes is not a change.
+(display-to-file "db-bytes" out-path #:exists 'replace)
+(file-or-directory-modify-seconds out-path (+ 4242 (file-or-directory-modify-seconds out-path)))
+(check-equal? (task-decision g 'xform env)
+              (decision 'skip 'cached '())
+              "same bytes at a newer mtime is still a skip")
+;; a content change to the INPUT outranks it: the sharper report is the cause,
+;; not the symptom downstream.
+(display-to-file "a,b\n9,9\n" raw-path #:exists 'replace)
+(display-to-file "TAMPERED" out-path #:exists 'replace)
+(check-equal? (task-decision g 'xform env)
+              (decision 'run 'input-changed '(raw))
+              "a changed input still outranks a mutated output as the reason")
+(display-to-file "a,b\n1,2\n" raw-path #:exists 'replace)
+(display-to-file "db-bytes" out-path #:exists 'replace)
+
+;; the same for a 'dir output, whose digest is the roll-up of its per-file hashes —
+;; so a single edited file inside a 1,600-file tree moves it.
+(let* ([dir-out (build-path tmp "pages")]
+       [g-d (build-graph
+             (list (make-task 'render 'transform #:inputs '(raw) #:outputs '(pages)))
+             (list (make-artifact 'raw 'file) (make-artifact 'pages 'dir)))]
+       [env-d (make-build-env (lambda (a _d)
+                                (case a [(raw) raw-path] [(pages) dir-out] [else #f]))
+                              tmp cache-dir)])
+  (make-directory dir-out)
+  (display-to-file "one" (build-path dir-out "a.json"))
+  (display-to-file "two" (build-path dir-out "b.json"))
+  (cache-store! cache-dir 'render (input-snapshot g-d 'render (lambda (a) (and (eq? a 'raw) raw-path)))
+                (list dir-out) (output-snapshot g-d 'render env-d))
+  (check-equal? (task-decision g-d 'render env-d) (decision 'skip 'cached '())
+                "an untouched dir output is a clean skip")
+  (display-to-file "two, edited" (build-path dir-out "b.json") #:exists 'replace)
+  (check-equal? (task-decision g-d 'render env-d)
+                (decision 'run 'output-stale '(pages))
+                "one edited file inside the tree makes the dir output stale")
+  (display-to-file "two" (build-path dir-out "b.json") #:exists 'replace)
+  (display-to-file "three" (build-path dir-out "c.json"))
+  (check-equal? (task-decision g-d 'render env-d)
+                (decision 'run 'output-stale '(pages))
+                "a STRAY file nobody declared also moves it — the dir is the artifact"))
+
+;; an AUTHORITATIVE output is exempt: it is never recorded (cutoff doesn't apply to
+;; forward-only state), so comparing it to a recorded digest would rerun forever.
+;; Its bytes differing from anything we stored is the normal case, not a defect.
+(let* ([auth-out (build-path tmp "auth.db")]
+       [g-a (build-graph
+             (list (make-task 'writes 'transform #:inputs '(raw) #:outputs '(authout)))
+             (list (make-artifact 'raw 'file)
+                   (make-artifact 'authout 'file #:provenance 'authoritative)))]
+       [env-a (make-build-env (lambda (a _d)
+                                (case a [(raw) raw-path] [(authout) auth-out] [else #f]))
+                              tmp cache-dir)])
+  (display-to-file "forward-only state" auth-out)
+  (cache-store! cache-dir 'writes (input-snapshot g-a 'writes (lambda (a) (and (eq? a 'raw) raw-path)))
+                (list auth-out) (output-snapshot g-a 'writes env-a))
+  (display-to-file "moved on, as authoritative state does" auth-out #:exists 'replace)
+  (check-equal? (stale-disk-outputs g-a 'writes env-a (read-cache-entry cache-dir 'writes))
+                '()
+                "an authoritative output that moved is not 'stale'")
+  (check-equal? (task-decision g-a 'writes env-a)
+                (decision 'skip 'cached '())
+                "...and does not force a rerun"))
+
 ;; a different recipe against the same stored entry
 (check-equal? (task-decision (graph-with-invoke "v2") 'xform env)
               (decision 'run 'recipe-changed '())

@@ -220,8 +220,24 @@
        (printf "    STELIS_STATE_DIR=<dir> racket src/main.rkt ...\n"))
      (newline)]
     [else
-     (printf "Reading build state: ~a (~a task entr~a)\n\n"
-             stelis-cache mine (if (= mine 1) "y" "ies"))]))
+     (printf "Reading build state: ~a (~a task entr~a)\n"
+             stelis-cache mine (if (= mine 1) "y" "ies"))])
+  ;; The OTHER dir the answer depends on. Outputs resolve under the export dir, so
+  ;; every 'output-missing and 'output-stale verdict is a claim about it — and
+  ;; without --export-dir that is a scratch dir under /tmp, whose leftovers from an
+  ;; earlier interactive run answer just as confidently as a real build's would. I
+  ;; walked into this twice while adding st-zh2: five outputs reported stale that
+  ;; were byte-identical to their recorded digests in the dir I THOUGHT I was asking
+  ;; about. (Note $EXPORT_DIR is not consulted here — the flag is, so exporting the
+  ;; variable the way the nightly does changes nothing.)
+  (cond
+    [(export-dir-arg)
+     (printf "Resolving outputs in: ~a\n\n" (scratch-out-path))]
+    [else
+     (printf "Resolving outputs in: ~a — a SCRATCH dir, not a build's export dir.\n"
+             (scratch-out-path))
+     (printf "  Whether an output is missing or stale is a fact about that dir. To\n")
+     (printf "  ask about a real one: --export-dir <dir>\n\n")]))
 
 ;; the one build environment every cache-aware mode shares. resolve-relation
 ;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
