@@ -15,7 +15,7 @@ jobs:
     env:
       SOURCE_DATE_EPOCH: '1700000000'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The `datalog` package the planner needs ships in the full Racket
       # distribution (setup-racket's default), already installed at installation
@@ -34,11 +34,43 @@ jobs:
       - name: Install sha
         run: raco pkg install --auto --batch sha
 
-      # The suite is hermetic and undemanding: pure-core units over synthetic
-      # graphs plus integration checks against the in-repo beeatlas graph. No
-      # network and no external checkout. The DuckDB-backed tests (relation
-      # digests, the fan-out manifest check) self-skip when the `duckdb` CLI or a
-      # populated reference dir is absent — as it is here — so they no-op rather
-      # than fail. Install the DuckDB CLI in this job if that coverage is wanted.
+      # The DuckDB CLI. Four suites (fan-out-key, relation-digest, notes-digest,
+      # corrections-drift) build their own hermetic fixtures THROUGH this binary and
+      # self-skip without it — 56 assertions that need no checkout and no fixture
+      # data, including the content-addressing soundness guards (st-ubo, st-8qj).
+      #
+      # PINNED, and the pin is load-bearing twice over. It is a downloaded binary, so
+      # the sha256 is the same supply-chain discipline as SHA-pinning an action (no
+      # third-party action to trust here — this is a plain fetch). And the version is
+      # itself under test: comments in fan-out-key.rkt and taxon-derive.rkt assert how
+      # THIS CLI renders SQL NULL and casts to VARCHAR in -list output ("checked on
+      # 1.5.5"). Pinning turns those from remarks into something a bump has to
+      # re-verify, rather than a silent drift under a floating `latest`.
+      - name: Install DuckDB CLI
+        env:
+          DUCKDB_VERSION: '1.5.5'
+          DUCKDB_SHA256: '08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o duckdb.zip \
+            "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
+          echo "${DUCKDB_SHA256}  duckdb.zip" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          unzip -q duckdb.zip -d "$HOME/.local/bin"   # one top-level `duckdb` binary
+          chmod +x "$HOME/.local/bin/duckdb"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/duckdb" --version
+
+      # The suite is hermetic and undemanding: pure-core units over synthetic graphs
+      # plus integration checks against the in-repo beeatlas graph. No network and no
+      # external checkout.
+      #
+      # What still self-skips here needs a beeatlas CHECKOUT, and deliberately stays
+      # skipped: the integration suites want a populated reference EXPORT_DIR, and
+      # notes-digest-contract-test stands up beeatlas's REAL SQLAlchemy models under
+      # uv to catch DRIFT between the two repos. Standing that one up on fixture data
+      # we authored would test our mirror against our own copy of what it mirrors —
+      # green exactly when a field added on the beeatlas side should turn it red. Its
+      # home is a host that has both repos (see st-7lm), not here.
       - name: Run tests
         run: raco test src/*-test.rkt
