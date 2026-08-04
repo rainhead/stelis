@@ -162,6 +162,67 @@
        "  directory. If the history was relocated, point at it:\n"
        "    STELIS_STATE_DIR=<dir> racket src/main.rkt --history\n")))
 
+;; --- Where the prospective answer comes from (st-5rl) --------------------------
+;;
+;; The note above fires only when a RETROSPECTIVE mode finds nothing. --why and
+;; --explain never find nothing: they answer out of the cache dir and the beeatlas
+;; checkout, and when either is wrong they produce a confident answer about a build
+;; that never happened. Pointed at an empty state dir, --why reports every task as
+;; never-built and every gate TOKEN as unaddressable (a token is addressed by its
+;; gate's recorded input address, st-ysf) — which reads exactly like an engine that
+;; has stopped hashing its inputs. That misreading cost a month and a 15x-coarse
+;; county layer (beeatlas-xwh), so these modes now say what they read, always and
+;; not only when something looks wrong. An answer's provenance is part of the answer.
+
+;; Entries in the cache dir, and how many are tasks of THIS graph. The second number
+;; is the one that matters, and it is why this isn't a plain file count: a populated
+;; dir belonging to some OTHER graph would read as healthy and answer confidently,
+;; which is the same failure as an empty one wearing a disguise. Zero-for-this-graph
+;; is the condition to shout about, not zero-overall. (The distinction earns its keep
+;; once a second graph exists, st-z1c — until then the two numbers agree.)
+(define (cache-entry-counts)
+  (cond
+    [(not (directory-exists? stelis-cache)) (values 0 0)]
+    [else
+     (define names
+       (for/list ([p (in-list (directory-list stelis-cache))]
+                  #:when (regexp-match? #px"\\.rktd$" (path->string p)))
+         (string->symbol (path->string (path-replace-extension p #"")))))
+     (values (length names)
+             (for/sum ([n (in-list names)]
+                       #:when (hash-ref (graph-tasks beeatlas-graph) n #f))
+               1))]))
+
+;; Printed at the top of --why and --explain. Two facts, because two env vars can
+;; independently send this off the rails and neither failure is visible in the
+;; output otherwise.
+(define (print-context-banner!)
+  ;; BEEATLAS defaults to the author's laptop path, so on any other host an unset
+  ;; BEEATLAS_DIR makes every code file "missing" and every task unaddressable —
+  ;; naming /Users/... paths that obviously aren't there, but only if you look.
+  (unless (directory-exists? BEEATLAS)
+    (printf "WARNING: no beeatlas checkout at ~a — every task will report its code\n\
+         as missing. Set BEEATLAS_DIR.\n\n" BEEATLAS))
+  (define-values (total mine) (cache-entry-counts))
+  (cond
+    [(zero? mine)
+     (printf "Reading build state: ~a — ~a.\n" stelis-cache
+             (if (zero? total)
+                 "EMPTY (no task entries)"
+                 (format "~a entr~a, NONE of them a task in this graph"
+                         total (if (= total 1) "y" "ies"))))
+     (printf "  Every task will report as never-built and every gate token as not\n")
+     (printf "  content-addressable. That is a fact about this dir, not about the\n")
+     (printf "  engine.\n")
+     (unless stelis-state-env
+       (printf "  STELIS_STATE_DIR is unset, so that path is relative to the current\n")
+       (printf "  directory (~a). If the build state lives elsewhere:\n" (current-directory))
+       (printf "    STELIS_STATE_DIR=<dir> racket src/main.rkt ...\n"))
+     (newline)]
+    [else
+     (printf "Reading build state: ~a (~a task entr~a)\n\n"
+             stelis-cache mine (if (= mine 1) "y" "ies"))]))
+
 ;; the one build environment every cache-aware mode shares. resolve-relation
 ;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
 ;; reaches the pre-dbt graph and not only the file edges around dbt-build.
@@ -647,6 +708,7 @@
    (define thy (explanations->theory beeatlas-graph exps))
    (define dec-of (for/hash ([e (in-list exps)])
                     (values (explanation-task e) (explanation-decision e))))
+   (print-context-banner!)
    (unless (eq? subject-task name)
      (printf "~a is produced by ~a — asking about that task.\n\n" name subject-task))
    (if (datalog-stale? thy subject-task)
@@ -661,6 +723,7 @@
    (printf "Target: ~a\n\n" (or name "the whole graph (--all)"))
    (cond
      [(eq? (mode) 'explain)
+      (print-context-banner!)
       (define to-run (plan-suffix ordered))
       (printf "Explain — ~a task(s)~a, in build order:\n"
               (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))

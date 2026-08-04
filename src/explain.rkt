@@ -66,7 +66,15 @@
   (define (names) (string-join (map ~a (decision-details d)) ", "))
   (case (decision-reason d)
     [(boundary)            "boundary — ingestion; never content-skipped"]
-    [(inputs-unresolvable) (format "inputs not content-addressable: ~a" (names))]
+    ;; The consequence, not just the state (st-5rl). Every other reason here either
+    ;; names a CHANGE (self-evidently a rerun) or spells its verdict out; this one
+    ;; described a property and stopped, and a reader who saw it beside a log line
+    ;; saying "cached" concluded the engine had skipped DESPITE unaddressable inputs.
+    ;; It cannot: input-snapshot returns a 'run decision the moment any input fails to
+    ;; resolve. Say so, because the alternative reading is an engine bug that would
+    ;; take a month to disprove (beeatlas-xwh).
+    [(inputs-unresolvable) (format "inputs not content-addressable, so this task \
+cannot be skipped: ~a" (names))]
     [(no-cache-entry)      "no cache entry — never built here"]
     [(code-changed)        (format "task code changed: ~a" (names))]
     [(recipe-changed)      "recipe changed — command or runtime"]
