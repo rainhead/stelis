@@ -1,0 +1,19 @@
+# Racket collections the engine requires at RUNTIME, one per line.
+#
+# This declares what must be LOADABLE, not what must be installed — how a host
+# satisfies each one differs, and that is fine. The full Racket distribution ships
+# `datalog` at installation scope (so CI must NOT re-request it as a user package;
+# that errors on the wider-scope install), while `sha` is not in any distribution
+# and installs as a user package everywhere.
+#
+# scripts/preflight.sh checks every line here actually requires, and CI runs that
+# same script after its install step — so a dependency added here without a
+# matching install fails on a pull request, not at 03:00 on the deploy host.
+#
+# Why this exists: on 2026-08-01 dasl.rkt's `(require (only-in sha sha256))` was
+# reachable from every stelis invocation, `sha` was absent on maderas, and the
+# nightly's fetch-data leg was simply dead — a module-resolution stack trace with
+# nothing naming the fix (st-7lm).
+
+sha
+datalog

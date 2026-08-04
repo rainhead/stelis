@@ -34,6 +34,14 @@ jobs:
       - name: Install sha
         run: raco pkg install --auto --batch sha
 
+      # The same provisioning check the deploy host runs (scripts/preflight.sh,
+      # st-7lm), against racket-deps.txt. Running it HERE is what keeps the two in
+      # step: add a dependency to that file without adding an install for it, and
+      # this fails on the pull request instead of at 03:00 on maderas. The Racket
+      # version matches here, so the version NOTE stays quiet.
+      - name: Preflight (deps load)
+        run: bash scripts/preflight.sh
+
       # The DuckDB CLI. Four suites (fan-out-key, relation-digest, notes-digest,
       # corrections-drift) build their own hermetic fixtures THROUGH this binary and
       # self-skip without it — 56 assertions that need no checkout and no fixture
