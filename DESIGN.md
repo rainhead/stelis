@@ -3,12 +3,15 @@
 ## What this is
 
 Stelis is a build system whose rules are modeled in Datalog, built on Racket. Its
-job is to know what must be rebuilt given any particular change. The near-term
-goal is to wrap — and eventually replace — the patchwork of imperative build
-steps (dlt, dbt, 11ty, vite, and custom scripts) that power the `beeatlas` and
-`salishsea` pipelines. The longer arc is a single system that handles both batch
-rebuilds and the near-real-time incorporation of incoming data into published
-artifacts.
+job is to hold a complete, declarative account of how every artifact is produced —
+and, from that, to know what must be rebuilt given any particular change. **The
+order matters.** Knowing what to rebuild is a *consequence* of the declaration
+being complete and true, not the point of it; a fast build over an incomplete
+graph is the thing being replaced, not a partial success. The near-term goal is
+to wrap — and eventually replace — the patchwork of imperative build steps (dlt,
+dbt, 11ty, vite, and custom scripts) that power the `beeatlas` and `salishsea`
+pipelines. The longer arc is a single system that handles both batch rebuilds and
+the near-real-time incorporation of incoming data into published artifacts.
 
 Stelis is the tool. `beeatlas` and `salishsea` are the case studies and test
 beds — they exist to keep the work value-driven and honest, not to be revamped

@@ -182,6 +182,17 @@ entries are unchanged; what changed is that they need a pull to start.
   premature unless something in the data work is waiting on it. `st-hdm` passes
   (a page's provenance is a question about the data, and no renderer can answer
   it); "delta propagation would be elegant" does not.
+- **But a defect in a property Stelis already claims is not a new feature, and
+  needs no data question.** Added 2026-08-06, because the rule above reads as
+  though it defers these and it must not. Closing the gap between what the
+  engine promises and what it enforces is maintenance of the existing system,
+  and it is *never* premature: `st-zb9` (an artifact with no producer is
+  indistinguishable from a forgotten one) and `st-5e6` (`build-graph` never
+  checks that edge names refer to declared artifacts) are both cases where the
+  graph is complete today only by authoring discipline. The test that separates
+  the two: **would a user of the current system be surprised to learn it doesn't
+  do this?** If yes, it is a defect — fix it. If it is capability the system
+  never claimed, the data question applies.
 - Does it require change-over-time or streaming? → Horizon 2 at the earliest.
 - Does it require branching/merging or non-linear time? → Horizon 3.
 - Does it require provenance or persistence? → Horizon 1 at the earliest.
