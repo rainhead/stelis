@@ -501,20 +501,23 @@
    ;; relation's digest changes exactly when new coordinates enter the sources.
    (make-artifact 'dem_elevations           'db-relation)
    (make-artifact 'geographies_places       'db-relation)
-   (make-artifact 'geographies_us_counties  'db-relation) ; county geometry (st-4cm)
+   ;; county geometry (st-4cm), loaded out of band like the three below
+   (make-artifact 'geographies_us_counties  'db-relation #:provenance 'upstream)
    ;; The remaining geography tables dbt's stg_geo__* models read (st-7hw). PRODUCERLESS
    ;; on purpose: unlike geographies_places (places-load writes it), these are loaded
-   ;; out of band, so the graph names them without claiming to make them — the shape
-   ;; `code' artifacts and the correction seeds already use. What matters is that they
+   ;; out of band, so the graph names them without claiming to make them — which is
+   ;; what 'upstream DECLARES (st-zb9; before it, "on purpose" lived only in this
+   ;; comment and check-graph-leaves could not tell it from a forgotten producer).
+   ;; What matters is that they
    ;; are db-relations rather than folded into the `geographies' EXTERNAL below: an
    ;; external resolves to #f and can only ever report 'inputs-unresolvable, where a
    ;; relation gets a real digest and can say 'input-changed naming the layer.
    ;; padus_wilderness resolves even where nobody has loaded PAD-US — dbt_project.yml's
    ;; on-run-start hook CREATEs it empty — so this doesn't strand a fresh host on
    ;; 'inputs-unresolvable.
-   (make-artifact 'geographies_ecoregions       'db-relation)
-   (make-artifact 'geographies_us_states        'db-relation)
-   (make-artifact 'geographies_padus_wilderness 'db-relation)
+   (make-artifact 'geographies_ecoregions       'db-relation #:provenance 'upstream)
+   (make-artifact 'geographies_us_states        'db-relation #:provenance 'upstream)
+   (make-artifact 'geographies_padus_wilderness 'db-relation #:provenance 'upstream)
    (make-artifact 'geographies              'external)
    (make-artifact 'anti-entropy-applied     'token)
    (make-artifact 'checklist-resolution-verified 'token)
@@ -524,11 +527,15 @@
    (make-artifact 'dedup-verified           'token)
    (make-artifact 'inat-obs-count-verified  'token) ; integrity gate (st-0vz)
    ;; the correction overlay's two seeds + the gate token they feed (st-t4t).
-   ;; Authored, forward-only overrides of values an upstream source gets wrong;
-   ;; git is their store, so neither has a producer here.
+   ;; None has a producer here, but for two different reasons, and st-zb9 makes the
+   ;; graph say which: the corrections file is AUTHORITATIVE — authored,
+   ;; forward-only overrides of values an upstream source gets wrong, with git as
+   ;; its store — while the other two are the Bee-Gap extracts those corrections
+   ;; are written AGAINST, so they are 'upstream: not ours to write forward, and
+   ;; replaced wholesale rather than migrated.
    (make-artifact 'bee_traits_corrections.csv 'file #:provenance 'authoritative)
-   (make-artifact 'bee_traits_beegap.csv      'file)
-   (make-artifact 'bee_parasite_hosts.csv     'file)
+   (make-artifact 'bee_traits_beegap.csv      'file #:provenance 'upstream)
+   (make-artifact 'bee_parasite_hosts.csv     'file #:provenance 'upstream)
    (make-artifact 'corrections-verified       'token)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
@@ -1124,3 +1131,9 @@
 (define beeatlas-graph
   (build-graph (add-import-inputs tasks)
                (append artifacts mart-export-artifacts py-code-artifacts)))
+
+;; st-zb9: every artifact's leaf declaration must match the topology. Here rather
+;; than in main.rkt's build-mode validation so it fires on every entry point that
+;; touches this graph — including the tests — and at MODULE LOAD, which is as close
+;; to "while the graph is being edited" as the language gets.
+(check-graph-leaves beeatlas-graph)

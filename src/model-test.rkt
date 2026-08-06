@@ -61,6 +61,75 @@
                     (make-task 'b 'transform #:outputs '(x)))
               (list (make-artifact 'x 'file)))))
 
+;; guard: an edge naming an undeclared artifact -> build-graph raises (st-5e6).
+;; Both directions matter. A typo'd INPUT leaves the name producerless, which the
+;; planner reads as a leaf, so the edge vanishes and the task stops being
+;; invalidated by it. A typo'd OUTPUT registers a producer for an artifact nobody
+;; declared while the real one keeps none — and the two-producer guard above
+;; cannot catch that, because the names differ.
+(check-exn #rx"declares input beens, which is not a declared artifact"
+           (lambda ()
+             (build-graph
+              (list (make-task 'brew 'transform #:inputs '(beens) #:outputs '(coffee)))
+              (list (make-artifact 'beans 'file #:provenance 'upstream)
+                    (make-artifact 'coffee 'file)))))
+(check-exn #rx"declares output cofee, which is not a declared artifact"
+           (lambda ()
+             (build-graph
+              (list (make-task 'brew 'transform #:inputs '(beans) #:outputs '(cofee)))
+              (list (make-artifact 'beans 'file #:provenance 'upstream)
+                    (make-artifact 'coffee 'file)))))
+
+;; ...but an `imports' edge naming an artifact outside the graph stays LEGAL —
+;; code-closure keeps it without traversing it (see the closure tests below), so
+;; the check is scoped to task edges deliberately, not by oversight.
+(check-not-exn
+ (lambda ()
+   (build-graph (list (make-task 'use 'transform #:inputs '(a.py) #:outputs '(out)))
+                (list (make-artifact 'out 'file)
+                      (make-artifact 'a.py 'code #:imports '(ghost.py))))))
+
+;; --- leaf declarations (st-zb9) ----------------------------------------------
+;; "No producer" is how a genuine leaf and a forgotten producer look identical, so
+;; the declaration is checked against the topology in BOTH directions.
+
+(check-not-exn (lambda () (check-graph-leaves g))
+               "the diamond is consistent: only 'config is a leaf, declared 'external")
+
+(check-exn #rx"beans has no producer and nothing declares it a leaf"
+           (lambda ()
+             (check-graph-leaves
+              (build-graph
+               (list (make-task 'brew 'transform #:inputs '(beans) #:outputs '(coffee)))
+               (list (make-artifact 'beans 'file)          ; 'derived by default
+                     (make-artifact 'coffee 'file))))))
+
+(check-exn #rx"beans is declared a leaf .* but task grow produces it"
+           (lambda ()
+             (check-graph-leaves
+              (build-graph
+               (list (make-task 'grow 'transform #:outputs '(beans)))
+               (list (make-artifact 'beans 'file #:provenance 'upstream))))))
+
+;; every accepted way to be a leaf, and the one way not to be
+(check-true  (expected-leaf? (make-artifact 'x 'code))         "'code is a leaf by kind")
+(check-true  (expected-leaf? (make-artifact 'x 'external))     "'external is a leaf by kind")
+(check-true  (expected-leaf? (make-artifact 'x 'file #:provenance 'authoritative))
+             "'authoritative is a leaf by origin — forward-only state we own")
+(check-true  (expected-leaf? (make-artifact 'x 'file #:provenance 'upstream))
+             "'upstream is a leaf by origin — somebody else's data")
+(check-false (expected-leaf? (make-artifact 'x 'file))         "'derived must be produced")
+(check-false (expected-leaf? (make-artifact 'x 'db-relation))  "kind alone does not excuse it")
+
+;; all disagreements are reported at once, so annotating a graph is one pass
+(check-exn #rx"2 artifact\\(s\\) disagree"
+           (lambda ()
+             (check-graph-leaves
+              (build-graph
+               (list (make-task 'brew 'transform #:inputs '(beans water) #:outputs '(coffee)))
+               (list (make-artifact 'beans 'file) (make-artifact 'water 'file)
+                     (make-artifact 'coffee 'file))))))
+
 ;; guard: a cycle -> topo-sort raises (required-tasks still terminates via `seen')
 (define cyclic
   (build-graph

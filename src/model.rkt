@@ -26,6 +26,8 @@
          make-task
          build-graph
          producer-of
+         expected-leaf?
+         check-graph-leaves
          producers-of-inputs
          code-closure
          required-tasks
@@ -49,8 +51,21 @@
 ;;                 cache reports a change to it as 'code-changed, not
 ;;                 'input-changed — the kind IS the reason partition.
 ;;   fingerprint : content/version fingerprint; #f until computed (see cache.rkt)
-;;   provenance  : 'derived (safe to destroy and rebuild) | 'authoritative
-;;                 (forward-only; never rebuilt from scratch — migrations only)
+;;   provenance  : WHERE IT COMES FROM — and so whether this graph produces it.
+;;                 'derived       — a task here produces it; safe to destroy and
+;;                                  rebuild. MUST have a producer.
+;;                 'authoritative — forward-only state we own (a CRUD store, a
+;;                                  curated override file). Never rebuilt from
+;;                                  scratch — migrations only — so never produced
+;;                                  here.
+;;                 'upstream      — somebody else's data, snapshotted in (a
+;;                                  Bee-Gap extract, a boundary relation loaded
+;;                                  outside the nightly). Also unproducible here,
+;;                                  but for a different reason than
+;;                                  'authoritative: it is not ours to write
+;;                                  forward, so there is no migration story either.
+;;                 The last two are the LEAF declarations — see
+;;                 check-graph-leaves below for why "has no producer" needed one.
 ;;   keyed-by    : #f, or (for a 'dir) a declaration of the key SET the
 ;;                 directory's files fan out over: a list of fan-out branches
 ;;                 (columns of an input relation, st-tul), a manifest-key
@@ -210,6 +225,21 @@
     (for/hash ([t (in-list tasks)]) (values (task-name t) t)))
   (define artifact-table
     (for/hash ([a (in-list artifacts)]) (values (artifact-name a) a)))
+  ;; st-5e6: every name on an edge must be a DECLARED artifact. Without this a
+  ;; typo does not error — the name just has no producer, which reads as an
+  ;; external leaf (see check-graph-leaves), so the edge silently vanishes from
+  ;; every plan AND the task stops being invalidated by that input. A typo'd
+  ;; OUTPUT is worse still: it registers a producer for an artifact nobody
+  ;; declared, while the real one keeps its old producer or none, and the
+  ;; double-producer check below cannot fire because the two names differ.
+  (for* ([t (in-list tasks)]
+         [slot (in-list (list (cons 'input (task-inputs t))
+                              (cons 'output (task-outputs t))))]
+         [name (in-list (cdr slot))])
+    (unless (hash-has-key? artifact-table name)
+      (error 'build-graph
+             "task ~a declares ~a ~a, which is not a declared artifact"
+             (task-name t) (car slot) name)))
   (define producer-index
     (for*/fold ([acc (hash)]) ([t (in-list tasks)]
                                [out (in-list (task-outputs t))])
@@ -221,9 +251,72 @@
   (graph task-table artifact-table producer-index))
 
 ;; producer-of : graph symbol -> (or/c symbol #f)
-;; The task that produces artifact `a', or #f if it is an external leaf.
+;; The task that produces artifact `a', or #f if it is a leaf. #f alone does not
+;; mean the leaf was INTENDED — check-graph-leaves is what establishes that.
 (define (producer-of g a)
   (hash-ref (graph-producer-index g) a #f))
+
+;; --- Leaf declarations (st-zb9) ----------------------------------------------
+;;
+;; required-tasks stops its backward walk at any artifact with no producer. That
+;; is right for a genuine leaf and SILENT for an artifact whose producing task was
+;; never written — both read as "nothing to run", so a forgotten producer prunes
+;; the upstream out of every plan instead of failing. Audited 2026-08-06, the
+;; beeatlas graph had 16 producerless artifacts of which exactly one said so.
+;;
+;; So leafness is DECLARED, and the declaration is checked against the topology
+;; rather than trusted. The declaration is READ from what the artifact already
+;; says — the rebuild-policy.rkt argument: a `#:leaf?' slot would be a second
+;; source of truth able to contradict `provenance', and an artifact declaring
+;; both 'derived and #:leaf? #t is a bug no type would catch.
+;;
+;;   BY KIND   — 'code (a shared helper, st-whi) and 'external (opaque, resolves
+;;               to #f) have no producer by definition.
+;;   BY ORIGIN — 'authoritative and 'upstream both say the graph does not make
+;;               this, for the two different reasons the struct comment gives.
+;;   Everything else is 'derived state of a producible kind, and must be produced.
+
+;; expected-leaf? : artifact -> boolean
+(define (expected-leaf? a)
+  (and (or (memq (artifact-kind a) '(code external))
+           (memq (artifact-provenance a) '(authoritative upstream)))
+       #t))
+
+;; check-graph-leaves : graph -> void
+;; Raises unless every artifact's leaf DECLARATION matches its topology, in both
+;; directions — a declared leaf with a producer is as much a bug as a producible
+;; artifact without one. Reports every disagreement at once, sorted, because the
+;; first run over an un-annotated graph finds a batch and fixing them one error
+;; per run would be tedious.
+;;
+;; Called at GRAPH-CONSTRUCTION time (beeatlas.rkt, immediately after build-graph)
+;; rather than from main.rkt's build-mode validation, so it fires on every entry
+;; point — `--why' and `--explain' included — and while someone is editing the
+;; graph rather than on the later build where a missing producer finally matters.
+(define (check-graph-leaves g)
+  (define problems
+    (sort
+     (for/list ([(name a) (in-hash (graph-artifacts g))]
+                #:do [(define producer (producer-of g name))]
+                #:unless (eq? (expected-leaf? a) (not producer)))
+       (cons name
+             (if producer
+                 (format "~a is declared a leaf (kind ~a, provenance ~a) but task ~a produces it"
+                         name (artifact-kind a) (artifact-provenance a) producer)
+                 (format "~a has no producer and nothing declares it a leaf (kind ~a, provenance ~a)"
+                         name (artifact-kind a) (artifact-provenance a)))))
+     symbol<? #:key car))
+  (unless (null? problems)
+    (error 'check-graph-leaves
+           "~a artifact(s) disagree with their leaf declaration:\n~a\n~a"
+           (length problems)
+           (apply string-append
+                  (for/list ([p (in-list problems)]) (format "  - ~a\n" (cdr p))))
+           (string-append
+            "  A producible artifact needs a task that outputs it — if one exists, check\n"
+            "  that its output name is spelled the same. An artifact that comes from\n"
+            "  outside the graph must say so: #:provenance 'authoritative (forward-only\n"
+            "  state we own) or 'upstream (somebody else's data, snapshotted in)."))))
 
 ;; producers-of-inputs : graph symbol (symbol -> any/c) -> (listof symbol)
 ;; The distinct producers of `name's inputs that satisfy `keep?', in input
