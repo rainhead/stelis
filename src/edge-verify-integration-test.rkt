@@ -19,8 +19,11 @@
 ;; species-maps and feeds joined when st-4cm corrected their edges: species-maps
 ;; reads three @export parquets (not species.json); feeds reads the ecdysis_data
 ;; db-relation ambiently (no @export input, so nothing to seed).
-(define TERMINALS '(generate-sqlite species-export collectors-export places-export
-                    species-maps places-maps feeds))
+;;
+;; The list itself lives in beeatlas.rkt (st-8an) because `--verify-edges' runs the
+;; same set: two copies would let the unattended run and the test disagree about
+;; what is covered, and the one that silently covered less would look identical.
+(define TERMINALS beeatlas-edge-verify-tasks)
 
 ;; reference = the scratch out-dir a prior --build populates with @export copies
 (define reference (build-path (find-system-path 'temp-dir) "stelis-out"))

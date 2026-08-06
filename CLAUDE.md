@@ -63,6 +63,12 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   `--build --all --export-dir <dir>` (build EVERY target into `<dir>` — the run.py
   replacement: covers all of run.py's steps, but content-addressed-skips current
   work and is partial-success rather than fail-fast).
+  `--verify-edges` (POST-BUILD: re-run each covered task in an EXPORT_DIR seeded
+  with ONLY its declared inputs — are they sufficient, and are the declared outputs
+  complete? The only check that asks whether the graph is TRUE rather than merely
+  coherent, st-8an. Needs a reference build to seed from; exits non-zero on a bad
+  edge OR an incomplete reference, and names the tasks it does not cover rather
+  than presenting a curated subset as coverage).
 - **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner

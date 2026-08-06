@@ -57,6 +57,7 @@
          beeatlas-resolve-relation-columns
          beeatlas-resolve-store-keys
          beeatlas-partial-tasks
+         beeatlas-edge-verify-tasks
          beeatlas-source-date-epoch
          ;; exported for the drift check in beeatlas-contract-test.rkt (st-ljy):
          ;; this list mirrors beeatlas's own by hand, so something has to compare them
@@ -391,6 +392,21 @@
 ;; other task rebuilds whole. The engine still only goes partial when the task has
 ;; an existing 'dir output and a real per-key delta on a keyed input.
 (define beeatlas-partial-tasks '(notes-harvest))
+
+;; --- Edge verification coverage (st-qp7, st-8an) ------------------------------
+;; Which tasks `--verify-edges' runs. Not every task can be verified this way: the
+;; harness re-runs a task in an EXPORT_DIR seeded with ONLY its declared inputs, so
+;; it needs a subprocess `recipe' (an in-process derivation or rule-check has no
+;; EXPORT_DIR reads to withhold) and at least one EXPORT_DIR output to check for.
+;;
+;; This list is narrower than that candidate set, deliberately: it is the tasks
+;; whose edges have actually been built and verified (st-h4m, st-4cm). It is a
+;; CAP, and --verify-edges reports what it does not cover rather than presenting
+;; itself as exhaustive — a check that quietly tests a subset reads as coverage it
+;; does not have. Widen it by verifying a task, not by adding a name.
+(define beeatlas-edge-verify-tasks
+  '(generate-sqlite species-export collectors-export places-export
+    species-maps places-maps feeds))
 
 ;; --- Taxon reasoning (st-ozp) -------------------------------------------------
 ;; The Horizon 2 substrate beachhead (ADR 0008): a `derivation' node — a

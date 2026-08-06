@@ -40,9 +40,10 @@
          "dir-extent.rkt"
          "blockstore.rkt"
          (only-in "dasl.rkt" cid? cid->string)
-         "determinism.rkt")
+         "determinism.rkt"
+         (only-in "edge-verify.rkt" verify-edges export-dir-artifact?))
 
-(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'history | 'moved-keys | 'block
+(define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'verify-edges | 'history | 'moved-keys | 'block
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
@@ -64,6 +65,8 @@
                 (mode 'build)]
    [("--verify") "build TARGET twice and compare hashes (determinism harness)"
                  (mode 'verify)]
+   [("--verify-edges") "re-run the covered tasks with ONLY their declared inputs: are those inputs sufficient, and are the declared outputs complete? (needs a reference build)"
+                       (mode 'verify-edges)]
    [("--history") "read the recorded history: all builds, one artifact's hash timeline, or — as ARTIFACT:KEY — why that one key last moved"
                   (mode 'history)]
    [("--moved-keys") "print the keys of ARTIFACT that moved in the LAST build, one per line (for a caller that rebuilds per key)"
@@ -88,7 +91,8 @@
 
 ;; every mode needs the positional name except: reading back persisted state
 ;; (--explain --last, --history), and --all (the whole graph — no target).
-(unless (or name (all?) (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history))
+(unless (or name (all?) (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history)
+            (eq? (mode) 'verify-edges))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
 
 ;; block->datum : any -> any
@@ -684,6 +688,51 @@
                                  (list (cons "SOURCE_DATE_EPOCH"
                                              (beeatlas-source-date-epoch))))
              0 1))]
+
+  ;; --- do the declared edges match what the tasks actually do? -------------
+  ;; st-8an. The other checks (build-graph's leaf/edge-name guards,
+  ;; check-dir-extents) ask whether the graph is COHERENT. This is the only one
+  ;; that asks whether it is TRUE: re-run each covered task in an EXPORT_DIR
+  ;; seeded with ONLY its declared inputs, and see whether it still succeeds and
+  ;; writes exactly what it said it would.
+  ;;
+  ;; Needs a reference build to seed from, so it is a POST-BUILD check — the
+  ;; nightly is its intended home. Exits non-zero when an edge is wrong; a caller
+  ;; that wants it advisory says so itself (`|| true`), because an exit code that
+  ;; is always 0 is a check nobody notices.
+  [(eq? (mode) 'verify-edges)
+   (when name
+     (error 'stelis "--verify-edges takes no <name>; it runs the covered task set"))
+   (define reference (or (and (export-dir-arg) (string->path (export-dir-arg)))
+                         (scratch-out-path)))
+   (unless (directory-exists? reference)
+     (error 'stelis
+            (string-append
+             "--verify-edges: no reference build at ~a\n"
+             "  This check re-runs tasks against the @export copies a real build leaves\n"
+             "  behind, so it has nothing to seed from. Run a build first, or point at\n"
+             "  one with --export-dir.")
+            reference))
+   ;; Name what is NOT covered, in the same breath as the result. A harness over a
+   ;; curated subset reads as coverage it does not have unless it says otherwise
+   ;; (the cap is beeatlas-edge-verify-tasks; see its comment for why it is narrow).
+   (define covered (list->seteq beeatlas-edge-verify-tasks))
+   (define candidates
+     (sort (for/list ([(tn t) (in-hash (graph-tasks beeatlas-graph))]
+                      #:when (recipe? (task-invoke t))
+                      #:when (for/or ([o (in-list (task-outputs t))])
+                               (export-dir-artifact?
+                                (lambda (a dir) (beeatlas-path a dir)) o))
+                      #:unless (set-member? covered tn))
+       tn)
+           symbol<?))
+   (define clean? (verify-edges beeatlas-graph beeatlas-edge-verify-tasks
+                                beeatlas-runtimes beeatlas-path reference))
+   (unless (null? candidates)
+     (printf "\nNOT COVERED — ~a task(s) this harness could verify but does not:\n  ~a\n"
+             (length candidates) (string-join (map symbol->string candidates) " "))
+     (printf "  Widen beeatlas-edge-verify-tasks by verifying one, not by adding a name.\n"))
+   (exit (if clean? 0 1))]
 
   ;; --- why is NAME stale? (a task or an artifact) -------------------------
   ;; The subject scopes its own plan: an artifact's plan is its minimal

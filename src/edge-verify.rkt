@@ -127,8 +127,19 @@
 ;; Verify each task's edge and print a report. Returns #t iff all are clean.
 (define (verify-edges g tasks runtimes resolve reference-dir)
   (printf "Edge verification — reference ~a\n\n" reference-dir)
-  (define verdicts
+  (define results
     (for/list ([name (in-list tasks)])
+      (with-handlers
+          ([exn:fail?
+            (lambda (e)
+              ;; A harness PRECONDITION failure — the reference lacks a file this
+              ;; task's seeding needs — is not an edge defect, and verify-edge is
+              ;; right to raise it. But the DRIVER must not let one incomplete seed
+              ;; abandon every task after it: an unattended run (st-8an) would then
+              ;; report on a prefix and say nothing at all about the rest, which
+              ;; reads exactly like a clean run of that prefix.
+              (printf "? ~a\n    UNVERIFIABLE — ~a\n" name (exn-message e))
+              (cons name (exn-message e)))])
       (define v (verify-edge g name runtimes resolve reference-dir))
       (printf "~a ~a\n"
               (if (edge-verdict-clean? v) "✓" "✗") name)
@@ -148,11 +159,21 @@
                       (format "MISSING ~a  " (string-join* (edge-verdict-missing v))))
                   (if (null? (edge-verdict-undeclared v)) ""
                       (format "UNDECLARED ~a" (string-join* (edge-verdict-undeclared v)))))]))
-      v))
-  (define all-clean? (andmap edge-verdict-clean? verdicts))
-  (printf "\n~a ~a/~a edges verify clean\n"
-          (if all-clean? "✓" "✗")
-          (count edge-verdict-clean? verdicts) (length verdicts))
-  all-clean?)
+      v)))
+  (define verdicts (filter edge-verdict? results))
+  (define unverifiable (filter pair? results))
+  ;; The denominator is every task ASKED about, not every task that ran — an
+  ;; unverifiable one is not a passing one, and dividing by the survivors would
+  ;; report 7/7 for a run that only managed three.
+  (define clean (count edge-verdict-clean? verdicts))
+  (define ok? (and (= clean (length verdicts)) (null? unverifiable)))
+  (printf "\n~a ~a/~a edges verify clean~a\n"
+          (if ok? "✓" "✗") clean (length tasks)
+          (if (null? unverifiable)
+              ""
+              (format "\n✗ ~a UNVERIFIABLE — the reference is incomplete, so the check did not run for: ~a"
+                      (length unverifiable)
+                      (string-join* (map (lambda (p) (symbol->string (car p))) unverifiable)))))
+  ok?)
 
 (define (string-join* xs) (apply string-append (add-between xs ", ")))
