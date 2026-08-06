@@ -141,10 +141,17 @@ Each of these is decided. The reason is recorded so it isn't relitigated.
   content-addressed node in the build graph — rather than running the engine
   itself in the browser. This is partial evaluation / the first Futamura
   projection, and it is what Racket is genuinely best at.
-- **Derived vs. authoritative outputs are distinct node types.** Some outputs are
-  pure functions of inputs (safe to destroy and rebuild); others are forward-only
-  authoritative state that must never be rebuilt from scratch (migrations only).
-  The caching model must express both.
+- **An artifact declares where it comes from, and the graph is checked against
+  it.** Three provenances, not two ([ADR 0013](docs/adr/0013-provenance-declares-origin.md)):
+  `derived` outputs are pure functions of inputs (safe to destroy and rebuild) and
+  **must have a producer**; `authoritative` state is forward-only and must never be
+  rebuilt from scratch (migrations only); `upstream` is somebody else's data,
+  snapshotted in, which we cannot rebuild either but for a different reason — it
+  is not ours to write forward, so there is no migration story. The caching model
+  must express all three. The last two are the LEAF declarations, and
+  `check-graph-leaves` refuses a graph whose declarations disagree with its
+  topology in either direction — because "has no producer" is otherwise
+  indistinguishable from a producer someone forgot to write.
 - **State in memory now; a database later.** Persistence is deferred, but the
   trace/graph representation is designed so it can be persisted without rework.
 

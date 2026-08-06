@@ -65,7 +65,15 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   work and is partial-success rather than fail-fast).
 - **Test:** `raco test src/*-test.rkt`.
 
-Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner,
+Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner
+(with the graph's own integrity checks: `build-graph` refuses an edge naming an
+artifact nobody declared — st-5e6, a typo there otherwise reads as a leaf and the
+edge silently vanishes — `make-artifact` refuses a kind or provenance outside the
+closed vocabulary, and `check-graph-leaves` (st-zb9) refuses a graph whose leaf
+declarations disagree with its topology; that last one is called from
+`beeatlas.rkt` at module load, NOT from main.rkt's build-mode validation, so it
+fires on every entry point — st-0kf tracks the fact that this makes it the graph
+author's job to remember),
 plus the recipe/runtime TYPES (st-top: the cache hashes a recipe's named code
 files into the task's input address; `optional-code` wraps one whose ABSENCE is a
 legitimate steady state, st-e4y — it addresses to a stable sentinel instead of
@@ -311,9 +319,14 @@ in code:
   narrow — unbounded-depth closure with defeasible override and a native "why"
   (taxon reasoning, st-ozp). A bounded join or a bulk aggregation still goes to
   dbt/DuckDB; adding a second derivation needs the same argument made afresh.
-- **Derived vs. authoritative.** Derived outputs are safe to destroy and rebuild;
-  authoritative state is forward-only — **never rebuild it from scratch**
-  (migrations only).
+- **Provenance says where an artifact comes from — three values, and it is
+  checked** (ADR 0013). `derived` = safe to destroy and rebuild, and **must have a
+  producer**; `authoritative` = forward-only, **never rebuild it from scratch**
+  (migrations only); `upstream` = somebody else's data snapshotted in, also
+  unproducible here but not ours to migrate either. The last two are how an
+  artifact declares it is a LEAF; `check-graph-leaves` rejects any disagreement
+  with the topology, in both directions, and `make-artifact` rejects a value
+  outside the vocabulary.
 - **Effects at the boundary.** The derivation core stays pure; IO, ingestion,
   secrets, and rendering are declared boundary nodes.
 - **Content-addressed, not timestamped.** Change is measured by content hash.

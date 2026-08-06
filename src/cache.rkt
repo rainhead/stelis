@@ -429,9 +429,12 @@
 ;; pairs — the digest IS their block's CID (st-1e5), so the two granularities
 ;; cannot disagree by construction rather than by assertion; a 'file
 ;; has a digest but no keys, and tokens/relations have no path and drop out.
-;; Authoritative outputs are excluded — cutoff applies only to derived state
-;; (forward-only writes are effects; "rebuilt to identical bytes" isn't a claim we
-;; make about them).
+;; Cutoff applies to 'derived state ONLY — the filter is an allow-list, so every
+;; other provenance is excluded (forward-only writes are effects; "rebuilt to
+;; identical bytes" isn't a claim we make about them). In practice 'derived is the
+;; only provenance that can reach here at all: check-graph-leaves refuses to let an
+;; 'authoritative or 'upstream artifact have a producer, so neither ever appears in
+;; task-outputs. The allow-list is the belt to that suspenders.
 (define (output-snapshot+keys g name env)
   (define t (hash-ref (graph-tasks g) name))
   (define observed
@@ -659,11 +662,12 @@
      (for/list ([out (in-list (task-outputs (hash-ref (graph-tasks g) name)))]
                 #:do [(define a (hash-ref (graph-artifacts g) out #f))]
                 #:when (and a (memq (artifact-kind a) '(file dir))
-                            ;; DERIVED only, exactly as output-snapshot+keys filters.
-                            ;; An authoritative output is never recorded, so comparing
-                            ;; it against a recorded digest would find #f every time
-                            ;; and rerun forever — and "it changed since we wrote it"
-                            ;; is not a defect for forward-only state, it is the point.
+                            ;; DERIVED only, exactly as output-snapshot+keys filters
+                            ;; (an allow-list, so any other provenance is excluded).
+                            ;; A non-derived output is never recorded, so comparing it
+                            ;; against a recorded digest would find #f every time and
+                            ;; rerun forever — and "it changed since we wrote it" is
+                            ;; not a defect for forward-only state, it is the point.
                             (eq? 'derived (artifact-provenance a)))
                 ;; #f = absent or unresolvable; 'output-missing owns that report and is
                 ;; checked first, so naming it here too would only muddy the reason.

@@ -90,11 +90,29 @@
 
 ;; Keyword smart-constructors so the reserved slots default to #f and the
 ;; authored graph reads cleanly.
+;; The two CLOSED vocabularies, as values rather than inlined at each use, so the
+;; struct comment above and the checks below cannot drift apart.
+(define ARTIFACT-KINDS '(file dir db-relation external token code))
+(define ARTIFACT-PROVENANCES '(derived authoritative upstream))
+
+;; ...and they are CHECKED, not merely documented (found in review, 2026-08-06).
+;; A typo'd provenance on a PRODUCED artifact is otherwise invisible: it is not a
+;; leaf and it has a producer, so check-graph-leaves calls it consistent — and then
+;; every cache.rkt site filters `(eq? 'derived ...)', so the output is never
+;; observed, never receipted, and early cutoff silently cannot fire. A green build
+;; that quietly stopped cutting off is the same failure class the leaf and edge
+;; checks exist to remove, and adding a third provenance value widened the way in.
 (define (make-artifact name kind
                        #:fingerprint [fingerprint #f]
                        #:provenance [provenance 'derived]
                        #:keyed-by [keyed-by #f]
                        #:imports [imports '()])
+  (unless (memq kind ARTIFACT-KINDS)
+    (error 'make-artifact "~a: unknown kind ~a — expected one of ~a"
+           name kind ARTIFACT-KINDS))
+  (unless (memq provenance ARTIFACT-PROVENANCES)
+    (error 'make-artifact "~a: unknown provenance ~a — expected one of ~a"
+           name provenance ARTIFACT-PROVENANCES))
   (artifact name kind fingerprint provenance keyed-by imports))
 
 (define (make-task name kind
@@ -232,14 +250,15 @@
   ;; OUTPUT is worse still: it registers a producer for an artifact nobody
   ;; declared, while the real one keeps its old producer or none, and the
   ;; double-producer check below cannot fire because the two names differ.
-  (for* ([t (in-list tasks)]
-         [slot (in-list (list (cons 'input (task-inputs t))
-                              (cons 'output (task-outputs t))))]
-         [name (in-list (cdr slot))])
-    (unless (hash-has-key? artifact-table name)
-      (error 'build-graph
-             "task ~a declares ~a ~a, which is not a declared artifact"
-             (task-name t) (car slot) name)))
+  (define (check-edge-names! t direction names)
+    (for ([n (in-list names)])
+      (unless (hash-has-key? artifact-table n)
+        (error 'build-graph
+               "task ~a declares ~a ~a, which is not a declared artifact"
+               (task-name t) direction n))))
+  (for ([t (in-list tasks)])
+    (check-edge-names! t 'input  (task-inputs t))
+    (check-edge-names! t 'output (task-outputs t)))
   (define producer-index
     (for*/fold ([acc (hash)]) ([t (in-list tasks)]
                                [out (in-list (task-outputs t))])

@@ -111,6 +111,21 @@
                (list (make-task 'grow 'transform #:outputs '(beans)))
                (list (make-artifact 'beans 'file #:provenance 'upstream))))))
 
+;; guard: the vocabularies are closed, and checked at construction. A typo'd
+;; provenance on a PRODUCED artifact is otherwise the worst kind of silent — it is
+;; not a leaf and it has a producer, so check-graph-leaves finds it consistent,
+;; while every cache.rkt filter is `(eq? 'derived ...)' and so drops the output
+;; from observation entirely: early cutoff off, no error, green build.
+(check-exn #rx"unknown provenance derivd"
+           (lambda () (make-artifact 'coffee 'file #:provenance 'derivd)))
+(check-exn #rx"unknown kind fyle"
+           (lambda () (make-artifact 'coffee 'fyle)))
+(check-not-exn
+ (lambda () (for* ([k (in-list '(file dir db-relation external token code))]
+                   [p (in-list '(derived authoritative upstream))])
+              (make-artifact 'x k #:provenance p)))
+ "every documented kind x provenance pair constructs")
+
 ;; every accepted way to be a leaf, and the one way not to be
 (check-true  (expected-leaf? (make-artifact 'x 'code))         "'code is a leaf by kind")
 (check-true  (expected-leaf? (make-artifact 'x 'external))     "'external is a leaf by kind")
