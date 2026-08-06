@@ -31,7 +31,10 @@
                     #:inputs inputs #:outputs (map car outputs)
                     #:invoke (recipe 'sh (list "true"))))
    (append
-    (for/list ([i (in-list inputs)]) (make-artifact i (hash-ref kinds i 'file)))
+    ;; the task's inputs are this graph's sources — 'upstream so build-graph's leaf
+    ;; check accepts them as intended leaves rather than forgotten producers
+    (for/list ([i (in-list inputs)])
+      (make-artifact i (hash-ref kinds i 'file) #:provenance 'upstream))
     (for/list ([o (in-list outputs)])
       (make-artifact (car o) (hash-ref kinds (car o) 'dir) #:keyed-by (cdr o))))))
 
@@ -125,8 +128,8 @@
            (list (make-task 'both 'transform
                             #:inputs '(store other) #:outputs '(out)
                             #:invoke (recipe 'sh (list "true"))))
-           (list (make-artifact 'store 'file)
-                 (make-artifact 'other 'dir)
+           (list (make-artifact 'store 'file #:provenance 'upstream)
+                 (make-artifact 'other 'dir #:provenance 'upstream)
                  (make-artifact 'out 'dir #:keyed-by (store-keyed 'store "{}.json"))))]
        [got (deltas->rebuild+prune
              g 'both
@@ -155,7 +158,7 @@
 (let ([g (build-graph
           (list (make-task 'nodir 'transform #:inputs '(in) #:outputs '(out)
                            #:invoke (recipe 'sh (list "true"))))
-          (list (make-artifact 'in 'file) (make-artifact 'out 'file)))])
+          (list (make-artifact 'in 'file #:provenance 'upstream) (make-artifact 'out 'file)))])
   (check-exn #rx"no 'dir output"
              (lambda () (check-partial-tasks g '(nodir)))
              "there is nothing for a partial rebuild to merge into"))
@@ -166,7 +169,7 @@
 (let ([g (build-graph
           (list (make-task 'two 'transform #:inputs '(store) #:outputs '(keyed extra)
                            #:invoke (recipe 'sh (list "true"))))
-          (list (make-artifact 'store 'file)
+          (list (make-artifact 'store 'file #:provenance 'upstream)
                 (make-artifact 'keyed 'dir #:keyed-by (store-keyed 'store "{}.json"))
                 (make-artifact 'extra 'dir)))])
   (check-exn #rx"alongside"
@@ -178,7 +181,7 @@
 (let ([g (build-graph
           (list (make-task 'readers 'transform #:inputs '(in) #:outputs '(a b)
                            #:invoke (recipe 'sh (list "true"))))
-          (list (make-artifact 'in 'dir)
+          (list (make-artifact 'in 'dir #:provenance 'upstream)
                 (make-artifact 'a 'dir) (make-artifact 'b 'dir)))])
   (check-not-exn (lambda () (check-partial-tasks g '(readers)))
                  "no pruning means no way to prune the wrong tree"))

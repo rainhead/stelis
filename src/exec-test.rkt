@@ -31,7 +31,7 @@
                     #:invoke (sh "head -c 1 ~a > ~a" raw-path mid-path))
          (make-task 'pack   'transform #:inputs '(mid) #:outputs '(out)
                     #:invoke (sh "cat ~a ~a > ~a" mid-path mid-path out-path)))
-   (list (make-artifact 'raw 'file) (make-artifact 'mid 'file)
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'mid 'file)
          (make-artifact 'out 'file))))
 
 (define benv

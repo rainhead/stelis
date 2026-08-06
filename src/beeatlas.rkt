@@ -1131,9 +1131,6 @@
 (define beeatlas-graph
   (build-graph (add-import-inputs tasks)
                (append artifacts mart-export-artifacts py-code-artifacts)))
-
-;; st-zb9: every artifact's leaf declaration must match the topology. Here rather
-;; than in main.rkt's build-mode validation so it fires on every entry point that
-;; touches this graph — including the tests — and at MODULE LOAD, which is as close
-;; to "while the graph is being edited" as the language gets.
-(check-graph-leaves beeatlas-graph)
+;; (st-0kf: the leaf check used to be called here explicitly. build-graph runs it
+;; now, so no graph can skip it by forgetting — which is the point, since a graph
+;; that forgot would fail silently.)

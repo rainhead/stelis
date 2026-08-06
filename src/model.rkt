@@ -26,7 +26,7 @@
          make-task
          build-graph
          producer-of
-         expected-leaf?
+         leaf-expectation
          check-graph-leaves
          producers-of-inputs
          code-closure
@@ -56,16 +56,20 @@
 ;;                                  rebuild. MUST have a producer.
 ;;                 'authoritative — forward-only state we own (a CRUD store, a
 ;;                                  curated override file). Never rebuilt from
-;;                                  scratch — migrations only — so never produced
-;;                                  here.
+;;                                  scratch — migrations only. MAY or may not have
+;;                                  a producer: a task here can write forward-only
+;;                                  state (cache.rkt excludes such outputs from
+;;                                  cutoff), and so can a writer outside the graph.
 ;;                 'upstream      — somebody else's data, snapshotted in (a
 ;;                                  Bee-Gap extract, a boundary relation loaded
 ;;                                  outside the nightly). Also unproducible here,
 ;;                                  but for a different reason than
 ;;                                  'authoritative: it is not ours to write
-;;                                  forward, so there is no migration story either.
-;;                 The last two are the LEAF declarations — see
-;;                 check-graph-leaves below for why "has no producer" needed one.
+;;                                  forward, so there is no migration story — and
+;;                                  it MUST NOT have a producer.
+;;                 So provenance answers "what may the engine do to this", and
+;;                 answers "is the producer in this graph" only for three of the
+;;                 four values. See leaf-expectation.
 ;;   keyed-by    : #f, or (for a 'dir) a declaration of the key SET the
 ;;                 directory's files fan out over: a list of fan-out branches
 ;;                 (columns of an input relation, st-tul), a manifest-key
@@ -267,7 +271,9 @@
                "artifact ~a is produced by both ~a and ~a"
                out (hash-ref acc out) (task-name t)))
       (hash-set acc out (task-name t))))
-  (graph task-table artifact-table producer-index))
+  (define g (graph task-table artifact-table producer-index))
+  (check-graph-leaves g)
+  g)
 
 ;; producer-of : graph symbol -> (or/c symbol #f)
 ;; The task that produces artifact `a', or #f if it is a leaf. #f alone does not
@@ -289,17 +295,38 @@
 ;; source of truth able to contradict `provenance', and an artifact declaring
 ;; both 'derived and #:leaf? #t is a bug no type would catch.
 ;;
-;;   BY KIND   — 'code (a shared helper, st-whi) and 'external (opaque, resolves
-;;               to #f) have no producer by definition.
-;;   BY ORIGIN — 'authoritative and 'upstream both say the graph does not make
-;;               this, for the two different reasons the struct comment gives.
-;;   Everything else is 'derived state of a producible kind, and must be produced.
+;;   MUST BE A LEAF — 'code (a shared helper, st-whi) and 'external (opaque,
+;;                    resolves to #f) by kind; 'upstream by origin, since data
+;;                    that is not ours is not ours to produce either.
+;;   MUST BE PRODUCED — 'derived of a producible kind. This is the arm that
+;;                    catches a forgotten producer, and the reason for the check.
+;;   EITHER — 'authoritative. Forward-only state may be written by a task in this
+;;                    graph or by a writer outside it, and provenance does not say
+;;                    which. See leaf-expectation for why this is not a gap that
+;;                    can be closed by naming it better.
 
-;; expected-leaf? : artifact -> boolean
-(define (expected-leaf? a)
-  (and (or (memq (artifact-kind a) '(code external))
-           (memq (artifact-provenance a) '(authoritative upstream)))
-       #t))
+;; leaf-expectation : artifact -> 'leaf | 'produced | 'either
+;;
+;; 'authoritative is deliberately 'either, and that asymmetry cost a design error
+;; worth recording. Forward-only state can be written by a task INSIDE this graph
+;; (cache.rkt has always supported this — "Authoritative outputs are excluded;
+;; cutoff applies only to derived state", because a forward-only write is an effect
+;; and "rebuilt to identical bytes" is not a claim we make about it) or by a writer
+;; OUTSIDE it (notes-store.db, whose writer is the notes worker; the curated seeds,
+;; whose writer is a person with git). Provenance answers "what may the engine do
+;; to this", and both of those get the same answer — so provenance cannot also
+;; answer "is the producer in this graph". For the other three values it can, and
+;; does.
+;;
+;; The first cut of this asserted 'authoritative ⇒ leaf. beeatlas has no
+;; authoritative OUTPUT today, so the real graph passed and the claim looked true;
+;; it was cache-test's `out' that falsified it. Hence the residual hole below.
+(define (leaf-expectation a)
+  (cond
+    [(memq (artifact-kind a) '(code external)) 'leaf]
+    [(eq? (artifact-provenance a) 'upstream)   'leaf]
+    [(eq? (artifact-provenance a) 'authoritative) 'either]
+    [else 'produced]))
 
 ;; check-graph-leaves : graph -> void
 ;; Raises unless every artifact's leaf DECLARATION matches its topology, in both
@@ -315,9 +342,11 @@
 (define (check-graph-leaves g)
   (define problems
     (sort
-     (for/list ([(name a) (in-hash (graph-artifacts g))]
-                #:do [(define producer (producer-of g name))]
-                #:unless (eq? (expected-leaf? a) (not producer)))
+     (for*/list ([(name a) (in-hash (graph-artifacts g))]
+                 [producer (in-value (producer-of g name))]
+                 [expect (in-value (leaf-expectation a))]
+                 #:unless (or (eq? expect 'either)
+                              (eq? expect (if producer 'produced 'leaf))))
        (cons name
              (if producer
                  (format "~a is declared a leaf (kind ~a, provenance ~a) but task ~a produces it"

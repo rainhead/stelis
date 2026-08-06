@@ -127,7 +127,7 @@
                     #:invoke invoke)
          (make-task 'needs-token 'transform #:inputs '(raw token) #:outputs '(out2)))
    (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
-         (make-artifact 'out2 'file) (make-artifact 'token 'token))))
+         (make-artifact 'out2 'file) (make-artifact 'token 'token #:provenance 'upstream))))
 (define g (graph-with-invoke "v1"))
 
 (display-to-file "a,b\n1,2\n" raw-path)
@@ -162,7 +162,7 @@
 (define g-auth
   (build-graph
    (list (make-task 'xform 'transform #:inputs '(raw) #:outputs '(out)))
-   (list (make-artifact 'raw 'file)
+   (list (make-artifact 'raw 'file #:provenance 'upstream)
          (make-artifact 'out 'file #:provenance 'authoritative))))
 (check-equal? (output-snapshot g-auth 'xform env) '()
               "an authoritative output is never cutoff-eligible")
@@ -223,7 +223,7 @@
 (let* ([dir-out (build-path tmp "pages")]
        [g-d (build-graph
              (list (make-task 'render 'transform #:inputs '(raw) #:outputs '(pages)))
-             (list (make-artifact 'raw 'file) (make-artifact 'pages 'dir)))]
+             (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'pages 'dir)))]
        [env-d (make-build-env (lambda (a _d)
                                 (case a [(raw) raw-path] [(pages) dir-out] [else #f]))
                               tmp cache-dir)])
@@ -250,7 +250,7 @@
 (let* ([auth-out (build-path tmp "auth.db")]
        [g-a (build-graph
              (list (make-task 'writes 'transform #:inputs '(raw) #:outputs '(authout)))
-             (list (make-artifact 'raw 'file)
+             (list (make-artifact 'raw 'file #:provenance 'upstream)
                    (make-artifact 'authout 'file #:provenance 'authoritative)))]
        [env-a (make-build-env (lambda (a _d)
                                 (case a [(raw) raw-path] [(authout) auth-out] [else #f]))
@@ -281,7 +281,7 @@
   (build-graph
    (list (make-task 'codegen 'transform #:inputs '(raw) #:outputs '(out)
                     #:invoke (recipe 'uv '("-c" "run()") (list script-str))))
-   (list (make-artifact 'raw 'file) (make-artifact 'out 'file))))
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'out 'file))))
 (define snap-c (input-snapshot gc 'codegen resolve))
 (check-pred snapshot? snap-c "a present script file resolves like any input")
 (cache-store! cache-dir 'codegen snap-c (list out-path)
@@ -311,7 +311,7 @@
    (list (make-task 'dbtish 'transform #:inputs '(raw) #:outputs '(out)
                     #:invoke (recipe 'dbt '("build")
                                      (list (path->string code-dir)))))
-   (list (make-artifact 'raw 'file) (make-artifact 'out 'file))))
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'out 'file))))
 (define snap-d (input-snapshot gdc 'dbtish resolve))
 (check-pred snapshot? snap-d "a directory code entry resolves")
 (check-equal? (sort (hash-keys (snapshot-code-hashes snap-d)) string<?)
@@ -349,7 +349,7 @@
    (list (make-task 'bundle 'transform #:inputs '(raw) #:outputs '(out)
                     #:invoke (recipe 'node '("build")
                                      (list script-str (optional-code env-str)))))
-   (list (make-artifact 'raw 'file) (make-artifact 'out 'file))))
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'out 'file))))
 (define snap-o (input-snapshot gopt 'bundle resolve))
 (check-pred snapshot? snap-o
             "an absent optional entry is still addressable — not 'inputs-unresolvable")
@@ -522,7 +522,7 @@
   (build-graph
    (list (make-task 'expo 'transform #:inputs '(raw helper_a.py) #:outputs '(out)
                     #:invoke "v1"))
-   (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'out 'file)
          (make-artifact 'helper_a.py 'code #:imports '(helper_b.py))
          (make-artifact 'helper_b.py 'code))))
 
@@ -580,7 +580,7 @@
                     #:invoke gate-invoke)
          (make-task 'consumer 'transform #:inputs '(tok) #:outputs '(tok-out)
                     #:invoke "use"))
-   (list (make-artifact 'gate-in 'file) (make-artifact 'tok 'token)
+   (list (make-artifact 'gate-in 'file #:provenance 'upstream) (make-artifact 'tok 'token)
          (make-artifact 'tok-out 'file))))
 (define tg (token-graph "check-v1"))
 

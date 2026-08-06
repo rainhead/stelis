@@ -108,7 +108,7 @@
      (build-graph
       (list (make-task 'xform 'transform #:inputs '(rel) #:outputs '(out)
                        #:invoke 'recipe))
-      (list (make-artifact 'rel 'db-relation)
+      (list (make-artifact 'rel 'db-relation #:provenance 'upstream)
             (make-artifact 'out 'file))))
    (define cache-dir (build-path tmp "cache"))
    (define out-path (build-path tmp "out"))

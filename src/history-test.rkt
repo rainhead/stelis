@@ -24,7 +24,7 @@
 (define g
   (build-graph
    (list (make-task 'derive 'transform #:inputs '(raw) #:outputs '(mid)))
-   (list (make-artifact 'raw 'file) (make-artifact 'mid 'file))))
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'mid 'file))))
 
 ;; two builds: `mid' is first produced at hash m0, then rebuilt to m1 (a change).
 ;; `derive's snapshot is the basis — the input hashes mid was derived from.
@@ -109,7 +109,7 @@
 (define kg
   (build-graph
    (list (make-task 'maps 'transform #:inputs '(taxa) #:outputs '(species-maps)))
-   (list (make-artifact 'taxa 'file) (make-artifact 'species-maps 'dir))))
+   (list (make-artifact 'taxa 'file #:provenance 'upstream) (make-artifact 'species-maps 'dir))))
 (define (rec-maps taxa-h keys)
   (trace-record 'maps (decision 'run 'input-changed '(taxa))
                 (snapshot "r" (hash 'taxa taxa-h)) 'ok '() #f

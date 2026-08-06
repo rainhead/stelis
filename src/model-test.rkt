@@ -127,14 +127,35 @@
  "every documented kind x provenance pair constructs")
 
 ;; every accepted way to be a leaf, and the one way not to be
-(check-true  (expected-leaf? (make-artifact 'x 'code))         "'code is a leaf by kind")
-(check-true  (expected-leaf? (make-artifact 'x 'external))     "'external is a leaf by kind")
-(check-true  (expected-leaf? (make-artifact 'x 'file #:provenance 'authoritative))
-             "'authoritative is a leaf by origin — forward-only state we own")
-(check-true  (expected-leaf? (make-artifact 'x 'file #:provenance 'upstream))
-             "'upstream is a leaf by origin — somebody else's data")
-(check-false (expected-leaf? (make-artifact 'x 'file))         "'derived must be produced")
-(check-false (expected-leaf? (make-artifact 'x 'db-relation))  "kind alone does not excuse it")
+(check-equal? (leaf-expectation (make-artifact 'x 'code)) 'leaf
+              "'code is a leaf by kind")
+(check-equal? (leaf-expectation (make-artifact 'x 'external)) 'leaf
+              "'external is a leaf by kind")
+(check-equal? (leaf-expectation (make-artifact 'x 'file #:provenance 'upstream)) 'leaf
+              "'upstream is a leaf by origin — not ours to produce")
+(check-equal? (leaf-expectation (make-artifact 'x 'file)) 'produced
+              "'derived must be produced")
+(check-equal? (leaf-expectation (make-artifact 'x 'db-relation)) 'produced
+              "kind alone does not excuse it")
+(check-equal? (leaf-expectation (make-artifact 'x 'file #:provenance 'authoritative)) 'either
+              "'authoritative says nothing about the producer — see below")
+
+;; ...and that last one is not squeamishness. Forward-only state is legitimately
+;; written by a task INSIDE the graph — which is the case cache.rkt's
+;; provenance filter exists for — as well as by a writer outside it. Both shapes
+;; must construct.
+(check-not-exn
+ (lambda ()
+   (build-graph (list (make-task 'writes 'transform #:inputs '(in) #:outputs '(state)))
+                (list (make-artifact 'in 'file #:provenance 'upstream)
+                      (make-artifact 'state 'file #:provenance 'authoritative))))
+ "a task may write forward-only state")
+(check-not-exn
+ (lambda ()
+   (build-graph (list (make-task 'reads 'transform #:inputs '(state) #:outputs '(out)))
+                (list (make-artifact 'state 'file #:provenance 'authoritative)
+                      (make-artifact 'out 'file))))
+ "...and forward-only state written outside the graph is equally legal")
 
 ;; all disagreements are reported at once, so annotating a graph is one pass
 (check-exn #rx"2 artifact\\(s\\) disagree"
@@ -161,7 +182,7 @@
 (define gcode
   (build-graph
    (list (make-task 'use 'transform #:inputs '(raw a.py) #:outputs '(out)))
-   (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'out 'file)
          (make-artifact 'a.py 'code #:imports '(b.py c.py))
          (make-artifact 'b.py 'code #:imports '(d.py))
          (make-artifact 'c.py 'code #:imports '(d.py ghost.py))
@@ -196,7 +217,7 @@
  (graph-digest
   (build-graph
    (list (make-task 'use 'transform #:inputs '(raw a.py) #:outputs '(out)))
-   (list (make-artifact 'raw 'file) (make-artifact 'out 'file)
+   (list (make-artifact 'raw 'file #:provenance 'upstream) (make-artifact 'out 'file)
          (make-artifact 'a.py 'code #:imports '(b.py))   ; c.py edge dropped
          (make-artifact 'b.py 'code #:imports '(d.py))
          (make-artifact 'c.py 'code #:imports '(d.py ghost.py))

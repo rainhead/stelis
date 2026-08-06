@@ -147,11 +147,14 @@ Each of these is decided. The reason is recorded so it isn't relitigated.
   **must have a producer**; `authoritative` state is forward-only and must never be
   rebuilt from scratch (migrations only); `upstream` is somebody else's data,
   snapshotted in, which we cannot rebuild either but for a different reason — it
-  is not ours to write forward, so there is no migration story. The caching model
-  must express all three. The last two are the LEAF declarations, and
-  `check-graph-leaves` refuses a graph whose declarations disagree with its
-  topology in either direction — because "has no producer" is otherwise
-  indistinguishable from a producer someone forgot to write.
+  is not ours to write forward, so there is no migration story — and it **must not
+  have a producer**. The caching model must express all three. `build-graph`
+  refuses a graph whose declarations disagree with its topology, because "has no
+  producer" is otherwise indistinguishable from a producer someone forgot to
+  write. `authoritative` alone is silent on this, deliberately: forward-only state
+  is legitimately written by a task inside the graph *or* by a writer outside it,
+  so provenance answers "what may the engine do to this" and answers "is the
+  producer here" only for the other three.
 - **State in memory now; a database later.** Persistence is deferred, but the
   trace/graph representation is designed so it can be persisted without rework.
 

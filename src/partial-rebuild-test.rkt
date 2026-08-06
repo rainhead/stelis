@@ -82,7 +82,7 @@ SH
   (build-graph
    (list (make-task 'export 'transform #:inputs '(src) #:outputs '(maps)
                     #:invoke (recipe 'sh (list script))))
-   (list (make-artifact 'src 'file) (make-artifact 'maps 'dir))))
+   (list (make-artifact 'src 'file #:provenance 'upstream) (make-artifact 'maps 'dir))))
 
 (define root (make-temporary-file "stelis-partial2-~a" 'directory))
 (define odir (build-path root "out"))

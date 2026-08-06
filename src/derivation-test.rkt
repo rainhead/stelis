@@ -51,7 +51,7 @@
          (make-task 'publish 'transform #:inputs '(report) #:outputs '(out)
                     #:invoke (recipe 'sh '())))
    (list (make-artifact 'data 'file)
-         (make-artifact 'facts 'file)
+         (make-artifact 'facts 'file #:provenance 'upstream)
          (make-artifact 'report 'file)
          (make-artifact 'out 'file))))
 (define runtimes (hash 'sh (runtime 'sh '("true") "sh")))
