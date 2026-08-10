@@ -101,6 +101,36 @@
 ;; the honest empty page
 (check-true (regexp-match? #rx"no builds recorded yet" (build-log-html '())))
 
+;; publish receipts (st-8x1): joined on build number AND epoch; a mismatch drops
+;; to absence (never a wrong badge); the header names the last published build;
+;; a build with no receipt shows nothing.
+(check-false (regexp-match? #rx"site last published" html)
+             "no receipts -> no publish claim anywhere")
+(define rhtml
+  (build-log-html
+   builds
+   #:receipts (list (hash 'version 1 'build 1 'build-epoch "1754000000"
+                          'outcome 'published 'stage "merge-swap" 'path 'nightly)
+                    (hash 'version 1 'build 2 'build-epoch "WRONG-EPOCH"
+                          'outcome 'published 'stage "merge-swap" 'path 'nightly))))
+(check-true (regexp-match? #rx"Build #1 <span class=\"pub-ok\">published</span>" rhtml))
+(check-false (regexp-match? #rx"Build #2 <span class=\"pub" rhtml)
+             "epoch mismatch -> absence, not a badge")
+(check-true (regexp-match? #rx"site last published from build #1, source @ 20" rhtml))
+(define rhtml2
+  (build-log-html
+   builds
+   #:receipts (list (hash 'version 1 'build 1 'build-epoch "1754000000"
+                          'outcome 'published 'stage "merge-swap" 'path 'note)
+                    (hash 'version 1 'build 2 'build-epoch "1754100000"
+                          'outcome 'not-published 'stage "integration-gate"
+                          'path 'nightly))))
+(check-true (regexp-match? #rx"Build #1 <span class=\"pub-ok\">published \\(note write\\)</span>" rhtml2))
+(check-true (regexp-match?
+             #rx"Build #2 <span class=\"pub-no\">not published — integration-gate</span>" rhtml2))
+(check-true (regexp-match? #rx"site last published from build #1" rhtml2)
+            "the not-published #2 does not advance the last-published line")
+
 ;; determinism, trivially: same builds, same bytes
 (check-equal? html
               (build-log-html builds

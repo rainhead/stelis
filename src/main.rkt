@@ -51,6 +51,7 @@
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
 (define all? (make-parameter #f))           ; --all: build the whole graph (replaces run.py)
+(define mark-publish-args (make-parameter #f)) ; --mark-publish: (build epoch outcome stage path)
 
 (define name
   (command-line
@@ -78,6 +79,15 @@
                 (mode 'block)]
    [("--render-log") "render the recorded history as a self-contained HTML page (the operator build log, st-9rf); also refreshed after every --build"
                      (mode 'render-log)]
+   [("--last-build") "print the last recorded build as `<number> <epoch>` (machine-readable, for a publish path capturing which build is ITS, st-8x1)"
+                     (mode 'last-build)]
+   [("--mark-publish") build epoch outcome stage path
+                       ("record a publish receipt for BUILD (joined by its EPOCH; refuses a"
+                        "mismatch or a double-mark), then re-render the build log."
+                        "OUTCOME: published|not-published · STAGE: how far the run got ·"
+                        "PATH: nightly|note (st-8x1)")
+                       (mode 'mark-publish)
+                       (mark-publish-args (list build epoch outcome stage path))]
    #:once-each
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
@@ -97,7 +107,8 @@
 ;; every mode needs the positional name except: reading back persisted state
 ;; (--explain --last, --history), and --all (the whole graph — no target).
 (unless (or name (all?) (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history)
-            (eq? (mode) 'verify-edges) (eq? (mode) 'render-log))
+            (eq? (mode) 'verify-edges) (eq? (mode) 'render-log)
+            (eq? (mode) 'last-build) (eq? (mode) 'mark-publish))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
 
 ;; block->datum : any -> any
@@ -372,7 +383,10 @@
   (define builds (history-load stelis-state))
   (make-directory* stelis-state)
   (call-with-output-file out-file #:exists 'replace
-    (lambda (o) (write-string (build-log-html builds #:rewrites (build-log-rewrites)) o)))
+    (lambda (o) (write-string (build-log-html builds
+                                              #:rewrites (build-log-rewrites)
+                                              #:receipts (publish-receipts-load stelis-state))
+                              o)))
   (printf "build log: ~a (~a build~a)\n"
           out-file (length builds) (if (= 1 (length builds)) "" "s")))
 
@@ -449,6 +463,53 @@
   ;; An empty history still writes an honest empty page — the nightly must
   ;; never fail over its own reporting.
   [(eq? (mode) 'render-log)
+   (write-build-log!)]
+
+  ;; --- which build was just appended? (st-8x1) ---------------------------
+  ;; `<number> <epoch>` on stdout, for a publish path capturing which build is
+  ;; ITS: the caller compares the epoch against the SOURCE_DATE_EPOCH it
+  ;; exported for the run — a match proves the tail is this run's build, a
+  ;; mismatch means the run died before appending and nothing should be marked.
+  [(eq? (mode) 'last-build)
+   (define builds (history-load stelis-state))
+   (when (null? builds)
+     (eprintf "no builds recorded under ~a\n" (path->string stelis-state))
+     (exit 1))
+   (printf "~a ~a\n" (length builds) (build-record-epoch (last builds)))]
+
+  ;; --- record a publish receipt (st-8x1) ---------------------------------
+  ;; The publish path reporting back. Refusals are LOUD (exit 1): the caller
+  ;; guards with `|| true`, and a refused mark degrades to a missing badge —
+  ;; never a wrong one. The receipt names its build positively (number AND
+  ;; epoch), so a stale capture, a renumbered history, or a double report all
+  ;; fail the match here instead of mislabeling a build.
+  [(eq? (mode) 'mark-publish)
+   (define args (mark-publish-args))
+   (define b (string->number (first args)))
+   (define epoch (second args))
+   (define outcome (string->symbol (third args)))
+   (define stage (fourth args))
+   (define path (string->symbol (fifth args)))
+   (unless (memq outcome '(published not-published))
+     (error 'stelis "--mark-publish OUTCOME must be published|not-published, given: ~a"
+            (third args)))
+   (unless (memq path '(nightly note))
+     (error 'stelis "--mark-publish PATH must be nightly|note, given: ~a" (fifth args)))
+   (define builds (history-load stelis-state))
+   (unless (and (exact-positive-integer? b) (<= b (length builds)))
+     (error 'stelis "--mark-publish: no build #~a (history has ~a)" (first args)
+            (length builds)))
+   (define actual-epoch (build-record-epoch (list-ref builds (sub1 b))))
+   (unless (equal? epoch actual-epoch)
+     (error 'stelis
+            "--mark-publish: build #~a's epoch is ~a, not ~a — refusing to mark a build this receipt does not name"
+            b actual-epoch epoch))
+   (when (for/or ([r (in-list (publish-receipts-load stelis-state))])
+           (and (equal? b (hash-ref r 'build #f))
+                (equal? epoch (hash-ref r 'build-epoch #f))))
+     (error 'stelis "--mark-publish: build #~a already has a receipt — refusing to double-mark" b))
+   (publish-receipt-append! stelis-state b epoch outcome stage path)
+   (printf "publish receipt: build #~a ~a (~a, via ~a)\n" b outcome stage path)
    (write-build-log!)]
 
   ;; --- why does ONE KEY of a keyed artifact look the way it does? ---------

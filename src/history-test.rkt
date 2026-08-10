@@ -216,4 +216,21 @@
 (check-equal? (history-load (build-path tmp "nowhere")) '() "no history ⇒ '()")
 (check-false (history-last (build-path tmp "nowhere")) "no history ⇒ no last build")
 
+;; --- publish receipts (st-8x1): the sidecar the publish path writes back -----
+(check-equal? (publish-receipts-load tmp) '() "no publish.log ⇒ '()")
+(publish-receipt-append! tmp 3 "1754000000" 'not-published "integration-gate" 'nightly)
+(publish-receipt-append! tmp 4 "1754100000" 'published "merge-swap" 'note)
+(let ([rs (publish-receipts-load tmp)])
+  (check-equal? (length rs) 2 "append order, both readable")
+  (check-equal? (hash-ref (first rs) 'build) 3)
+  (check-equal? (hash-ref (first rs) 'outcome) 'not-published)
+  (check-equal? (hash-ref (second rs) 'path) 'note))
+;; corrupt and other-version lines drop, same tolerance as the history log
+(call-with-output-file (build-path tmp "publish.log") #:exists 'append
+  (lambda (o)
+    (displayln "{ not a datum" o)
+    (writeln (hash 'version 999 'build 9) o)))
+(check-equal? (length (publish-receipts-load tmp)) 2
+              "garbage and other-version receipts are skipped, never errors")
+
 (delete-directory/files tmp)

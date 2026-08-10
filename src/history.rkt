@@ -41,7 +41,9 @@
          history-last-source-report
          history-observations
          history-key-observations
-         history-graph)
+         history-graph
+         publish-receipts-load
+         publish-receipt-append!)
 
 ;; Bump when the envelope or record shape changes; older lines then read as
 ;; (skipped) misses, exactly like a stale cache sidecar. v2: records carry
@@ -201,6 +203,69 @@
 (define (history-last state-dir)
   (define builds (history-load state-dir))
   (and (pair? builds) (last builds)))
+
+;; --- Publish receipts (st-8x1) ------------------------------------------------
+;; What the engine cannot know: whether a build's data actually went LIVE. The
+;; publish decision happens downstream, in beeatlas's nightly / note-write
+;; scripts, after the build record is written — so those scripts report the
+;; outcome BACK, as an append-only sidecar beside the history. A receipt is the
+;; publish path writing forward-only operational state next to the engine's
+;; record of itself: a writer outside the graph, ADR 0013's 'authoritative
+;; reading, and the deliberate first step into st-s8i's "what was published vs
+;; what was built" — one self-reported bit plus its stage, no destination
+;; observation.
+;;
+;; A receipt names its build POSITIVELY: build number AND that build's source
+;; epoch. The number alone is a live index, not an identity — history-load skips
+;; unreadable and stale-version lines, so a HISTORY-VERSION bump renumbers the
+;; survivors (v2→v3 already happened once) and position-only receipts would
+;; silently reattach to the wrong builds. Readers JOIN on both and drop
+;; mismatches; a dropped receipt renders as absence, which stays honest.
+;;   version     : PUBLISH-RECEIPT-VERSION
+;;   build       : exact-positive-integer — 1-based position at write time
+;;   build-epoch : string — that build's SOURCE_DATE_EPOCH (the join key)
+;;   outcome     : 'published | 'not-published
+;;   stage       : string — how far the run got ("integration-gate",
+;;                 "site-root-absent", "merge-swap", …) so an expected skip
+;;                 never renders like the alarm this feature exists for
+;;   path        : 'nightly | 'note — which publish contract reported
+(define PUBLISH-RECEIPT-VERSION 1)
+(define (publish-log-file state-dir) (build-path state-dir "publish.log"))
+
+;; publish-receipts-load : path-string -> (listof hash)
+;; All readable receipts, append order. Unreadable or other-version lines are
+;; skipped, never errors — same tolerance as the history log itself.
+(define (publish-receipts-load state-dir)
+  (define f (publish-log-file state-dir))
+  (cond
+    [(not (file-exists? f)) '()]
+    [else
+     (for*/list ([line (in-list (file->lines f))]
+                 #:unless (string=? "" (string-trim line))
+                 [v (in-value (with-handlers ([exn:fail? (lambda (_e) #f)])
+                                (read (open-input-string line))))]
+                 #:when (and (hash? v)
+                             (equal? PUBLISH-RECEIPT-VERSION (hash-ref v 'version #f))))
+       v)]))
+
+;; publish-receipt-append! : path-string exact-positive-integer string
+;;                           (or/c 'published 'not-published) string
+;;                           (or/c 'nightly 'note) -> void
+;; Append one receipt. Validation (range, epoch match, double-mark refusal) is
+;; the CALLER's business — main.rkt's --mark-publish — because it needs the
+;; loaded history; this module only owns the format.
+(define (publish-receipt-append! state-dir build build-epoch outcome stage path)
+  (make-directory* state-dir)
+  (call-with-output-file (publish-log-file state-dir) #:exists 'append
+    (lambda (o)
+      (write (hash 'version PUBLISH-RECEIPT-VERSION
+                   'build build
+                   'build-epoch build-epoch
+                   'outcome outcome
+                   'stage stage
+                   'path path)
+             o)
+      (newline o))))
 
 ;; history-last-source-report : path-string symbol -> (or/c source-report? #f)
 ;; The source report `task' produced on its MOST RECENT RUN (st-8bj) — the basis

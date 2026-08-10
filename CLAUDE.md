@@ -59,6 +59,11 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   content-addressed and binary since ADR 0010, and this is the way back out) ·
   `--render-log` (the history as ONE self-contained HTML page under the state
   dir — the operator build log, st-9rf; also refreshed after every `--build`) ·
+  `--mark-publish <build> <epoch> <outcome> <stage> <path>` (a publish path
+  reporting back whether that build's data went LIVE — appends a receipt joined
+  by build number AND epoch, refuses a mismatch or double-mark, re-renders the
+  log; `--last-build` prints `<number> <epoch>` so the caller can capture which
+  build is ITS, st-8x1) ·
   `--moved-keys <artifact>` (which keys moved in the LAST build, machine-readable —
   bare keys on stdout, everything else on stderr; exit 1 = no basis, rebuild in full) ·
   `--run <task>` (execute one task in its hermetic runtime) ·
@@ -325,7 +330,20 @@ local paths relativized through caller-supplied rewrites before the page sits at
 a public URL (beeatlas.net/build-log.html: nightly.sh's EXIT trap copies it even
 when a gate aborts the publish — a failed build is what the page is FOR — and
 merge-swap.sh excludes it from the pages rsync's --delete, one more entry in
-that hand-kept extent list, st-s8i's lesson). Caps reported, never silent ·
+that hand-kept extent list, st-s8i's lesson). Caps reported, never silent.
+PUBLISH RECEIPTS (st-8x1): the page also says whether each build's data went
+LIVE — the engine cannot know (the publish decision is downstream, in the
+nightly / note-write scripts), so those paths report BACK via `--mark-publish`
+into an append-only publish.log beside the history (history.rkt owns the
+format). A receipt names its build POSITIVELY — number AND that build's source
+epoch — because the number is a live index, not an identity (a HISTORY-VERSION
+bump renumbers survivors); the caller proves the tail is ITS build by matching
+the epoch it exported, `--mark-publish` refuses mismatches and double-marks,
+and the render joins on both, dropping mismatches to absence. No receipt
+renders NOTHING (dev builds, pre-feature builds — silence over accusation);
+outcomes carry a STAGE so "site-root-absent, expected on a fresh host" never
+reads like "integration-gate", the alarm. One self-reported bit — the first
+deliberate step into st-s8i territory, no destination observation ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
 

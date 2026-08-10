@@ -14,7 +14,9 @@
 ;; a projection of `.stelis/` state, maintained the way the history log line is.
 ;; Build N's page therefore describes build N fully, no fixpoint, no lag.
 ;;
-;; PURE: a function of the loaded build-records and nothing else. No wall clock —
+;; PURE: a function of the loaded build-records and publish receipts (st-8x1 —
+;; the publish path's self-reported outcome, joined per build) and nothing
+;; else. No wall clock —
 ;; the page's own stamp is the LAST build's source epoch (the same clock the
 ;; history records; two renders of the same history are byte-identical, so the
 ;; determinism guardrail holds trivially). No IO — main.rkt loads the history,
@@ -149,6 +151,33 @@
             (html-escape a) (apply-rewrites story rewrites))))
 
 ;; ---------------------------------------------------------------------------
+;; publish receipts (st-8x1)
+
+;; receipt-for : (listof hash) exact-positive-integer string -> (or/c hash #f)
+;; The receipt naming build i — joined on BOTH the number and the build's own
+;; epoch (see history.rkt: the number is a live index, not an identity; a
+;; mismatched receipt drops to absence rather than mislabeling a renumbered
+;; build). First match wins; --mark-publish's refusal makes seconds anomalous.
+(define (receipt-for receipts i epoch)
+  (for/first ([r (in-list receipts)]
+              #:when (and (equal? i (hash-ref r 'build #f))
+                          (equal? (~a epoch) (~a (hash-ref r 'build-epoch "")))))
+    r))
+
+;; The badge. Absence renders NOTHING, deliberately: a build with no receipt has
+;; no publish story (pre-feature builds, dev builds on a laptop) — silence is
+;; honest where "not published" would be an accusation.
+(define (publish-badge r)
+  (cond
+    [(not r) ""]
+    [(eq? 'published (hash-ref r 'outcome #f))
+     (format " <span class=\"pub-ok\">published~a</span>"
+             (if (eq? 'note (hash-ref r 'path #f)) " (note write)" ""))]
+    [else
+     (format " <span class=\"pub-no\">not published — ~a</span>"
+             (html-escape (hash-ref r 'stage "unknown")))]))
+
+;; ---------------------------------------------------------------------------
 ;; sections
 
 (define (outcome-class o) (format "o-~a" o))
@@ -167,7 +196,7 @@
                       (html-escape (source-report->string sr)))
               "")))
 
-(define (build-section builds i rewrites)
+(define (build-section builds i rewrites receipts)
   (define br (list-ref builds (sub1 i)))
   (define records (build-record-records br))
   (define (tally o) (for/sum ([r (in-list records)]
@@ -176,8 +205,9 @@
                             #:when (eq? 'failed (trace-record-outcome r)))
                    (trace-record-task r)))
   (string-append
-   (format "<section><h2>Build #~a <span class=\"meta\">source @ ~a · target: ~a · graph ~a</span></h2>\n"
+   (format "<section><h2>Build #~a~a <span class=\"meta\">source @ ~a · target: ~a · graph ~a</span></h2>\n"
            i
+           (publish-badge (receipt-for receipts i (build-record-epoch br)))
            (html-escape (epoch->utc (build-record-epoch br)))
            (html-escape (build-record-target br))
            (html-escape (let ([h (~a (build-record-graph-hash br))])
@@ -214,6 +244,9 @@ td.t{white-space:nowrap;font-weight:600}
 .o-failed td.g,span.o-failed{color:var(--failed);font-weight:600}
 .o-skipped td.g{color:var(--skipped)}
 .src{font-size:.85rem}
+.pub-ok,.pub-no{font-size:.75rem;font-weight:600;padding:.1rem .45rem;border-radius:9px;vertical-align:middle}
+.pub-ok{color:var(--ok);border:1px solid var(--ok)}
+.pub-no{color:var(--failed);border:1px solid var(--failed)}
 END
 )
 
@@ -225,15 +258,31 @@ END
 ;; rendered newest-first, capped at `limit` builds with the cap reported in the
 ;; header. An empty history renders an honest empty page rather than erroring —
 ;; the nightly should never fail over its own reporting.
-(define (build-log-html builds #:rewrites [rewrites '()] #:limit [limit 30])
+(define (build-log-html builds #:rewrites [rewrites '()] #:limit [limit 30]
+                        #:receipts [receipts '()])
   (define n (length builds))
   (define shown-count (min n limit))
+  ;; the highest-numbered build with a JOINED published receipt — the header
+  ;; line that answers "is what I'm reading live?" at a glance. Omitted when no
+  ;; receipt says so (pre-feature histories): absence over accusation.
+  (define last-published
+    (for/last ([(br i) (in-indexed (in-list builds))]
+               #:when (let ([r (receipt-for receipts (add1 i) (build-record-epoch br))])
+                        (and r (eq? 'published (hash-ref r 'outcome #f)))))
+      (add1 i)))
   (define header
     (if (zero? n)
         "<p class=\"sum\">no builds recorded yet</p>"
-        (format "<p class=\"sum\">~a build~a recorded · latest #~a, source @ ~a~a</p>"
+        (format "<p class=\"sum\">~a build~a recorded · latest #~a, source @ ~a~a~a</p>"
                 n (if (= n 1) "" "s") n
                 (html-escape (epoch->utc (build-record-epoch (last builds))))
+                (if last-published
+                    (format " · site last published from build #~a, source @ ~a"
+                            last-published
+                            (html-escape
+                             (epoch->utc (build-record-epoch
+                                          (list-ref builds (sub1 last-published))))))
+                    "")
                 (if (> n limit) (format " · showing the last ~a" limit) ""))))
   (string-append
    "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
@@ -245,6 +294,6 @@ END
     ;; not index-of — two builds can be equal? as values (a fully-cached rerun
     ;; of an unchanged snapshot), and only their position tells them apart.
     (for/list ([i (in-range n (- n shown-count) -1)])
-      (build-section builds i rewrites))
+      (build-section builds i rewrites receipts))
     "\n")
    "\n</body>\n</html>\n"))
