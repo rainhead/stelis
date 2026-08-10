@@ -170,10 +170,17 @@
 ;;                      RESOLVED argv, so a runtime pin change invalidates like an
 ;;                      args change. #f (tests) falls back to the raw invoke value —
 ;;                      consistent within any env, so no thrash either way.
+;;   resolve-runtime-identity : (or/c (symbol -> (or/c string #f)) #f) — the
+;;                      observed identity of a runtime's RESOLVED interpreter
+;;                      (st-jkl), for runtimes that declare an identity probe.
+;;                      The pin file is a range and a request; the interpreter
+;;                      that answers it is an input to the bytes, so observing it
+;;                      is an input observation like resolve-relation's DuckDB
+;;                      digest — IO injected here, never performed by this module.
 (struct build-env
   (resolve export-dir cache-dir
    resolve-relation resolve-relation-columns resolve-store-keys runtimes
-   resolve-dir-exclusions)
+   resolve-dir-exclusions resolve-runtime-identity)
   #:transparent)
 
 ;; make-build-env : (symbol export-dir -> path?) path-string path-string
@@ -193,10 +200,11 @@
                         ;; st-hdm: which nested artifacts a 'dir must NOT count as
                         ;; its own. Absent, a 'dir means its whole tree — the
                         ;; behaviour before any directory had two producers.
-                        #:resolve-dir-exclusions [resolve-dir-exclusions #f])
+                        #:resolve-dir-exclusions [resolve-dir-exclusions #f]
+                        #:resolve-runtime-identity [resolve-runtime-identity #f])
   (build-env resolve export-dir cache-dir
              resolve-relation resolve-relation-columns resolve-store-keys
-             runtimes resolve-dir-exclusions))
+             runtimes resolve-dir-exclusions resolve-runtime-identity))
 
 ;; env-dir-exclusions : build-env? symbol -> (listof path)
 ;; The roots inside `a` that belong to another artifact. '() when no resolver is
@@ -250,7 +258,9 @@
 ;; (its DuckDB digest, st-d5d); a gate token by its producer's recorded input
 ;; address (`token-address', st-ysf — needs `cache-dir'); externals have no
 ;; content hash. The recipe's CODE files (st-top) are hashed alongside, each by
-;; its bytes.
+;; its bytes; a runtime that declares an identity probe contributes its RESOLVED
+;; interpreter version there too, keyed "runtime:<name>" (st-jkl — see
+;; `runtime-identity-pair' below).
 ;; 'code-kind INPUTS (st-whi — shared helpers promoted to graph artifacts) are
 ;; the reason-layer partition: expanded to their full import closure
 ;; (code-closure over the artifacts' `imports' edges) and hashed onto the CODE
@@ -263,12 +273,17 @@
 ;; input that isn't content-addressable here ('inputs-unresolvable) — including a
 ;; named code file missing on disk (conservative: unreadable code forces a run;
 ;; a 'code artifact with no resolved path is named by its artifact symbol, one
-;; whose file is absent by its path). A code entry declared `optional-code'
+;; whose file is absent by its path) and a declared runtime-identity probe that
+;; answered #f — no resolver injected, or the interpreter would not launch
+;; (named "runtime:<name>"; the task then fails at exec where it always did,
+;; instead of silently skipping on a host that cannot run it). A code entry
+;; declared `optional-code'
 ;; (st-e4y) is the exception: its absence addresses to ABSENT-ADDRESS rather than
 ;; #f, so it never reaches this list.
 ;; With resolve-relation #f, db-relations fall through to unresolvable (pre-st-d5d).
 (define (input-snapshot g name resolve [resolve-relation #f] [resolve-store-keys #f]
-                        [runtimes #f] [cache-dir #f] [resolve-dir-exclusions #f])
+                        [runtimes #f] [cache-dir #f] [resolve-dir-exclusions #f]
+                        [resolve-runtime-identity #f])
   (define t (hash-ref (graph-tasks g) name))
   (cond
     [(eq? (task-kind t) 'boundary) (decision 'run 'boundary '())]
@@ -292,8 +307,26 @@
            [(not p)          (cons in #f)]
            [(file-exists? p) (cons (~a p) (file-sha1 p))]
            [else             (cons (~a p) #f)])))
+     ;; The runtime's RESOLVED interpreter, for a recipe whose runtime declares an
+     ;; identity probe (st-jkl). The pin file (.nvmrc) is hashed as ordinary code
+     ;; and states INTENT; this pair states REALITY — the two diverge exactly when
+     ;; the pin lies (a patch release inside the range, a host whose launch falls
+     ;; back with a warning). Rides the CODE side so drift reports 'code-changed
+     ;; naming "runtime:<name>", and the value is the probe's own output rather
+     ;; than a hash of it (the ABSENT-ADDRESS argument: a version string cannot
+     ;; collide with 40-hex sha1s, and history showing `v24.18.1' directly is the
+     ;; legibility the probe exists for). A #f — probe failed, or no resolver
+     ;; injected — lands in missing-code below: conservative, the task runs.
+     (define runtime-identity-pair
+       (let ([rt (and (recipe? inv) runtimes
+                      (hash-ref runtimes (recipe-runtime inv) #f))])
+         (and rt (runtime-identity rt)
+              (cons (format "runtime:~a" (recipe-runtime inv))
+                    (and resolve-runtime-identity
+                         (resolve-runtime-identity (recipe-runtime inv)))))))
      (define code-pairs
-       (append (append* (for/list ([p (in-list (invoke-code inv))])
+       (append (if runtime-identity-pair (list runtime-identity-pair) '())
+               (append* (for/list ([p (in-list (invoke-code inv))])
                           (code-path-hashes p)))
                (filter cdr code-input-pairs)))
      (define unresolvable
@@ -697,7 +730,8 @@
                                (build-env-resolve-store-keys env)
                                (build-env-runtimes env)
                                (build-env-cache-dir env)
-                               (lambda (a) (env-dir-exclusions env a))))
+                               (lambda (a) (env-dir-exclusions env a))
+                               (build-env-resolve-runtime-identity env)))
   (if (decision? snap)
       (values snap #f)
       (let ([entry (read-cache-entry (build-env-cache-dir env) name)])

@@ -93,4 +93,30 @@
               (output-delta 'changed '(out))
               "the downstream rebuild changed its output too")
 
+;; --- runtime identity probe (st-jkl) ------------------------------------------
+;; The IO half: run a runtime's declared probe through its own launch prefix,
+;; return the trimmed stdout, memoize per resolver. #f for no probe, an unknown
+;; runtime, a launch that won't start, or a non-zero exit — never an error, so
+;; planning stays total on a host that cannot launch the interpreter.
+
+(define probe-log (build-path tmp "probe-log"))
+(define id-runtimes
+  (hash 'probed (runtime 'probed '("/bin/sh" "-c") "sh"
+                         (list (format "echo probed >> ~a; echo v1.2.3" probe-log)))
+        'plain  (runtime 'plain  '("/bin/sh" "-c") "sh")
+        'broken (runtime 'broken '("/bin/sh" "-c") "sh" '("exit 3"))
+        'no-exe (runtime 'no-exe '("stelis-no-such-exe-jkl") "x" '("--version"))))
+(define identify (make-runtime-identity-resolver id-runtimes))
+(check-equal? (identify 'probed) "v1.2.3"
+              "the probe's trimmed stdout, through the launch prefix")
+(check-equal? (identify 'probed) "v1.2.3" "asking again gives the same answer")
+(check-equal? (length (file->lines probe-log)) 1
+              "…from memo, not a second launch: N tasks pay for one probe")
+(check-false (identify 'plain)   "no probe declared -> #f")
+(check-false (identify 'unknown) "unknown runtime -> #f")
+(check-false (identify 'broken)  "non-zero exit -> #f, not an error")
+(check-false (identify 'no-exe)  "unlaunchable probe -> #f, not an error")
+(check-false ((make-runtime-identity-resolver #f) 'probed)
+             "no runtimes map at all -> #f")
+
 (delete-directory/files tmp)

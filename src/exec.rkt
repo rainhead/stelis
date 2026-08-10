@@ -16,12 +16,15 @@
          racket/system
          racket/file
          racket/path
+         racket/port
          json
          "model.rkt"
          "cache.rkt"
          "trace.rkt")
 
-(provide (struct-out runtime)                       ; re-provided from model.rkt
+(provide runtime runtime? runtime-name runtime-launch ; re-provided from model.rkt
+         runtime-label runtime-identity
+         make-runtime-identity-resolver
          recipe recipe? recipe-runtime recipe-args recipe-code ; (st-top: types
          derivation derivation? derivation-label     ;  moved there for cache.rkt;
          derivation-run derivation-code              ;  st-ozp likewise)
@@ -47,6 +50,41 @@
 ;; The `runtime' and `recipe' TYPES now live in model.rkt (st-top: the cache
 ;; layer content-addresses a recipe's code files, and exec.rkt requires cache.rkt,
 ;; so the types had to sit below both). Re-provided above; behavior stays here.
+
+;; make-runtime-identity-resolver : (or/c (hash symbol -> runtime) #f)
+;;   -> (symbol -> (or/c string #f))
+;; The IO half of the runtime-identity observation (st-jkl) — the closure
+;; injected as build-env's #:resolve-runtime-identity. Runs a runtime's declared
+;; identity probe THROUGH its own launch prefix (so nvm sourcing, cwd, and the
+;; warn-and-proceed fallback all apply — the probe sees exactly the interpreter
+;; the tasks would get) and returns the trimmed stdout, or #f when the runtime
+;; declares no probe or the probe fails to launch or exits non-zero. #f flows to
+;; input-snapshot's 'inputs-unresolvable arm: a conservative forced run, never a
+;; refusal — planning modes must stay total on hosts that cannot launch the
+;; interpreter, and the task then fails at exec exactly where it does today.
+;;
+;; Memoized per resolver (= per build-env, in practice per process): sourcing
+;; nvm costs real time, and N node tasks should pay it once, not N times. A #f
+;; is memoized too — a host broken at snapshot time stays broken for the rest of
+;; the plan, and retrying per task would turn one slow failure into N.
+(define (make-runtime-identity-resolver runtimes)
+  (define seen (make-hash))
+  (lambda (name)
+    (hash-ref! seen name
+      (lambda ()
+        (define rt (and runtimes (hash-ref runtimes name #f)))
+        (define probe (and rt (runtime-identity rt)))
+        (and probe
+             (let* ([argv (append (runtime-launch rt) probe)]
+                    [exe (find-executable-path (car argv))]
+                    [out (open-output-string)])
+               (and exe
+                    (parameterize ([current-output-port out]
+                                   [current-error-port (open-output-nowhere)]
+                                   [current-input-port (open-input-string "")])
+                      (zero? (apply system*/exit-code exe (cdr argv))))
+                    (let ([v (string-trim (get-output-string out))])
+                      (and (non-empty-string? v) v)))))))))
 
 ;; The `derivation' TYPE (st-ozp) — the third invoke variant — also lives in
 ;; model.rkt, for the same reason `recipe' does (cache.rkt content-addresses its

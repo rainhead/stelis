@@ -138,6 +138,15 @@
         ;;
         ;; A missing nvm is a warning, not a failure, matching nightly.sh: on a host
         ;; where node is already the right version there is nothing to source.
+        ;;
+        ;; The identity probe (st-jkl): `node --version' through this same launch
+        ;; prefix, so it resolves the way every task does — nvm sourcing, warning
+        ;; fallback and all. Its answer joins each node task's input address (see
+        ;; node-runtime-code below for why the interpreter is an input). node only,
+        ;; deliberately: uv's launch SYNCS the venv at first touch and dbt's uvx
+        ;; resolves over the network, so probing either could mutate or go online
+        ;; at plan time — each needs its own decision (a --no-sync variant, say)
+        ;; before it gets a probe. Sourcing nvm is read-only.
         'node (runtime 'node
                        (list "bash" "-c"
                              (string-append
@@ -147,7 +156,8 @@
                               "else echo \"WARN: no nvm; node may not match .nvmrc\" >&2; fi; "
                               "exec \"$@\"")
                              "stelis-node")
-                       "node/.nvmrc")))
+                       "node/.nvmrc"
+                       (list "node" "--version"))))
 
 ;; The `node' runtime's PIN, as task code (st-top). The interpreter is an input to the
 ;; BYTES, not just to the behaviour: gzip -9 of the same 33.8 MB database is 5,208,681
@@ -158,12 +168,15 @@
 ;; `nvm use', so none of this is in the argv the recipe hash covers. Every `node' recipe
 ;; hashes .nvmrc.
 ;;
-;; PARTIAL, deliberately, and the gap is worth knowing: .nvmrc holds `24.18', a RANGE.
-;; Installing 24.18.1 changes the interpreter with the file unmoved, and on a host with
-;; no nvm the runtime warns and uses whatever `node' is on PATH (see the runtime above).
-;; So this catches a deliberate pin edit, not every interpreter change. Closing it means
-;; hashing the resolved `node --version', which is a probe at PLAN time — the same
-;; question SOURCE_DATE_EPOCH answers by deferring to exec time (st-7lm territory).
+;; This file states INTENT; the runtime's identity probe states REALITY (st-jkl).
+;; .nvmrc holds `24.18', a RANGE — installing 24.18.1 changes the interpreter with
+;; the file unmoved — and on a host with no nvm the runtime warns and uses whatever
+;; `node' is on PATH (see the runtime above). Both holes are closed by the probe:
+;; the RESOLVED `node --version', observed through the launch prefix at snapshot
+;; time, rides each node task's input address as "runtime:node" (an input
+;; observation through an injected resolver, like resolve-relation's DuckDB
+;; digest — planning observes, it never executes). The file stays hashed anyway:
+;; a pin edit should invalidate even on a host whose resolved node can't move.
 (define node-runtime-code (list (build-path BEEATLAS ".nvmrc")))
 
 ;; --- Physical placement, declared once (st-bft) ------------------------------

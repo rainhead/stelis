@@ -23,7 +23,9 @@
          racket/set
          racket/list
          racket/file
+         racket/format
          racket/path
+         racket/runtime-path
          racket/string
          "model.rkt"
          "beeatlas.rkt"
@@ -41,7 +43,8 @@
          "blockstore.rkt"
          (only-in "dasl.rkt" cid? cid->string)
          "determinism.rkt"
-         (only-in "edge-verify.rkt" verify-edges export-dir-artifact?))
+         (only-in "edge-verify.rkt" verify-edges export-dir-artifact?)
+         (only-in "build-log.rkt" build-log-html))
 
 (define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'build | 'verify | 'verify-edges | 'history | 'moved-keys | 'block
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
@@ -73,6 +76,8 @@
                      (mode 'moved-keys)]
    [("--block") "print the stored block named by CID as a readable datum (state is content-addressed and binary; this is the way back out)"
                 (mode 'block)]
+   [("--render-log") "render the recorded history as a self-contained HTML page (the operator build log, st-9rf); also refreshed after every --build"
+                     (mode 'render-log)]
    #:once-each
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
@@ -92,7 +97,7 @@
 ;; every mode needs the positional name except: reading back persisted state
 ;; (--explain --last, --history), and --all (the whole graph — no target).
 (unless (or name (all?) (and (eq? (mode) 'explain) (last?)) (eq? (mode) 'history)
-            (eq? (mode) 'verify-edges))
+            (eq? (mode) 'verify-edges) (eq? (mode) 'render-log))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
 
 ;; block->datum : any -> any
@@ -261,7 +266,13 @@
                   ;; of other producers' extents whose failure mode is silent.
                   #:resolve-dir-exclusions
                   (make-dir-exclusions beeatlas-graph
-                                       (lambda (a) (beeatlas-path a export-dir)))))
+                                       (lambda (a) (beeatlas-path a export-dir)))
+                  ;; st-jkl: the RESOLVED interpreter behind a runtime that
+                  ;; declares an identity probe (node), observed through its own
+                  ;; launch prefix and memoized once per env. Lazy — pure modes
+                  ;; that never snapshot a node task never launch it.
+                  #:resolve-runtime-identity
+                  (make-runtime-identity-resolver beeatlas-runtimes)))
 
 (define benv (beeatlas-env (scratch-out-path) stelis-cache))
 
@@ -341,6 +352,30 @@
          (error 'stelis "--from ~a is not in the plan for ~a" (from-task) name))]
     [else ordered]))
 
+;; --- the operator build log (st-9rf) -----------------------------------------
+;; Render the history as ONE self-contained HTML page under the state dir. A pure
+;; projection — same history, same bytes — so it can run anytime (--render-log)
+;; and is refreshed after every --build, POST-append: the page describes the build
+;; that just finished, records and all, which is why it is engine-side and not a
+;; graph node (see build-log.rkt's header). The nightly copies it to the served
+;; tree at /build-log.html; these rewrites relativize the absolute local paths in
+;; decision details before they sit on a public URL. $HOME last and longest-first
+;; (build-log.rkt sorts), so a repo under $HOME reads as the repo, not "~/dev/…".
+(define-runtime-path engine-src-dir ".")
+(define (build-log-rewrites)
+  (define (dir-prefix p) (regexp-replace #rx"/*$" (~a p) "/"))
+  (list (cons (dir-prefix BEEATLAS) "beeatlas/")
+        (cons (dir-prefix (simplify-path engine-src-dir)) "stelis/src/")
+        (cons (dir-prefix (find-system-path 'home-dir)) "~/")))
+(define (write-build-log!)
+  (define out-file (build-path stelis-state "build-log.html"))
+  (define builds (history-load stelis-state))
+  (make-directory* stelis-state)
+  (call-with-output-file out-file #:exists 'replace
+    (lambda (o) (write-string (build-log-html builds #:rewrites (build-log-rewrites)) o)))
+  (printf "build log: ~a (~a build~a)\n"
+          out-file (length builds) (if (= 1 (length builds)) "" "s")))
+
 (cond
   ;; --- what did the last real build decide and do? -----------------------
   ;; Reads history's tail; nothing is re-fingerprinted (the world may have moved
@@ -409,6 +444,12 @@
                name (path->string stelis-state))
       (exit 1)]
      [else (pretty-print (block->datum v))])]
+
+  ;; --- the operator build log, on demand (st-9rf) ------------------------
+  ;; An empty history still writes an honest empty page — the nightly must
+  ;; never fail over its own reporting.
+  [(eq? (mode) 'render-log)
+   (write-build-log!)]
 
   ;; --- why does ONE KEY of a keyed artifact look the way it does? ---------
   ;; `--history <artifact>:<key>` (st-nbu) — provenance that reaches a KEY, not
@@ -636,6 +677,10 @@
    ;; it. The graph snapshot is written once per distinct topology.
    (history-append! stelis-state (or name 'all) beeatlas-graph
                     (beeatlas-source-date-epoch) records)
+   ;; st-9rf: refresh the operator build log AFTER the append, so the page
+   ;; describes the build that just finished — records and all, failures
+   ;; included (partial success is exactly what an operator page is for).
+   (write-build-log!)
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))

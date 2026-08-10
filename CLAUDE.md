@@ -57,6 +57,8 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   family, st-nbu) ·
   `--block <cid>` (print a stored block as a readable datum — state is
   content-addressed and binary since ADR 0010, and this is the way back out) ·
+  `--render-log` (the history as ONE self-contained HTML page under the state
+  dir — the operator build log, st-9rf; also refreshed after every `--build`) ·
   `--moved-keys <artifact>` (which keys moved in the LAST build, machine-readable —
   bare keys on stdout, everything else on stderr; exit 1 = no basis, rebuild in full) ·
   `--run <task>` (execute one task in its hermetic runtime) ·
@@ -124,8 +126,13 @@ and the publish falls back — without that, `publish-notes.sh` (which never run
 node) would ship yesterday's db under today's immutable URL. Both node tasks also
 hash `.nvmrc` as code (`node-runtime-code`) — the interpreter is an input to the
 BYTES: gzip -9 of the same db is 5,208,681 under node 24.18 and 5,203,283 under 26.
-PARTIAL: `.nvmrc` is a RANGE (`24.18`), so a patch bump moves the interpreter with
-the file unmoved ·
+`.nvmrc` states INTENT; the RESOLVED interpreter is observed too (st-jkl): the
+`node` runtime declares an identity probe (`node --version` through its own launch
+prefix, nvm sourcing and all), whose answer rides each node task's input address
+as `"runtime:node"` — a patch bump inside the range, or a no-nvm host's PATH
+fallback, reads as `code-changed` naming it. Observation only, never a version
+gate; probe failure = conservative forced run. node only: probing uv/dbt could
+sync a venv / hit the network at plan time — each needs its own decision ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
 rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and
@@ -306,6 +313,19 @@ a conflicted result and cross-checks coverage against Bee-Gap ·
 plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
 runtime reality (declared inputs sufficient? outputs complete?) ·
+[`build-log.rkt`](src/build-log.rkt) the operator build log (st-9rf, first probe
+of visual output modes): the history rendered as ONE self-contained HTML page.
+An ENGINE surface, not site content — Model Y untouched, beeatlas's 11ty never
+learns of it — and NOT a graph node: written AFTER the build from the completed
+records (the way the history log line is), so build N's page describes build N
+and the apparent "page about the build, produced by the build" recursion never
+arises. Pure function of the loaded build-records — same history, same bytes;
+its own stamp is the last build's SOURCE epoch, never wall clock — with absolute
+local paths relativized through caller-supplied rewrites before the page sits at
+a public URL (beeatlas.net/build-log.html: nightly.sh's EXIT trap copies it even
+when a gate aborts the publish — a failed build is what the page is FOR — and
+merge-swap.sh excludes it from the pages rsync's --delete, one more entry in
+that hand-kept extent list, st-s8i's lesson). Caps reported, never silent ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
 

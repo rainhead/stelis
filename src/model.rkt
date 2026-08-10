@@ -15,7 +15,8 @@
 (provide (struct-out artifact)
          (struct-out task)
          (struct-out graph)
-         (struct-out runtime)
+         runtime runtime? runtime-name runtime-launch runtime-label
+         runtime-identity
          recipe recipe? recipe-runtime recipe-args recipe-code
          derivation derivation? derivation-label derivation-run derivation-code
          (struct-out optional-code)
@@ -132,10 +133,24 @@
 ;; in exec.rkt, which re-provides these names for its existing callers.
 
 ;; A hermetic runtime: how to launch a task in a pinned interpreter/env.
-;;   name   : symbol
-;;   launch : (listof string)  argv prefix, e.g. '("uv" "run" "--directory" D "python")
-;;   label  : string           short display tag, e.g. "uv/3.14"
-(struct runtime (name launch label) #:transparent)
+;;   name     : symbol
+;;   launch   : (listof string)  argv prefix, e.g. '("uv" "run" "--directory" D "python")
+;;   label    : string           short display tag, e.g. "uv/3.14"
+;;   identity : (or/c (listof string) #f) — probe argv APPENDED to `launch' whose
+;;              stdout names the RESOLVED interpreter (st-jkl), e.g. '("--version").
+;;              The pin file a launch reads (.nvmrc) is a RANGE and a request; the
+;;              interpreter that answers it is an INPUT to the bytes, so its
+;;              observed identity joins the task's input address like any other
+;;              input observation (cache.rkt). Through-the-launch on purpose: the
+;;              probe must see exactly the interpreter the tasks get, warning
+;;              fallbacks and all. #f = this runtime declares no identity worth
+;;              observing (sh), or its launch cannot be probed without side
+;;              effects at plan time (uv run syncs the venv at first touch, dbt's
+;;              uvx resolves over the network) — those need their own decision.
+(struct runtime (name launch label identity) #:transparent
+  #:omit-define-syntaxes #:constructor-name make-runtime)
+(define (runtime name launch label [identity #f])
+  (make-runtime name launch label identity))
 
 ;; A task's invocation: a runtime (by name) + the task-specific argv tail, plus
 ;; the CODE behind the command (st-top) — the named script file(s) it executes,

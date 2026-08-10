@@ -395,6 +395,48 @@
               (decision 'run 'recipe-changed '())
               "a runtime pin change invalidates like an args change")
 
+;; resolved runtime identity (st-jkl): a runtime that declares an identity probe
+;; contributes the observed interpreter version to the CODE side of the address,
+;; keyed "runtime:<name>" and valued by the probe's own output (not a hash of
+;; it — the ABSENT-ADDRESS argument: legible in history, cannot collide with a
+;; 40-hex sha1). The pin file states intent; this pair states reality, so a
+;; patch release inside the pin's range reads as 'code-changed naming the
+;; runtime. Unresolvable — no resolver injected, or the probe answered #f —
+;; takes the conservative missing-code arm: forced run, never a skip.
+(define rts-probed
+  (hash 'uv (runtime 'uv '("uv" "run" "python3.14") "uv/3.14" '("--version"))))
+(define (env-probed identify)
+  (make-build-env (lambda (a _d) (resolve a)) tmp cache-dir
+                  #:runtimes rts-probed
+                  #:resolve-runtime-identity identify))
+(define snap-id (input-snapshot gc 'codegen resolve #f #f rts-probed #f #f
+                                (lambda (_name) "v24.18.0")))
+(check-equal? (hash-ref (snapshot-code-hashes snap-id) "runtime:uv" #f)
+              "v24.18.0"
+              "the probe's answer rides the code side, keyed runtime:<name>")
+(define env-v0 (env-probed (lambda (_n) "v24.18.0")))
+(define-values (_dec-id snap-id2) (decision+snapshot gc 'codegen env-v0))
+(cache-store! cache-dir 'codegen snap-id2 (list out-path)
+              (output-snapshot gc 'codegen env-v0))
+(check-equal? (task-decision gc 'codegen env-v0)
+              (decision 'skip 'cached '())
+              "same resolved interpreter -> still a hit")
+(check-equal? (task-decision gc 'codegen (env-probed (lambda (_n) "v24.18.1")))
+              (decision 'run 'code-changed '("runtime:uv"))
+              "a patch bump the pin file cannot see invalidates, named")
+(check-equal? (task-decision gc 'codegen (env-probed (lambda (_n) #f)))
+              (decision 'run 'inputs-unresolvable '("runtime:uv"))
+              "probe failed -> conservative run naming the runtime, never a skip")
+(check-equal? (task-decision gc 'codegen (env-probed #f))
+              (decision 'run 'inputs-unresolvable '("runtime:uv"))
+              "probe declared but no resolver injected -> same conservative run")
+(check-equal? (hash-ref (snapshot-code-hashes
+                         (input-snapshot gc 'codegen resolve #f #f rts-314 #f #f
+                                         (lambda (_name) "v24.18.0")))
+                        "runtime:uv" #f)
+              #f
+              "a runtime with no probe contributes nothing, resolver or not")
+
 ;; an old-format (v1) entry is a miss, never an error
 (call-with-output-file (build-path cache-dir "xform.rktd") #:exists 'replace
   (lambda (o) (write (hash 'version 1 'input-fp "deadbeef" 'outputs '()) o)))
