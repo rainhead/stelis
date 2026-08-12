@@ -34,10 +34,10 @@
                    'places-maps 'feeds 'place-marts 'app-bundle 'precompress)
               "occurrences.db prunes the post-dbt export/render/gate tail")
 
-(check-equal? (length ordered) 24
-              "24 tasks upstream of occurrences.db (+ the integrity gate st-0vz, + the correction drift gate st-t4t, + dem-elevation beeatlas-sn8)")
-(check-equal? (+ (length ordered) (set-count pruned)) 40
-              "40 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t, + dem-elevation beeatlas-sn8, + taxon-presence-export beeatlas-0of.2, + app-bundle st-hdm, + precompress st-ljy)")
+(check-equal? (length ordered) 25
+              "25 tasks upstream of occurrences.db (+ the integrity gate st-0vz, + the correction drift gate st-t4t, + dem-elevation beeatlas-sn8, + inat-expert beeatlas-9sy)")
+(check-equal? (+ (length ordered) (set-count pruned)) 41
+              "41 tasks total (+ taxon-reasoning st-ozp, + corrections-drift-gate st-t4t, + dem-elevation beeatlas-sn8, + taxon-presence-export beeatlas-0of.2, + app-bundle st-hdm, + precompress st-ljy, + inat-expert beeatlas-9sy)")
 
 ;; 2. Target producer, the dbt hinge, and gates-via-token are all present.
 (for ([t (in-list '(generate-sqlite dbt-build taxa-download
