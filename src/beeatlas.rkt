@@ -218,6 +218,7 @@
 ;; dbt-build writes these nine marts into the sandbox — they ARE its file outputs.
 (define sandbox-marts
   '(occurrences.parquet occurrence_places.parquet checklist.parquet
+    occurrence_trust.parquet
     species.parquet species_traits.parquet higher_taxa.parquet
     counties.geojson ecoregions.geojson wilderness.geojson))
 
@@ -229,7 +230,8 @@
 ;; @export copy (different bytes), not a verbatim mart copy.
 (define placed-marts
   '(occurrences.parquet occurrence_places.parquet counties.geojson
-    ecoregions.geojson wilderness.geojson checklist.parquet))
+    ecoregions.geojson wilderness.geojson checklist.parquet
+    occurrence_trust.parquet))
 
 ;; the @export sibling name of a placed artifact.
 (define (export-name name) (string->symbol (string-append (~a name) "@export")))
@@ -547,7 +549,7 @@
 ;;        'external (loaded outside the nightly graph)  'token (a gate result)
 (define artifacts
   (append
-   ;; the nine dbt sandbox marts — one 'file artifact each, derived from the
+   ;; the ten dbt sandbox marts — one 'file artifact each, derived from the
    ;; placement list so the mart set lives in exactly one place (st-bft).
    (for/list ([m (in-list sandbox-marts)]) (make-artifact m 'file))
    (list
@@ -912,7 +914,7 @@
                          geographies_ecoregions geographies_us_states
                          geographies_padus_wilderness
                          dem_elevations)
-              #:outputs sandbox-marts   ; exactly the nine sandbox marts (st-bft)
+              #:outputs sandbox-marts   ; exactly the ten sandbox marts (st-bft)
               ;; Recipe is `run.sh build' only — it writes the marts to the dbt
               ;; sandbox. run.py's _run_dbt_build ALSO copies six of them to
               ;; EXPORT_DIR; that placement is now its own `place-marts' node
