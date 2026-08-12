@@ -9,3 +9,6 @@ compiled/
 .dolt/
 *.db
 .beads-credential-key
+# Zero-byte flock the beads smart gate (BD_SMART_GATE migrations) creates at
+# repo root and never unlinks — per-checkout runtime state.
+.beads.gate.lock
