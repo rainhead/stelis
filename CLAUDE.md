@@ -136,8 +136,18 @@ BYTES: gzip -9 of the same db is 5,208,681 under node 24.18 and 5,203,283 under 
 prefix, nvm sourcing and all), whose answer rides each node task's input address
 as `"runtime:node"` — a patch bump inside the range, or a no-nvm host's PATH
 fallback, reads as `code-changed` naming it. Observation only, never a version
-gate; probe failure = conservative forced run. node only: probing uv/dbt could
-sync a venv / hit the network at plan time — each needs its own decision ·
+gate; probe failure = conservative forced run. uv and dbt are probed too
+(st-kbi): uv via a STANDALONE probe (`uv run --no-sync … python -VV` — the
+launch prefix SYNCS the venv, which planning must never trigger, and the safety
+flag goes mid-launch where an appended probe can't reach; `standalone-probe` in
+model.rkt is the declared shape for exactly this), dbt via run.sh's `--identity`
+branch (uvx `--offline`, cache-only — cold cache fails the probe, conservative
+run; observes ONLY what run.sh's exact pins leave free, the CPython patch and
+the floating transitive duckdb engine — never `dbt --version`, whose "latest:
+X" moves on upstream releases). uv INTENT rides as `uv-runtime-code`
+(pyproject/uv.lock/.python-version on every uv recipe): the venv only moves
+when a launch syncs it, so an un-hashed pin edit would rerun nothing and sit
+unapplied forever — intent triggers the change, reality addresses it ·
 [`exec.rkt`](src/exec.rkt) recipe/runtime types +
 subprocess executor, plus the two IN-PROCESS invoke variants: `rule-check` — a
 rule evaluated in Racket as a graph node, gating its downstream (st-0vz) — and

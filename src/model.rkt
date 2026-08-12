@@ -17,6 +17,7 @@
          (struct-out graph)
          runtime runtime? runtime-name runtime-launch runtime-label
          runtime-identity
+         (struct-out standalone-probe)
          recipe recipe? recipe-runtime recipe-args recipe-code
          derivation derivation? derivation-label derivation-run derivation-code
          (struct-out optional-code)
@@ -136,21 +137,34 @@
 ;;   name     : symbol
 ;;   launch   : (listof string)  argv prefix, e.g. '("uv" "run" "--directory" D "python")
 ;;   label    : string           short display tag, e.g. "uv/3.14"
-;;   identity : (or/c (listof string) #f) — probe argv APPENDED to `launch' whose
-;;              stdout names the RESOLVED interpreter (st-jkl), e.g. '("--version").
-;;              The pin file a launch reads (.nvmrc) is a RANGE and a request; the
-;;              interpreter that answers it is an INPUT to the bytes, so its
+;;   identity : (or/c (listof string) standalone-probe? #f) — the probe whose
+;;              stdout names the RESOLVED interpreter (st-jkl). The pin file a
+;;              launch reads (.nvmrc, .python-version) is a RANGE and a request;
+;;              the interpreter that answers it is an INPUT to the bytes, so its
 ;;              observed identity joins the task's input address like any other
-;;              input observation (cache.rkt). Through-the-launch on purpose: the
-;;              probe must see exactly the interpreter the tasks get, warning
-;;              fallbacks and all. #f = this runtime declares no identity worth
-;;              observing (sh), or its launch cannot be probed without side
-;;              effects at plan time (uv run syncs the venv at first touch, dbt's
-;;              uvx resolves over the network) — those need their own decision.
+;;              input observation (cache.rkt). Two shapes (st-kbi):
+;;              - a bare argv is APPENDED to `launch' — the probe runs THROUGH
+;;                the launch and sees exactly what tasks get, warning fallbacks
+;;                and all. Right whenever the launch prefix is read-only (node's
+;;                nvm sourcing).
+;;              - `standalone-probe' carries a FULL argv, run INSTEAD of the
+;;                launch — for a launch whose prefix does PROVISIONING the probe
+;;                must not trigger at plan time (uv run syncs the venv; planning
+;;                observes, never mutates). The probe argv re-states the launch
+;;                with the safety flag the launch deliberately omits, and that
+;;                duplication is the accepted cost — declared side by side so
+;;                drift is visible at the declaration.
+;;              #f = no identity worth observing (sh), or not yet decided.
 (struct runtime (name launch label identity) #:transparent
   #:omit-define-syntaxes #:constructor-name make-runtime)
 (define (runtime name launch label [identity #f])
   (make-runtime name launch label identity))
+
+;; The standalone probe shape (st-kbi) — see the `identity' field above. A
+;; wrapper struct rather than a tagged list for the same reason `optional-code'
+;; is: the DECLARATION is the one place that knows why the default shape is
+;; wrong, and a distinct type keeps the two meanings from ever being confused.
+(struct standalone-probe (argv) #:transparent)
 
 ;; A task's invocation: a runtime (by name) + the task-specific argv tail, plus
 ;; the CODE behind the command (st-top) — the named script file(s) it executes,

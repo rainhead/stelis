@@ -24,6 +24,7 @@
 
 (provide runtime runtime? runtime-name runtime-launch ; re-provided from model.rkt
          runtime-label runtime-identity
+         (struct-out standalone-probe)
          make-runtime-identity-resolver
          recipe recipe? recipe-runtime recipe-args recipe-code ; (st-top: types
          derivation derivation? derivation-label     ;  moved there for cache.rkt;
@@ -75,7 +76,11 @@
         (define rt (and runtimes (hash-ref runtimes name #f)))
         (define probe (and rt (runtime-identity rt)))
         (and probe
-             (let* ([argv (append (runtime-launch rt) probe)]
+             (let* ([argv (if (standalone-probe? probe)
+                              ;; full argv, INSTEAD of the launch (st-kbi): the
+                              ;; launch prefix provisions, and planning must not
+                              (standalone-probe-argv probe)
+                              (append (runtime-launch rt) probe))]
                     [exe (find-executable-path (car argv))]
                     [out (open-output-string)])
                (and exe

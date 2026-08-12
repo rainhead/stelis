@@ -118,5 +118,14 @@
 (check-false (identify 'no-exe)  "unlaunchable probe -> #f, not an error")
 (check-false ((make-runtime-identity-resolver #f) 'probed)
              "no runtimes map at all -> #f")
+;; standalone probe (st-kbi): full argv INSTEAD of the launch — proven by a
+;; launch that could never run. The shape exists for launches whose prefix
+;; provisions (uv run syncs the venv), which planning must not trigger.
+(define standalone-rts
+  (hash 'uvish (runtime 'uvish '("stelis-no-such-launch-prefix") "uv"
+                        (standalone-probe '("echo" "Python 3.14.3")))))
+(check-equal? ((make-runtime-identity-resolver standalone-rts) 'uvish)
+              "Python 3.14.3"
+              "a standalone probe never touches the launch prefix")
 
 (delete-directory/files tmp)

@@ -114,8 +114,23 @@
                 "could not read git committer date for ~a" BEEATLAS))]))
 
 (define beeatlas-runtimes
-  (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14")
-        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13")
+  ;; `uv': identity probe is STANDALONE (st-kbi) — the launch prefix SYNCS the
+  ;; venv at first touch, which planning must never trigger, and the safety flag
+  ;; goes mid-launch where an appended probe cannot reach. So the probe re-states
+  ;; the launch with `--no-sync': it observes the venv AS IT STANDS (no venv yet
+  ;; -> probe fails -> conservative run), and the drift risk against the launch
+  ;; one line up is the declared, visible cost. `-VV' over `--version': the build
+  ;; string moves with a rebuilt interpreter even inside one version.
+  ;;
+  ;; `dbt': probe rides the launch — run.sh owns the uvx pins, and its
+  ;; `--identity' branch re-invokes them with `--offline' (cache-only: a cold
+  ;; cache fails the probe rather than reaching the network at plan time). The
+  ;; pin never leaves run.sh, which the dbt recipe already hashes as code.
+  (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14"
+                      (standalone-probe
+                       (list "uv" "run" "--no-sync" "--directory" DATA "python" "-VV")))
+        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13"
+                      (list "--identity"))
         ;; `sh': a bare shell for file PLACEMENT (not transformation) — used by
         ;; place-marts to copy derived dbt outputs to their export destination.
         ;; No interpreter pin needed; cp is content-preserving.
@@ -178,6 +193,20 @@
 ;; digest — planning observes, it never executes). The file stays hashed anyway:
 ;; a pin edit should invalidate even on a host whose resolved node can't move.
 (define node-runtime-code (list (build-path BEEATLAS ".nvmrc")))
+
+;; The uv runtime's INTENT, as task code (st-kbi — the .nvmrc argument, Python
+;; side). The probe above observes the venv as it stands; but the venv only
+;; MOVES when something syncs it, and syncing happens inside a task launch — so
+;; a pin edit (pyproject, the lock, the interpreter range) with nothing else
+;; changed would rerun NOTHING, the sync would never fire, and the edit would
+;; sit silently unapplied while every skip stayed "correct" against the stale
+;; venv. Hashing the pin files closes that: the edit reads as 'code-changed, a
+;; task runs, the launch syncs, and the NEXT plan's probe observes the new
+;; interpreter. Intent triggers the change; reality addresses it.
+(define uv-runtime-code
+  (list (build-path DATA "pyproject.toml")
+        (build-path DATA "uv.lock")
+        (build-path DATA ".python-version")))
 
 ;; --- Physical placement, declared once (st-bft) ------------------------------
 ;; Where each file artifact lives is one fact per artifact, kept in the four lists
@@ -490,8 +519,11 @@
 (define (py module fn #:code [extra '()])
   (define rec
     (recipe 'uv (list "-c" (~a "from " module " import " fn "; " fn "()"))
-            (map data-file (remove-duplicates
-                            (cons (string-append module ".py") extra)))))
+            ;; every uv task hashes the runtime's pin files (st-kbi) alongside
+            ;; its own module — the same ride node-runtime-code takes
+            (append uv-runtime-code
+                    (map data-file (remove-duplicates
+                                    (cons (string-append module ".py") extra))))))
   (hash-set! py-entry-modules rec module)
   rec)
 
@@ -866,7 +898,8 @@
    (make-task 'generate-sqlite 'transform
               #:inputs '(occurrences.parquet taxa.csv.gz) #:outputs '(occurrences.db)
               #:invoke (recipe 'uv (list "sqlite_export.py")
-                               (list (data-file "sqlite_export.py"))))
+                               (cons (data-file "sqlite_export.py")
+                                     uv-runtime-code)))
 
    ;; --- mart placement: dbt outputs -> EXPORT_DIR, where post-dbt exports read
    ;; them (st-4cm). run.py folds this copy into dbt-build; here it is an explicit
