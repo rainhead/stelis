@@ -21,6 +21,7 @@
          racket/file
          "duckdb.rkt"
          "taxon-inherit.rkt"
+         "taxon-edges.rkt"
          "cache.rkt"   ; env-resolve — artifact name -> where it lives
          "exec.rkt")   ; check-context accessors — the derivation-node interface
 
@@ -33,6 +34,11 @@
          beegap-nesting
          beegap-agreement
          BEEGAP-NESTING
+         read-host-edges
+         read-forage-edges
+         species-diet
+         nesting-index
+         dependencies-jsexpr
          make-taxon-reasoning)
 
 ;; One row of the species mart: the JOIN key, the DISPLAY name, and the lineage.
@@ -224,6 +230,129 @@
         [else (values agree gaps (cons (species-row-canonical sr) bad))])))
   (values agree gaps (sort disagreements string<?) uncovered))
 
+;; --- Edge typing inputs (st-an7) ----------------------------------------------------
+
+;; read-host-edges : path-string -> (listof (cons string string))
+;; The bee_parasite_hosts seed: (parasite canonical . host display name), one
+;; per record. Refuses an empty read for read-lineages*'s reason: the seed has
+;; hundreds of rows, so zero means the read matched nothing (renamed column,
+;; format change) and publishing "no parasites depend on anything" on a green
+;; build is exactly the silent wrong answer this family of guards exists for.
+(define (read-host-edges csv)
+  (define out
+    (duckdb-query #f (string-append
+                      "SELECT coalesce(parasite,''), coalesce(host_taxon,'')"
+                      " FROM read_csv('" (~a csv) "') ORDER BY 1, 2")))
+  (unless out (error 'taxon-reasoning "could not read ~a via duckdb" csv))
+  (define rows
+    (for*/list ([line (in-list (string-split out "\n"))]
+                [tup (in-value (string-split line "|" #:trim? #f))]
+                #:when (and (= 2 (length tup))
+                            (not (string=? (first tup) ""))
+                            (not (string=? (second tup) ""))))
+      (cons (first tup) (second tup))))
+  (when (null? rows)
+    (error 'taxon-reasoning
+           "~a yielded no parasite-host rows — the read matched nothing; refusing to publish an empty dependence set" csv))
+  rows)
+
+;; read-forage-edges : path-string -> (listof (list string (or/c string #f) string))
+;; The bee_specialist_hosts seed: (canonical family-or-#f detail). The family is
+;; legitimately absent where Fowler gives only a genus ("Larrea Cav."), so only
+;; a blank canonical or detail drops a row; a blank family becomes #f, the same
+;; absence-made-unambiguous move read-lineages makes.
+(define (read-forage-edges csv)
+  (define out
+    (duckdb-query #f (string-append
+                      "SELECT coalesce(canonical_name,''), coalesce(host_plant_family,''),"
+                      " coalesce(host_plant_detail,'')"
+                      " FROM read_csv('" (~a csv) "') ORDER BY 1, 3")))
+  (unless out (error 'taxon-reasoning "could not read ~a via duckdb" csv))
+  (define rows
+    (for*/list ([line (in-list (string-split out "\n"))]
+                [tup (in-value (string-split line "|" #:trim? #f))]
+                #:when (and (= 3 (length tup))
+                            (not (string=? (first tup) ""))
+                            (not (string=? (third tup) ""))))
+      (list (first tup) (blank->false (second tup)) (third tup))))
+  (when (null? rows)
+    (error 'taxon-reasoning
+           "~a yielded no specialist rows — the read matched nothing; refusing to publish an empty dependence set" csv))
+  rows)
+
+;; species-diet : path-string -> hash
+;; canonical_name -> Bee-Gap's INDEPENDENT foraging value, lowercase ("" where
+;; absent), read from the bee_traits_beegap SEED — deliberately NOT the mart's
+;; diet_breadth, which already merges the sources with Fowler winning ties
+;; (species_traits.sql: membership in bee_specialist_hosts IS 'specialist'), so
+;; flagging Fowler edges against it can only ever say 'agrees. The mart merges
+;; the disagreement away silently; this flag is what makes it visible as
+;; editorial content (st-an7 D2).
+;; STRICT where beegap-nesting is tolerant, on purpose: the nesting read feeds a
+;; report, so losing it costs a note; this feeds the PUBLISHED 'disputed /
+;; 'no-value flag on every forage edge, and an unreadable seed silently
+;; publishing "no-value" everywhere would erase the dispute record on a green
+;; build. Raising lands in the node's handler and fails just this node.
+(define (species-diet csv)
+  (define out
+    (duckdb-query #f (string-append
+                      "SELECT coalesce(canonical_name,''), lower(coalesce(foraging,''))"
+                      " FROM read_csv('" (~a csv) "')")))
+  (unless out (error 'taxon-reasoning "could not read foraging from ~a via duckdb" csv))
+  (for*/hash ([line (in-list (string-split out "\n"))]
+              [tup (in-value (string-split line "|" #:trim? #f))]
+              #:when (and (= 2 (length tup)) (not (string=? (first tup) ""))))
+    (values (first tup) (second tup))))
+
+;; nesting-index : (listof inherited) hash -> hash
+;; canonical_name -> the species' inherited NESTING fact. This join is the reason
+;; typing lives beside the closure (st-an7 D1): a parasite edge is obligate
+;; because its bee is cleptoparasitic, and that fact — proof and all — is the
+;; closure's own output, which nothing outside the engine can consume without
+;; inverting the graph.
+(define (nesting-index derived index)
+  (for*/hash ([r (in-list derived)]
+              #:when (eq? 'nesting (inherited-trait r))
+              [sr (in-value (hash-ref index (inherited-subject r) #f))]
+              #:when sr)
+    (values (species-row-canonical sr) r)))
+
+;; dependencies-jsexpr : (listof host-dependence) (listof forage-dependence) -> jsexpr
+;; The typed-edge artifact: canonical_name -> its dependences, each with proof,
+;; grounding, and flags. Keys sort via write-json; the lists keep the cores'
+;; total order, so the file is byte-stable.
+(define (dependencies-jsexpr hosts forage)
+  (define by-species (make-hash))
+  (for ([h (in-list hosts)])
+    (hash-update! by-species (host-dependence-species h)
+                  (lambda (v) (hash-set v 'hosts (host-jsexpr h))) (hasheq)))
+  (for ([f (in-list forage)])
+    (hash-update! by-species (forage-dependence-species f)
+                  (lambda (v) (hash-set v 'forage (forage-jsexpr f))) (hasheq)))
+  (hasheq 'species
+          (for/hasheq ([(k v) (in-hash by-species)])
+            (values (string->symbol k) v))))
+
+(define (host-jsexpr h)
+  (hasheq 'because
+          (case (host-dependence-proof h)
+            [(characterized)
+             (hasheq 'kind "characterized"
+                     'trait "nesting" 'value "cleptoparasitic"
+                     'rank (symbol->string (host-dependence-source-rank h))
+                     'taxon (host-dependence-source-name h))]
+            [else (hasheq 'kind "recorded" 'source "bee_parasite_hosts")])
+          'targets
+          (for/list ([t (in-list (host-dependence-targets h))])
+            (hasheq 'name (car t) 'in_atlas (cdr t)))))
+
+(define (forage-jsexpr f)
+  (hasheq 'source "fowler-droege"
+          'beegap (case (forage-dependence-beegap f)
+                    [(agrees) "agrees"] [(no-value) "no-value"] [else "disputed"])
+          'plants (for/list ([p (in-list (forage-dependence-plants f))])
+                    (hasheq 'family (or (car p) (json-null)) 'detail (cdr p)))))
+
 ;; --- The node ------------------------------------------------------------------------
 
 ;; make-taxon-reasoning : symbol symbol symbol symbol
@@ -238,7 +367,9 @@
 ;; the ordinary partial-success flow, which is the right blast radius for a
 ;; curator's editing mistake.
 (define (make-taxon-reasoning species-artifact traits-artifact
-                              facts-artifact output-artifact)
+                              facts-artifact output-artifact
+                              parasite-artifact specialist-artifact
+                              beegap-seed-artifact deps-output-artifact)
   (lambda (ctx)
     (with-handlers ([exn:fail? (lambda (e) (values #f (exn-message e)))])
       (define env (check-context-env ctx))
@@ -248,6 +379,7 @@
       (define parquet (path-of species-artifact))
       (define facts (path-of facts-artifact))
       (define out (path-of output-artifact))
+      (define deps-out (path-of deps-output-artifact))
 
       (define rows (read-lineages* parquet))
       (define taxa (lineages->taxonomy rows))
@@ -279,12 +411,44 @@
          (define j (reasoning-jsexpr derived index assertions glossary))
          (define-values (agree gaps bad uncovered)
            (beegap-agreement derived index (beegap-nesting (path-of traits-artifact))))
-         (define note (summary (hash-count (hash-ref j 'species)) (length assertions)
-                               (length derived) agree gaps bad uncovered unresolved))
+         ;; the typed edges (st-an7): a post-pass over the closure's own output —
+         ;; NOT a second derivation (ADR 0008 D5 would demand a fresh argument);
+         ;; the same node, consuming its own inheritance in-process.
+         (define atlas (for/set ([r (in-list rows)]) (species-row-canonical r)))
+         (define hosts
+           (host-dependencies (read-host-edges (path-of parasite-artifact))
+                              (nesting-index derived index) atlas))
+         (define forage
+           (forage-dependencies (read-forage-edges (path-of specialist-artifact))
+                                (species-diet (path-of beegap-seed-artifact)) atlas))
+         (define dj (dependencies-jsexpr hosts forage))
+         (define note (string-append
+                       (summary (hash-count (hash-ref j 'species)) (length assertions)
+                                (length derived) agree gaps bad uncovered unresolved)
+                       (deps-summary hosts forage)))
+         ;; both artifacts written only after everything fallible has run — the
+         ;; receipt-vs-disk argument above covers the pair
          (make-directory* (path-only* out))
          (call-with-output-file out #:exists 'replace
            (lambda (o) (write-json j o) (newline o)))
+         (make-directory* (path-only* deps-out))
+         (call-with-output-file deps-out #:exists 'replace
+           (lambda (o) (write-json dj o) (newline o)))
          (values #t note)]))))
+
+;; the typed-edge half of the node's note: coverage, proof flavors, grounding,
+;; and the flag tallies — the operator-facing record of what D2/D3/D4 decided
+(define (deps-summary hosts forage)
+  (define recorded (for/sum ([h (in-list hosts)])
+                     (if (eq? 'recorded (host-dependence-proof h)) 1 0)))
+  (define ungrounded
+    (for/sum ([h (in-list hosts)])
+      (if (for/or ([t (in-list (host-dependence-targets h))]) (cdr t)) 0 1)))
+  (define (flag f) (for/sum ([d (in-list forage)])
+                     (if (eq? f (forage-dependence-beegap d)) 1 0)))
+  (format "; deps: ~a parasite(s) typed (~a source-proof-only, ~a with no in-atlas host), ~a specialist(s) typed (diet_breadth: ~a agree, ~a no value, ~a disputed)"
+          (length hosts) recorded ungrounded
+          (length forage) (flag 'agrees) (flag 'no-value) (flag 'disputed)))
 
 (define (summary species assertions derived agree gaps bad uncovered unresolved)
   (string-append

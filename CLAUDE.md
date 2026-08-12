@@ -319,11 +319,28 @@ ancestor as its proof. The closure is phrased DOWNWARD (`covers(S,X)`, source bo
 first) — 40× faster than the obvious upward form on the real taxonomy, and the
 truer reading of what an assertion does. Theory answers structure; the curator's
 learner-facing note stays beside it, as in provenance-datalog ·
+[`taxon-edges.rkt`](src/taxon-edges.rkt) edge TYPING, the arc's step 2 (st-an7,
+pure core; the ratified design lives in that bead's design field): the
+bee_parasite_hosts / bee_specialist_hosts seeds typed obligate WITH provenance +
+grounding, so the at-risk closure (st-6x9) can propagate necessity through
+obligate edges only (ADR 0008 D4). Parasite edges type via the bee's INHERITED
+cleptoparasitic characterization (proof = the chain; a parasite no assertion
+reaches keeps a distinct source-only proof), grouped per parasite as ONE
+dependence on the host SET — ungrouped, the closure would claim imperilled-if-
+one-of-five-declines. Forage: Fowler is specialists-only, so membership IS the
+claim (no generalist edges exist — D4's over-claim dies structurally), and the
+'disputed flag reads Bee-Gap's INDEPENDENT foraging seed, never the mart's
+diet_breadth, which already merges Fowler in and can only ever agree.
+Out-of-atlas hosts are KEPT, marked — dropping them would make silence look
+like safety. NOT a second derivation: a post-pass inside taxon-reasoning
+consuming its own closure (D5 needs no fresh argument), emitting the sibling
+`species_dependencies.json` keyed by depending species ·
 [`taxon-derive.rkt`](src/taxon-derive.rkt) its IO seam (the delta/delta-explain
 idiom): lineages off the species mart via DuckDB, assertions off the checked-in
 [`data/taxon-traits.rktd`](data/taxon-traits.rktd) (an input ARTIFACT, so a curator
-edit reads as `'input-changed`), out to `species_reasoning.json`; refuses to publish
-a conflicted result and cross-checks coverage against Bee-Gap ·
+edit reads as `'input-changed`), the edge seeds + independent foraging read the
+same way, out to `species_reasoning.json` + `species_dependencies.json`; refuses
+to publish a conflicted result and cross-checks coverage against Bee-Gap ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules,
 plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against

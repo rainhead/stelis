@@ -244,7 +244,7 @@
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
     seasonality.json photos.json species_hosts.json higher_taxa.json
     taxon_presence.json
-    species_reasoning.json))
+    species_reasoning.json species_dependencies.json))
 
 ;; The artifacts the CLIENT fetches at runtime, and so the ones worth compressing
 ;; ahead of the publish (st-ljy). Mirrors the `source' values in beeatlas's
@@ -304,6 +304,9 @@
                              'bee_traits_corrections.csv (seed-file "bee_traits_corrections.csv")
                              'bee_traits_beegap.csv      (seed-file "bee_traits_beegap.csv")
                              'bee_parasite_hosts.csv     (seed-file "bee_parasite_hosts.csv")
+                             ;; the Fowler & Droege specialist list (st-an7):
+                             ;; the forage edges the reasoning node types
+                             'bee_specialist_hosts.csv   (seed-file "bee_specialist_hosts.csv")
                              'notes-store.db notes-store-path
                              ;; the curated trait assertions (st-ozp) — checked
                              ;; into STELIS, not beeatlas: they are Stelis's
@@ -383,6 +386,10 @@
     [(waba_data)      '("inaturalist_waba_data.observations"
                         "inaturalist_waba_data.observations__ofvs")]
     [(inat_obs_data)  '("inat_obs_data.observations")]
+    [(inat_expert_data) '("inat_expert_data.observations"
+                          "inat_expert_data.observations__identifications"
+                          "inat_expert_data.specimen_linked_observations"
+                          "inat_expert_data.specimen_linked_observations__identifications")]
     [(checklist_raw)  '("checklist_data.species" "checklist_data.species_counties"
                         "checklist_data.checklist_records"
                         "checklist_data.checklist_records_full")]
@@ -553,6 +560,7 @@
    (make-artifact 'checklist_raw            'db-relation)
    (make-artifact 'checklist_resolved       'db-relation)
    (make-artifact 'inat_obs_data            'db-relation)
+   (make-artifact 'inat_expert_data         'db-relation)
    (make-artifact 'canonical_to_taxon_id    'db-relation)
    (make-artifact 'inactive_remaps          'db-relation)
    (make-artifact 'taxon_lineage_extended   'db-relation)
@@ -597,6 +605,7 @@
    (make-artifact 'bee_traits_corrections.csv 'file #:provenance 'authoritative)
    (make-artifact 'bee_traits_beegap.csv      'file #:provenance 'upstream)
    (make-artifact 'bee_parasite_hosts.csv     'file #:provenance 'upstream)
+   (make-artifact 'bee_specialist_hosts.csv   'file #:provenance 'upstream)
    (make-artifact 'corrections-verified       'token)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
@@ -721,6 +730,7 @@
    ;; …and what the reasoning publishes: per-species derived traits, each with
    ;; the proof of which ancestor carries it and a learner-facing sentence.
    (make-artifact 'species_reasoning.json       'file)
+   (make-artifact 'species_dependencies.json    'file)
    ;; EXPORT_DIR-placed copies of the dbt marts (place-marts output) + the
    ;; enriched species.parquet species-export writes there. Distinct artifacts
    ;; from the sandbox originals so each has exactly one producer.
@@ -769,6 +779,14 @@
    (make-task 'checklist-resolution-gate 'gate
               #:inputs '(checklist_resolved) #:outputs '(checklist-resolution-verified)
               #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate"))
+   ;; Expert-feed observations + per-observation identification detail from the
+   ;; v2 API (beeatlas-iek/9sy). waba_data is an input because the pipeline's
+   ;; specimen_linked_observations resource derives its id list from the WABA
+   ;; catalog OFVs (dbt_sandbox.int_waba_link when present, raw ofvs fallback).
+   ;; ARM 4's mart upstream (inat_obs_data) still reads the committed CSV; the
+   ;; identifications child tables are what dbt consumes today (int_inat_identifications).
+   (make-task 'inat-expert 'boundary #:inputs '(waba_data) #:outputs '(inat_expert_data)
+              #:invoke (py "inat_expert_pipeline" "load_expert_observations"))
    (make-task 'inat-obs 'boundary #:outputs '(inat_obs_data)
               #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
    ;; integrity gate (st-0vz): block publish if inat_obs_data's record count
@@ -861,15 +879,23 @@
               ;; already right) but never a witness to the four checklist_data tables
               ;; stg_checklist__* reads. Being transitively upstream orders a task;
               ;; only being NAMED here puts a table in its input address.
+              ;; taxa.csv.gz + inat_expert_data joined this list 2026-08-12:
+              ;; stg_inat__taxa / stg_inat__genus_taxon_ids / stg_inat__higher_
+              ;; rank_taxon_ids read ../raw/taxa.csv.gz directly, and
+              ;; stg_inat_expert__identifications reads the new relation — the
+              ;; same silent-gap class st-7hw closed (a taxa refresh would have
+              ;; cache-skipped dbt-build).
               #:inputs '(ecdysis_data ecdysis_links inat_observations inat_projects
                          waba_data anti-entropy-applied
                          checklist_raw
                          checklist_resolved checklist-resolution-verified
                          inat_obs_data inat-obs-count-verified
+                         inat_expert_data
                          corrections-verified
                          canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
                          taxon_lineage_extended host_plant_lineage
+                         taxa.csv.gz
                          geographies_places geographies_us_counties
                          geographies_ecoregions geographies_us_states
                          geographies_padus_wilderness
@@ -1149,12 +1175,27 @@
    ;; what earns Stelis-side is unbounded-depth closure with a native why. A
    ;; bounded join or a bulk aggregation would still belong in dbt.
    (make-task 'taxon-reasoning 'transform
-              #:inputs '(species.parquet species_traits.parquet taxon-traits.rktd)
-              #:outputs '(species_reasoning.json)
+              ;; st-an7: the two seed CSVs are the RELATIONAL edges the node
+              ;; types — read directly (they are curated leaves; dbt's loaded
+              ;; copy is beside the point), so a host-list edit reads as
+              ;; 'input-changed naming the seed. species_dependencies.json is
+              ;; the typed-edge sibling artifact (keyed by depending species;
+              ;; species_reasoning stays characterizations-only).
+              #:inputs '(species.parquet species_traits.parquet taxon-traits.rktd
+                         bee_parasite_hosts.csv bee_specialist_hosts.csv
+                         ;; the INDEPENDENT Bee-Gap foraging column, for the
+                         ;; 'disputed flag — the mart's diet_breadth already
+                         ;; merges Fowler in, so it cannot disagree
+                         bee_traits_beegap.csv)
+              #:outputs '(species_reasoning.json species_dependencies.json)
               #:invoke (derivation
                         "taxon-traits"
                         (make-taxon-reasoning 'species.parquet 'species_traits.parquet
-                                              'taxon-traits.rktd 'species_reasoning.json)
+                                              'taxon-traits.rktd 'species_reasoning.json
+                                              'bee_parasite_hosts.csv
+                                              'bee_specialist_hosts.csv
+                                              'bee_traits_beegap.csv
+                                              'species_dependencies.json)
                         (rkt-import-closure taxon-seam-source taxon-rules-source)))))
 
 ;; --- Code artifacts + import edges (st-whi) ----------------------------------

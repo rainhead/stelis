@@ -21,6 +21,7 @@
          racket/string
          "beeatlas.rkt"
          "taxon-inherit.rkt"
+         "taxon-edges.rkt"
          "taxon-derive.rkt")
 
 ;; All three inputs come from the graph's own resolver, not a second copy of the
@@ -139,4 +140,52 @@ would show as gaps swallowing the set")
    ;; The redundancy this replaced: the definition of the term must NOT be inlined
    ;; into each species' sentence, or a reader visiting two cuckoo pages reads it twice.
    (check-false (string-contains? (hash-ref entry 'explanation) "builds no nest")
-                "the glossary definition is not restated in the per-species explanation")])
+                "the glossary definition is not restated in the per-species explanation")
+
+   ;; --- typed edges against the real seeds (st-an7) ------------------------------
+   ;; Structural claims only, no drift-sensitive ratios (the st-36e lesson):
+   ;; membership, proof shape, grounding marks, and atlas scoping — the numbers
+   ;; themselves are printed for the operator, never asserted.
+   (define parasite-csv (beeatlas-path 'bee_parasite_hosts.csv #f))
+   (define specialist-csv (beeatlas-path 'bee_specialist_hosts.csv #f))
+   (when (and (file-exists? parasite-csv) (file-exists? specialist-csv))
+     (define atlas (for/set ([r (in-list rows)]) (species-row-canonical r)))
+     (define hosts
+       (host-dependencies (read-host-edges parasite-csv)
+                          (nesting-index derived index) atlas))
+     (define forage
+       (forage-dependencies (read-forage-edges specialist-csv)
+                            (species-diet (beeatlas-path 'bee_traits_beegap.csv #f)) atlas))
+     (check-true (pair? hosts) "some checklist parasites carry typed host edges")
+     (check-true (pair? forage) "some checklist specialists carry typed forage edges")
+     (check-true (for/and ([h (in-list hosts)])
+                   (set-member? atlas (host-dependence-species h)))
+                 "the dependence key space is the atlas — national-only parasites are out")
+     (check-not-false (for/and ([h (in-list hosts)])
+                        (case (host-dependence-proof h)
+                          [(characterized) (and (host-dependence-source-rank h)
+                                                (host-dependence-source-name h))]
+                          [(recorded) (and (not (host-dependence-source-rank h))
+                                           (not (host-dependence-source-name h)))]
+                          [else #f]))
+                      "every proof is one of the two ratified flavors, fully formed")
+     (check-true (for/and ([h (in-list hosts)]) (pair? (host-dependence-targets h)))
+                 "no empty host sets — a dependence with nothing depended on is a read bug")
+     (check-true (for*/and ([h (in-list hosts)]
+                            [t (in-list (host-dependence-targets h))]
+                            #:when (cdr t))
+                   (set-member? atlas (string-downcase (car t))))
+                 "every target marked in-atlas really is")
+     (check-true (for/or ([h (in-list hosts)])
+                   (for/or ([t (in-list (host-dependence-targets h))]) (not (cdr t))))
+                 "some hosts are honestly ungrounded — kept and marked, never dropped (D4)")
+     (check-not-false (for/and ([f (in-list forage)])
+                        (memq (forage-dependence-beegap f) '(agrees no-value disputed)))
+                      "every forage flag is one of the three ratified values")
+     (define (flag f) (for/sum ([d (in-list forage)])
+                        (if (eq? f (forage-dependence-beegap d)) 1 0)))
+     (define recorded (for/sum ([h (in-list hosts)])
+                        (if (eq? 'recorded (host-dependence-proof h)) 1 0)))
+     (printf "taxon-edges: ~a parasites typed (~a source-proof-only) · ~a specialists typed (diet_breadth: ~a agree, ~a no value, ~a disputed)\n"
+             (length hosts) recorded (length forage)
+             (flag 'agrees) (flag 'no-value) (flag 'disputed)))])
