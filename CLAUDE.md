@@ -335,6 +335,23 @@ Out-of-atlas hosts are KEPT, marked — dropping them would make silence look
 like safety. NOT a second derivation: a post-pass inside taxon-reasoning
 consuming its own closure (D5 needs no fresh argument), emitting the sibling
 `species_dependencies.json` keyed by depending species ·
+[`taxon-risk.rkt`](src/taxon-risk.rkt) the at-risk CLOSURE, the arc's payoff
+(st-6x9, ADR 0008 step 3): strict "imperilled if X declines" facts over the
+typed edges, proof trees and learner-facing sentences included. The one rule:
+a typed dependence is ANY-OF, so necessity holds only where every any-of node
+COLLAPSES — a singleton plant set (plant grain), a family-uniform set (family
+grain; a family-less Fowler row blocks the claim — unknown is not uniform),
+and through hosts only when EVERY host is grounded AND needs the same target
+(the forall, materialized as one via per host). Anything looser is D4's
+over-claim; the broader exposure surface is not derived because it is already
+published — hosts are keys in the same artifact, so the site can walk the
+chain without a fact vouching for more than the data says. The 'disputed flag
+COMPOSES up the chain. Deliberately NOT the datalog library: necessity through
+an any-of set is a FORALL, and positive reachability would derive exactly the
+over-claim — a monotone fixpoint in plain Racket, unbounded depth intact
+(host-of-a-host resolves next round). On today's data: 147 base facts, 0
+derived — the one candidate chain (stelis montana → three Osmia) fails the
+forall on a generalist host, the any-of semantics doing its job ·
 [`taxon-derive.rkt`](src/taxon-derive.rkt) its IO seam (the delta/delta-explain
 idiom): lineages off the species mart via DuckDB, assertions off the checked-in
 [`data/taxon-traits.rktd`](data/taxon-traits.rktd) (an input ARTIFACT, so a curator

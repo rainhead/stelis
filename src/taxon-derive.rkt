@@ -22,6 +22,7 @@
          "duckdb.rkt"
          "taxon-inherit.rkt"
          "taxon-edges.rkt"
+         "taxon-risk.rkt"
          "cache.rkt"   ; env-resolve — artifact name -> where it lives
          "exec.rkt")   ; check-context accessors — the derivation-node interface
 
@@ -317,11 +318,14 @@
               #:when sr)
     (values (species-row-canonical sr) r)))
 
-;; dependencies-jsexpr : (listof host-dependence) (listof forage-dependence) -> jsexpr
+;; dependencies-jsexpr : (listof host-dependence) (listof forage-dependence)
+;;                       (listof necessity) (string -> string) -> jsexpr
 ;; The typed-edge artifact: canonical_name -> its dependences, each with proof,
-;; grounding, and flags. Keys sort via write-json; the lists keep the cores'
-;; total order, so the file is byte-stable.
-(define (dependencies-jsexpr hosts forage)
+;; grounding, and flags — and, where the closure could claim it strictly, its
+;; at_risk facts (st-6x9) with the proof tree and the learner-facing sentence.
+;; Keys sort via write-json; the lists keep the cores' total order, so the file
+;; is byte-stable.
+(define (dependencies-jsexpr hosts forage necessities display-of)
   (define by-species (make-hash))
   (for ([h (in-list hosts)])
     (hash-update! by-species (host-dependence-species h)
@@ -329,9 +333,30 @@
   (for ([f (in-list forage)])
     (hash-update! by-species (forage-dependence-species f)
                   (lambda (v) (hash-set v 'forage (forage-jsexpr f))) (hasheq)))
+  (for ([n (in-list necessities)])
+    (hash-update! by-species (necessity-species n)
+                  (lambda (v) (hash-update v 'at_risk
+                                           (lambda (l) (append l (list (necessity-jsexpr n display-of))))
+                                           '()))
+                  (hasheq)))
   (hasheq 'species
           (for/hasheq ([(k v) (in-hash by-species)])
             (values (string->symbol k) v))))
+
+;; One strict at-risk fact as published. `via` nests each host's OWN necessity —
+;; the forall materialized — so a reader (or the site) can unfold the chain to
+;; the oligolecty it bottoms out at; the dispute flag rides every level it
+;; holds at, never summarized away.
+(define (necessity-jsexpr n display-of)
+  (hasheq 'grain (symbol->string (necessity-grain n))
+          'target (necessity-target n)
+          'disputed (necessity-flagged? n)
+          'explanation (necessity-sentence n (display-of (necessity-species n)))
+          'via (if (necessity-via n)
+                   (for/list ([v (in-list (necessity-via n))])
+                     (hasheq 'host (car v)
+                             'needs (necessity-jsexpr (cdr v) display-of)))
+                   (json-null))))
 
 (define (host-jsexpr h)
   (hasheq 'because
@@ -421,11 +446,26 @@
          (define forage
            (forage-dependencies (read-forage-edges (path-of specialist-artifact))
                                 (species-diet (path-of beegap-seed-artifact)) atlas))
-         (define dj (dependencies-jsexpr hosts forage))
+         ;; the at-risk closure (st-6x9): strict necessity only — every any-of
+         ;; node on the chain collapsed, every host grounded (see taxon-risk.rkt)
+         (define risk-base (base-necessities forage))
+         (define risk-derived (derived-necessities hosts risk-base))
+         (define display-of
+           (let ([m (for/hash ([r (in-list rows)])
+                      (values (species-row-canonical r) (species-row-scientific r)))])
+             (lambda (c) (hash-ref m c c))))
+         (define dj (dependencies-jsexpr hosts forage
+                                         (append risk-base risk-derived)
+                                         display-of))
          (define note (string-append
                        (summary (hash-count (hash-ref j 'species)) (length assertions)
                                 (length derived) agree gaps bad uncovered unresolved)
-                       (deps-summary hosts forage)))
+                       (deps-summary hosts forage)
+                       (format "; at-risk: ~a strict fact(s) (~a base, ~a derived, ~a disputed)"
+                               (+ (length risk-base) (length risk-derived))
+                               (length risk-base) (length risk-derived)
+                               (for/sum ([n (in-list (append risk-base risk-derived))])
+                                 (if (necessity-flagged? n) 1 0)))))
          ;; both artifacts written only after everything fallible has run — the
          ;; receipt-vs-disk argument above covers the pair
          (make-directory* (path-only* out))

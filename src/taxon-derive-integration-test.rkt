@@ -22,6 +22,7 @@
          "beeatlas.rkt"
          "taxon-inherit.rkt"
          "taxon-edges.rkt"
+         "taxon-risk.rkt"
          "taxon-derive.rkt")
 
 ;; All three inputs come from the graph's own resolver, not a second copy of the
@@ -188,4 +189,40 @@ would show as gaps swallowing the set")
                         (if (eq? 'recorded (host-dependence-proof h)) 1 0)))
      (printf "taxon-edges: ~a parasites typed (~a source-proof-only) · ~a specialists typed (diet_breadth: ~a agree, ~a no value, ~a disputed)\n"
              (length hosts) recorded (length forage)
-             (flag 'agrees) (flag 'no-value) (flag 'disputed)))])
+             (flag 'agrees) (flag 'no-value) (flag 'disputed))
+
+     ;; --- the at-risk closure on the real edges (st-6x9) -------------------------
+     ;; Structural only, as above. The claim grammar is pinned on fixtures
+     ;; (taxon-risk-test.rkt); here: every base fact really is a collapsed
+     ;; any-of set, every derived fact rests on a wholly-grounded host set with
+     ;; the forall satisfied, and the numbers are printed, never asserted —
+     ;; today's data derives ZERO depth-2 facts (the one candidate chain,
+     ;; stelis montana -> three Osmia, fails the forall on a generalist host,
+     ;; which is the any-of semantics doing its job, not a gap).
+     (define risk-base (base-necessities forage))
+     (define risk-derived (derived-necessities hosts risk-base))
+     (define forage-of
+       (for/hash ([f (in-list forage)]) (values (forage-dependence-species f) f)))
+     (check-not-false
+      (for/and ([n (in-list risk-base)])
+        (let* ([f (hash-ref forage-of (necessity-species n))]
+               [plants (remove-duplicates (forage-dependence-plants f))])
+          (case (necessity-grain n)
+            [(plant) (= 1 (length plants))]
+            [(family) (and (> (length plants) 1)
+                           (= 1 (length (remove-duplicates (map car plants)))))]
+            [else #f])))
+      "every base fact is a genuinely collapsed any-of set, at the right grain")
+     (check-not-false
+      (for/and ([n (in-list risk-derived)])
+        (let ([h (findf (lambda (h) (equal? (host-dependence-species h)
+                                            (necessity-species n)))
+                        hosts)])
+          (and h (for/and ([t (in-list (host-dependence-targets h))]) (cdr t))
+               (= (length (necessity-via n))
+                  (length (host-dependence-targets h))))))
+      "every derived fact rests on a wholly-grounded host set with a via per host — the forall, materialized")
+     (printf "taxon-risk: ~a base strict fact(s), ~a derived, ~a disputed\n"
+             (length risk-base) (length risk-derived)
+             (for/sum ([n (in-list (append risk-base risk-derived))])
+               (if (necessity-flagged? n) 1 0))))])
