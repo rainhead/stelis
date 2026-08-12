@@ -81,8 +81,19 @@
      (beegap-agreement derived index (beegap-nesting traits-parquet)))
    (check-true (> gaps 0)
                "inheritance FILLS species Bee-Gap has no nesting value for — the coverage win")
-   (check-true (> agree (* 5 gaps))
-               "…and where Bee-Gap does have a value, it overwhelmingly agrees")
+   ;; A READ-integrity guard, not an agreement guard: agreement-where-covered is
+   ;; pinned EXACTLY by disagreements = '() below, and a beegap-nesting read that
+   ;; broke (renamed column, format change) would pass both neighbours vacuously —
+   ;; every species lands in `gaps`, which stays > 0, with nothing left to disagree.
+   ;; So bound the SHAPE: Bee-Gap covers the clear majority of the characterized
+   ;; set, and a collapsed read shows as gaps swallowing it. Majority, not a tight
+   ;; ratio, on purpose: the first cut demanded agree > 5×gaps, and ordinary
+   ;; upstream drift broke it (st-36e — Bee-Gap gained values for 6 species,
+   ;; 2026-08; production sat at 6.7× while a week-stale local mart sat at 4.5×,
+   ;; so the suite failed on exactly the checkouts that had done nothing wrong).
+   (check-true (> agree gaps)
+               "Bee-Gap covers most characterized species — a collapsed traits read \
+would show as gaps swallowing the set")
    (check-equal? disagreements '()
                  "no species where the inherited trait contradicts Bee-Gap's own")
    ;; The reverse direction. Not pinned to an exact list — that would break on any
