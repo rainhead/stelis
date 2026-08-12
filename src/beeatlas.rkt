@@ -783,11 +783,14 @@
    ;; v2 API (beeatlas-iek/9sy). waba_data is an input because the pipeline's
    ;; specimen_linked_observations resource derives its id list from the WABA
    ;; catalog OFVs (dbt_sandbox.int_waba_link when present, raw ofvs fallback).
-   ;; ARM 4's mart upstream (inat_obs_data) still reads the committed CSV; the
-   ;; identifications child tables are what dbt consumes today (int_inat_identifications).
    (make-task 'inat-expert 'boundary #:inputs '(waba_data) #:outputs '(inat_expert_data)
               #:invoke (py "inat_expert_pipeline" "load_expert_observations"))
-   (make-task 'inat-obs 'boundary #:outputs '(inat_obs_data)
+   ;; ARM 4 upstream. 'transform since the iek cutover (2026-08-12): it no
+   ;; longer reads the committed CSV — it projects inat_expert_data.observations
+   ;; (canonicalize + WABA specimen dedup) into inat_obs_data, so it caches on
+   ;; its inputs like any other DB->DB step instead of re-running as ingestion.
+   (make-task 'inat-obs 'transform #:inputs '(inat_expert_data waba_data)
+              #:outputs '(inat_obs_data)
               #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
    ;; integrity gate (st-0vz): block publish if inat_obs_data's record count
    ;; swings sharply vs. the previous build. An in-process rule node, not a
@@ -795,8 +798,17 @@
    (make-task 'inat-obs-integrity 'gate
               #:inputs '(inat_obs_data) #:outputs '(inat-obs-count-verified)
               #:invoke (integrity-gate 'inat_obs_data))
+   ;; Inputs match _names_to_resolve's actual reads (2026-08-12): its vocabulary
+   ;; is the union of checklist + ecdysis + inat_obs canonical names, so all
+   ;; three relations are named here — before this, a new arm-4 name could
+   ;; land while resolve-taxon-ids cache-skipped, leaving a bee unresolved
+   ;; (taxon_id NULL) with the resolution gate none the wiser. The same
+   ;; silent-gap class as st-7hw; surfaced by the beeatlas-iek cutover, which
+   ;; made inat-obs a cached transform whose output can change independently.
    (make-task 'resolve-taxon-ids 'transform
-              #:inputs '(inat_observations taxa.csv.gz) #:outputs '(canonical_to_taxon_id)
+              #:inputs '(inat_observations taxa.csv.gz
+                         ecdysis_data checklist_raw inat_obs_data)
+              #:outputs '(canonical_to_taxon_id)
               #:invoke (py "resolve_taxon_ids" "resolve_taxon_ids"))
    (make-task 'resolution-gate 'gate
               #:inputs '(canonical_to_taxon_id) #:outputs '(resolution-verified)
