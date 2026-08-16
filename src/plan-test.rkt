@@ -186,15 +186,17 @@
 ;;     DISTINCT outputs (no sibling-file mutation), so each is a single-file export
 ;;     with one producer. Pin the corrected edges and their cones.
 ;;
-;;     topology reads the three region marts' @export copies (Pitfall 5, not the
-;;     sandbox originals) and writes three .clean.geojson siblings; its cone is just
+;;     topology reads the four region marts' @export copies (Pitfall 5, not the
+;;     sandbox originals) and writes four .clean.geojson siblings; its cone is just
 ;;     dbt-build -> place-marts -> topology, and it pulls in NEITHER species-export
 ;;     nor the occurrences.db producer.
 (check-equal? (data-inputs-of 'topology-postprocess)
-              '(counties.geojson@export ecoregions.geojson@export wilderness.geojson@export)
+              '(counties.geojson@export ecoregions.geojson@export
+                ecoregions_l4.geojson@export wilderness.geojson@export)
               "topology reads the @export mart copies, not the sandbox originals")
 (check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'topology-postprocess))
-              '(counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson)
+              '(counties.clean.geojson ecoregions.clean.geojson
+                ecoregions_l4.clean.geojson wilderness.clean.geojson)
               "topology writes a distinct .clean.geojson per layer (no in-place rewrite)")
 (let-values ([(tp-ordered _p) (plan beeatlas-graph 'counties.clean.geojson)])
   (define pos (for/hash ([n (in-list tp-ordered)] [i (in-naturals)]) (values n i)))

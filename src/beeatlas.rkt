@@ -215,14 +215,14 @@
 ;; the names. The recurring authoring bug was this placement axis leaking into
 ;; five different spots; now a new mart or export is a one-line edit.
 
-;; dbt-build writes these nine marts into the sandbox — they ARE its file outputs.
+;; dbt-build writes these eleven marts into the sandbox — they ARE its file outputs.
 (define sandbox-marts
   '(occurrences.parquet occurrence_places.parquet checklist.parquet
     occurrence_trust.parquet
     species.parquet species_traits.parquet higher_taxa.parquet
-    counties.geojson ecoregions.geojson wilderness.geojson))
+    counties.geojson ecoregions.geojson ecoregions_l4.geojson wilderness.geojson))
 
-;; place-marts copies these six verbatim into EXPORT_DIR, where the post-dbt
+;; place-marts copies these verbatim into EXPORT_DIR, where the post-dbt
 ;; exporters read them (Pitfall 5). Each copied mart gets a byte-identical
 ;; `<name>@export' sibling — its own artifact, so one-producer-per-artifact holds:
 ;; dbt-build makes the sandbox copy, place-marts makes the @export copy.
@@ -230,7 +230,7 @@
 ;; @export copy (different bytes), not a verbatim mart copy.
 (define placed-marts
   '(occurrences.parquet occurrence_places.parquet counties.geojson
-    ecoregions.geojson wilderness.geojson checklist.parquet
+    ecoregions.geojson ecoregions_l4.geojson wilderness.geojson checklist.parquet
     occurrence_trust.parquet))
 
 ;; the @export sibling name of a placed artifact.
@@ -244,6 +244,7 @@
     collectors.events.json collector_event_pages.json
     places.json places.geojson place_details.json
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
+    ecoregions_l4.clean.geojson
     seasonality.json photos.json species_hosts.json higher_taxa.json
     taxon_presence.json
     species_reasoning.json species_dependencies.json))
@@ -258,6 +259,7 @@
 (define precompressed-artifacts
   '(occurrences.db
     counties.clean.geojson ecoregions.clean.geojson wilderness.clean.geojson
+    ecoregions_l4.clean.geojson
     places.geojson places.json taxon_presence.json))
 
 ;; Directory ('dir) terminal exports (st-cly): data-dependent output SETS that each
@@ -409,6 +411,7 @@
     ;; its own manual step), and per-table is what makes `--why counties.geojson' name
     ;; the layer that actually moved.
     [(geographies_ecoregions)       '("geographies.ecoregions")]
+    [(geographies_ecoregions_l4)    '("geographies.ecoregions_l4")]
     [(geographies_us_states)        '("geographies.us_states")]
     [(geographies_padus_wilderness) '("geographies.padus_wilderness")]
     [else #f]))
@@ -587,6 +590,13 @@
    ;; on-run-start hook CREATEs it empty — so this doesn't strand a fresh host on
    ;; 'inputs-unresolvable.
    (make-artifact 'geographies_ecoregions       'db-relation #:provenance 'upstream)
+   ;; EPA Level IV ecoregions (beeatlas-8gcw). Loaded out of band with the rest of
+   ;; the geographies, but unlike its siblings NOTHING IN DBT READS IT: places-load
+   ;; turns each row into a place, so it reaches the marts through
+   ;; geographies_places. Naming it here is what makes a Level IV refresh re-run
+   ;; places-load — without the edge, a reload would change the places table's
+   ;; content while every recorded input hash sat still.
+   (make-artifact 'geographies_ecoregions_l4    'db-relation #:provenance 'upstream)
    (make-artifact 'geographies_us_states        'db-relation #:provenance 'upstream)
    (make-artifact 'geographies_padus_wilderness 'db-relation #:provenance 'upstream)
    (make-artifact 'geographies              'external)
@@ -618,6 +628,12 @@
    ;; single-output `region-topology-clean' placeholder (st-4cm slice 4).
    (make-artifact 'counties.clean.geojson       'file)
    (make-artifact 'ecoregions.clean.geojson     'file)
+   ;; Level IV ecoregions (beeatlas-8gcw): the fourth region overlay, cleaned by the
+   ;; same mapshaper pass as the other three. Its RAW sibling is a dbt mart (it is
+   ;; declared by sandbox-marts, like counties.geojson), even though its features are
+   ;; places — the mart reads geographies.places so the overlay's slugs are the same
+   ;; slugs the bridge and the place pages use.
+   (make-artifact 'ecoregions_l4.clean.geojson  'file)
    (make-artifact 'wilderness.clean.geojson     'file)
    (make-artifact 'species.json                 'file)
    ;; species_export writes SIX files in one invocation; species.json is the
@@ -855,8 +871,12 @@
               #:inputs '(ecdysis_data inat_observations waba_data inat_obs_data)
               #:outputs '(dem_elevations)
               #:invoke (py "dem_elevation" "load_dem_elevations"))
+   ;; places-load writes ONE table from TWO sources (beeatlas-8gcw): the hand-authored
+   ;; sites in content/places.toml, and one place per Level IV ecoregion already in the
+   ;; database — hence the geographies_ecoregions_l4 edge.
    (make-task 'places-load 'transform
-              #:inputs '(places-validated geographies) #:outputs '(geographies_places)
+              #:inputs '(places-validated geographies geographies_ecoregions_l4)
+              #:outputs '(geographies_places)
               #:invoke (py "places_load" "load_places_step"))
 
    ;; A correction overrides a CITED source, so it must not be able to outlive the
@@ -914,7 +934,7 @@
                          geographies_ecoregions geographies_us_states
                          geographies_padus_wilderness
                          dem_elevations)
-              #:outputs sandbox-marts   ; exactly the ten sandbox marts (st-bft)
+              #:outputs sandbox-marts   ; exactly the eleven sandbox marts (st-bft)
               ;; Recipe is `run.sh build' only — it writes the marts to the dbt
               ;; sandbox. run.py's _run_dbt_build ALSO copies six of them to
               ;; EXPORT_DIR; that placement is now its own `place-marts' node
@@ -978,8 +998,10 @@
    ;; against real inputs, and these three artifacts are terminal here.
    (make-task 'topology-postprocess 'transform
               #:inputs '(counties.geojson@export ecoregions.geojson@export
+                         ecoregions_l4.geojson@export
                          wilderness.geojson@export)
               #:outputs '(counties.clean.geojson ecoregions.clean.geojson
+                          ecoregions_l4.clean.geojson
                           wilderness.clean.geojson)
               #:invoke (py "topology_postprocess" "main"
                            #:code '("package-lock.json")))
