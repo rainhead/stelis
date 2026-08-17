@@ -1072,8 +1072,16 @@
    ;; and EXPORT_DIR/species.parquet (species-export's enriched copy) — both
    ;; @export, not the sandbox originals; the sandbox occurrences.parquet edge
    ;; here was wrong until collectors.json exercised it (st-4cm slice 2).
+   ;; It also reads the occurrence_places bridge and geographies_places, the same
+   ;; pair places-export takes above: per-collector Level IV ecoregion coverage is
+   ;; a PLACE membership question (beeatlas-dflu / beeatlas ADR 0035), so it joins
+   ;; the bridge and filters on places.kind rather than reading an occurrences
+   ;; column. edge-verify caught both the moment the code landed — the task's
+   ;; sandbox is seeded from exactly this list, so an undeclared read is a
+   ;; FileNotFoundError, not a silently stale answer.
    (make-task 'collectors-export 'transform
-              #:inputs '(occurrences.parquet@export species.parquet@export)
+              #:inputs '(occurrences.parquet@export species.parquet@export
+                         occurrence_places.parquet@export geographies_places)
               #:outputs '(collectors.json)
               #:invoke (py "collectors_export" "export_collectors_step"))
    ;; collectors_events_export reads base collectors.json (read-only) for the

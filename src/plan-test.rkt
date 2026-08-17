@@ -151,8 +151,12 @@
               "place-marts runs before collectors-export")
   (check-true (< (hash-ref pos 'dbt-build) (hash-ref pos 'place-marts))
               "dbt-build runs before place-marts"))
+;;    The bridge + geographies_places arrived with Level IV ecoregion coverage
+;;    (beeatlas-dflu): membership is a place question, so the export joins the
+;;    bridge instead of reading an occurrences column.
 (check-equal? (data-inputs-of 'collectors-export)
-              '(occurrences.parquet@export species.parquet@export)
+              '(occurrences.parquet@export species.parquet@export
+                occurrence_places.parquet@export geographies_places)
               "collectors-export reads the EXPORT_DIR copies, not the sandbox originals")
 (let ([stub (lambda (a) an-existing-file)]) ; everything resolves
   (check-true (snapshot? (input-snapshot beeatlas-graph 'place-marts stub))
