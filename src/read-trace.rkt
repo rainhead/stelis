@@ -127,14 +127,36 @@
       [(null? elements) (or acc (build-path "/"))]
       [else
        (define next (if acc (build-path acc (car elements)) (car elements)))
-       ;; resolve-path only resolves a link at the END, which is exactly why this
-       ;; walks: it applies that one step at every level.
-       (define resolved
-         (if (or (file-exists? next) (directory-exists? next) (link-exists? next))
-             (let ([r (resolve-path next)])
-               (if (absolute-path? r) r (simplify-path (build-path (or acc (build-path "/")) r) #f)))
-             next))
+       ;; resolve-path resolves ONE link, at the end of the path. So this walks
+       ;; twice over: once per element, and once per hop within an element, since
+       ;; a link's target may itself be a link (link2 -> link1 -> real). Resolving
+       ;; a single hop left chained links half-resolved, and two paths reaching one
+       ;; file by chains of different length then failed to compare `equal?` — a
+       ;; declared input reading as 'undeclared, or worse as 'foreign, which is the
+       ;; SILENT direction. The hop count is bounded because a symlink CYCLE is a
+       ;; real filesystem state and an unbounded walk would hang the build rather
+       ;; than misreport; at the cap we return what we have and let the comparison
+       ;; be conservative.
+       (define resolved (resolve-links next (or acc (build-path "/"))))
        (loop (cdr elements) resolved)])))
+
+;; resolve-links : path path -> path
+;; Follow a chain of symlinks at `p' to its end, resolving relative targets
+;; against `base'. Bounded (32, comfortably past any real chain) so a symlink
+;; cycle terminates instead of hanging.
+(define (resolve-links p base)
+  (let hop ([current p] [fuel 32])
+    (cond
+      [(zero? fuel) current]
+      [(not (or (file-exists? current) (directory-exists? current) (link-exists? current)))
+       current]
+      [else
+       (define r (resolve-path current))
+       (define next (if (absolute-path? r)
+                        r
+                        (simplify-path (build-path (or (path-only current) base) r) #f)))
+       ;; resolve-path returns the path unchanged when it is not a link: fixpoint.
+       (if (equal? next current) current (hop next (sub1 fuel)))])))
 
 ;; path-under? : path path -> boolean
 ;; Is `p' the root itself, or strictly inside it? Element-wise, so a sibling

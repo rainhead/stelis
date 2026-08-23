@@ -153,3 +153,49 @@
   (check-equal? (trace-report-unread rep)
                 (list (p "/repo/declared-but-idle.parquet"))
                 "the untouched declaration is reported separately, as the weak signal"))
+
+
+;; --- full-resolve : symlinks, all the way down ------------------------------
+;;
+;; These need a real filesystem because symlink resolution IS a filesystem
+;; question. They were missing when full-resolve shipped, and their absence hid a
+;; live bug: resolve-path follows ONE link, so a chain (link2 -> link1 -> real)
+;; came back half-resolved. Two paths reaching the same file by chains of
+;; different length then failed to compare `equal?`, and a declared input read as
+;; 'undeclared — or, if the half-resolved prefix fell outside every known root,
+;; as 'foreign, which is the SILENT direction.
+
+(define fr-root (make-temporary-directory))
+(make-directory (build-path fr-root "real"))
+(display-to-file "hi" (build-path fr-root "real" "f.txt"))
+(make-file-or-directory-link "real" (build-path fr-root "link1"))
+(make-file-or-directory-link "link1" (build-path fr-root "link2"))   ; chained
+(make-file-or-directory-link "../real" (build-path fr-root "real" "rel"))
+(make-file-or-directory-link "loopb" (build-path fr-root "loopa"))   ; a cycle
+(make-file-or-directory-link "loopa" (build-path fr-root "loopb"))
+
+(define (fr . parts) (full-resolve (apply build-path fr-root parts)))
+(define truth (full-resolve (build-path fr-root "real" "f.txt")))
+
+(check-equal? (fr "link1" "f.txt") truth
+              "a single symlink hop resolves to the real file")
+(check-equal? (fr "link2" "f.txt") truth
+              "a CHAIN of symlinks resolves all the way, not one hop")
+(check-equal? (fr "real" "rel" "f.txt") truth
+              "a symlink with a RELATIVE target resolves against its own directory")
+(check-equal? (fr "real" 'up "real" "f.txt") truth
+              "a .. component simplifies away")
+
+;; A symlink cycle is a real filesystem state. The contract is that it TERMINATES
+;; and returns something comparable — never that it resolves. Hanging here would
+;; hang the build, which is worse than a conservative misclassification.
+(check-pred path? (fr "loopa" "x")
+            "a symlink cycle terminates instead of spinning")
+
+;; A path that does not exist is returned as-is, not #f: the probe reports reads
+;; of files that may since have been deleted (a temp file), and those must still
+;; classify rather than crash the report.
+(check-pred path? (full-resolve (build-path fr-root "nope" "deeper" "x.txt"))
+            "a nonexistent path resolves to itself rather than failing")
+
+(delete-directory/files fr-root)
