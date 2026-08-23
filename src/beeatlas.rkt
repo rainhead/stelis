@@ -311,6 +311,13 @@
                              ;; the Fowler & Droege specialist list (st-an7):
                              ;; the forage edges the reasoning node types
                              'bee_specialist_hosts.csv   (seed-file "bee_specialist_hosts.csv")
+                             ;; the curated synonymy seed (st-eo0). dbt reaches it
+                             ;; through the seeds/ dir its recipe hashes as code;
+                             ;; five OTHER tasks open the CSV directly, and for
+                             ;; those it is data they read, not code they run.
+                             'occurrence_synonyms.csv    (seed-file "occurrence_synonyms.csv")
+                             ;; the hand-authored collecting sites (st-eo0)
+                             'places.toml (build-path BEEATLAS "content" "places.toml")
                              'notes-store.db notes-store-path
                              ;; the curated trait assertions (st-ozp) — checked
                              ;; into STELIS, not beeatlas: they are Stelis's
@@ -619,6 +626,16 @@
    (make-artifact 'bee_parasite_hosts.csv     'file #:provenance 'upstream)
    (make-artifact 'bee_specialist_hosts.csv   'file #:provenance 'upstream)
    (make-artifact 'corrections-verified       'token)
+   ;; Curated beeatlas content read as DATA by tasks outside dbt (st-eo0, found by
+   ;; --trace-reads). Both are authored and forward-only — git is the store — so
+   ;; 'authoritative, as bee_traits_corrections.csv is, and neither has a producer.
+   ;; occurrence_synonyms.csv is ALSO a dbt seed, and dbt-build stays as it is: the
+   ;; whole seeds/ tree is part of the project definition its run.sh recipe
+   ;; executes, so hashing it as recipe code is right THERE. It is wrong for a task
+   ;; that merely opens the file, which would then report 'code-changed for
+   ;; something it never ran.
+   (make-artifact 'occurrence_synonyms.csv    'file #:provenance 'authoritative)
+   (make-artifact 'places.toml                'file #:provenance 'authoritative)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
    ;; topology-postprocess reads each raw region mart @export copy and writes a
@@ -789,13 +806,21 @@
    ;; ecdysis_data input declares that edge; without it the planner scheduled checklist
    ;; first and the subsequent replace wiped canonical_name, emptying
    ;; int_species_host_plants and failing species-export (st-84u).
-   (make-task 'checklist 'boundary #:inputs '(ecdysis_data) #:outputs '(checklist_raw)
+   ;; occurrence_synonyms.csv on the next four: each reaches the seed OUTSIDE dbt.
+   ;; checklist and inat-obs go through the shared helper canonical_name.py, whose
+   ;; read is lazy (_ensure_synonyms) — py-imports makes the HELPER a 'code input,
+   ;; so its code is hashed, but the CSV that helper opens is data and was
+   ;; invisible until --trace-reads observed it (st-eo0).
+   (make-task 'checklist 'boundary
+              #:inputs '(ecdysis_data occurrence_synonyms.csv) #:outputs '(checklist_raw)
               #:invoke (py "checklist_pipeline" "load_checklist"))
    (make-task 'resolve-checklist-names 'transform
-              #:inputs '(checklist_raw) #:outputs '(checklist_resolved)
+              #:inputs '(checklist_raw occurrence_synonyms.csv)
+              #:outputs '(checklist_resolved)
               #:invoke (py "resolve_checklist_names" "resolve_checklist_names"))
    (make-task 'checklist-resolution-gate 'gate
-              #:inputs '(checklist_resolved) #:outputs '(checklist-resolution-verified)
+              #:inputs '(checklist_resolved occurrence_synonyms.csv)
+              #:outputs '(checklist-resolution-verified)
               #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate"))
    ;; Expert-feed observations + per-observation identification detail from the
    ;; v2 API (beeatlas-iek/9sy). waba_data is an input because the pipeline's
@@ -807,7 +832,8 @@
    ;; longer reads the committed CSV — it projects inat_expert_data.observations
    ;; (canonicalize + WABA specimen dedup) into inat_obs_data, so it caches on
    ;; its inputs like any other DB->DB step instead of re-running as ingestion.
-   (make-task 'inat-obs 'transform #:inputs '(inat_expert_data waba_data)
+   (make-task 'inat-obs 'transform
+              #:inputs '(inat_expert_data waba_data occurrence_synonyms.csv)
               #:outputs '(inat_obs_data)
               #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
    ;; integrity gate (st-0vz): block publish if inat_obs_data's record count
@@ -843,8 +869,10 @@
    (make-task 'host-plant-lineage 'transform
               #:inputs '(taxa.csv.gz) #:outputs '(host_plant_lineage)
               #:invoke (py "host_plant_lineage" "load_host_plant_lineage"))
+   ;; The gate VALIDATES content/places.toml, so the file is its subject, not just
+   ;; ambient context — an edit to it is exactly when this must re-run (st-eo0).
    (make-task 'places-validation 'gate
-              #:inputs '(geographies) #:outputs '(places-validated)
+              #:inputs '(geographies places.toml) #:outputs '(places-validated)
               #:invoke (py "places_validation" "validate_places_step"))
 
    ;; DEM elevation backfill (beeatlas-sn8): samples USGS 3DEP for every
@@ -875,7 +903,8 @@
    ;; sites in content/places.toml, and one place per Level IV ecoregion already in the
    ;; database — hence the geographies_ecoregions_l4 edge.
    (make-task 'places-load 'transform
-              #:inputs '(places-validated geographies geographies_ecoregions_l4)
+              #:inputs '(places-validated geographies geographies_ecoregions_l4
+                         places.toml)
               #:outputs '(geographies_places)
               #:invoke (py "places_load" "load_places_step"))
 
@@ -1090,13 +1119,18 @@
    ;; The declared edge had only collectors.json + collector_event_pages.json until
    ;; slice 4 exercised it; the enriched output is now the distinct collectors.
    ;; events.json (beeatlas-hyq), with collector_event_pages.json its sidecar.
-   ;; (occurrence_synonyms.csv is a fixed dbt seed, not a graph artifact.)
+   ;; occurrence_synonyms.csv IS declared (st-eo0). It was left out as "a fixed dbt
+   ;; seed, not a graph artifact" — true of dbt-build, which hashes seeds/ as recipe
+   ;; code, and false here: this task opens the CSV itself, so the seeds dir was
+   ;; nowhere in its address and a curator edit cache-skipped it. Found by
+   ;; --trace-reads, not by reading.
    ;; EDGE VERIFIED and determinism-clean: both outputs are byte-identical across
    ;; runs after beeatlas-8td SITE 2 (0a025ff4) gave the event query a total-order
    ;; tiebreak (was reordering tied first_page_events rows under DuckDB parallelism).
    (make-task 'collectors-events-export 'transform
               #:inputs '(collectors.json occurrences.parquet@export
-                         species.json higher_taxa.json)
+                         species.json higher_taxa.json
+                         occurrence_synonyms.csv)
               #:outputs '(collectors.events.json collector_event_pages.json)
               #:invoke (py "collectors_events_export" "export_collectors_events_step"))
    ;; notes-harvest reads the authoritative notes store (make_engine, NOTES_DB_PATH)

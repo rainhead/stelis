@@ -41,7 +41,7 @@ Stelis is the build system. `~/dev/beeatlas` and `~/dev/salishsea-io` are
 
 ## Build, run, test
 
-Toolchain: **Racket v9.2 CS** (on `PATH` at `/Applications/Racket v9.2`). Core is
+Toolchain: **Racket v9.3 CS** (on `PATH` at `/Applications/Racket v9.3`). Core is
 `#lang racket/base` under [`src/`](src/); the Datalog planner needs the `datalog`
 package (`raco pkg install datalog`) and the DASL CIDs need `sha`
 (`raco pkg install sha` — unlike `datalog`, it is NOT in the full distribution, so
@@ -75,7 +75,13 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   complete? The only check that asks whether the graph is TRUE rather than merely
   coherent, st-8an. Needs a reference build to seed from; exits non-zero on a bad
   edge OR an incomplete reference, and names the tasks it does not cover rather
-  than presenting a curated subset as coverage).
+  than presenting a curated subset as coverage) ·
+  `--trace-reads <task>` (the OTHER half of that question, st-25h: run the task
+  normally under a read probe and classify every file it actually opened against
+  its declared edge. --verify-edges asks by WITHHOLDING, which structurally cannot
+  reach the fixed-path inputs — the sandbox, the seeds, committed content —
+  because withholding those would mean mutating real files; this asks by
+  OBSERVATION, so nothing is withheld. Exits non-zero on an undeclared read).
 - **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner
@@ -362,6 +368,26 @@ to publish a conflicted result and cross-checks coverage against Bee-Gap ·
 plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
 runtime reality (declared inputs sufficient? outputs complete?) ·
+[`read-trace.rkt`](src/read-trace.rkt) + [`src/probe/`](src/probe/) the same
+question asked by OBSERVATION rather than withholding (st-25h). The probe is a
+`sitecustomize.py` prepended to PYTHONPATH, so `site` loads it before any task
+code and it inherits into every Python subprocess — dbt included, dbt being
+Python too. TWO mechanisms, because neither covers the other: `open` audit events
+give DATA reads, and a `sys.modules` sweep at exit gives CODE reads. The audit
+events cannot do the second — with a warm `__pycache__` the `.py` is NEVER
+opened, only the `.pyc`, and the `import` event carries no path at all — so
+recording what was opened would name the wrong file. Classification is against
+the GRAPH: declared / own-output / code / undeclared (the finding) / foreign,
+where the interesting-vs-foreign filter is DERIVED from the roots the graph
+already names rather than hand-kept, so a new producer widens it automatically
+(the dir-extent.rkt move). The two directions are NOT symmetric: an undeclared
+read is a strong signal, an unread declaration is weak (a data-dependent branch
+makes one run a lower bound), and the report keeps them apart. KNOWN BLIND SPOT,
+stated in every report rather than left to be discovered: a read inside a C
+extension is invisible — duckdb reading a parquet file emits nothing — so the
+relation-grain half needs its own instrument (st-25h step 1b). Tracing is
+invisible to what it observes: the log is written OUTSIDE EXPORT_DIR, whose
+contents are content-addressed ·
 [`build-log.rkt`](src/build-log.rkt) the operator build log (st-9rf, first probe
 of visual output modes): the history rendered as ONE self-contained HTML page.
 An ENGINE surface, not site content — Model Y untouched, beeatlas's 11ty never

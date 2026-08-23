@@ -217,9 +217,16 @@
 ;;     collectors.events.json (+ its sidecar), reading occurrences.parquet@export and
 ;;     the species/higher-taxa JSON for slug resolution; its cone adds collectors-
 ;;     export and species-export on top of place-marts.
+;;     occurrence_synonyms.csv joined the edge in st-eo0: the task opens the curated
+;;     synonymy seed itself rather than reaching it through dbt, so the seeds/ dir
+;;     dbt-build hashes as recipe code was nowhere in THIS task's address and a
+;;     curator edit cache-skipped it. Observed by --trace-reads; this line is the
+;;     regression pin, since the failure mode (a stale spelling in the published
+;;     collector pages) is silent.
 (check-equal? (data-inputs-of 'collectors-events-export)
-              '(collectors.json occurrences.parquet@export species.json higher_taxa.json)
-              "collectors-events reads base collectors.json + @export occ + slug JSON")
+              '(collectors.json occurrences.parquet@export species.json higher_taxa.json
+                occurrence_synonyms.csv)
+              "collectors-events reads base collectors.json + @export occ + slug JSON + the synonymy seed")
 (check-equal? (task-outputs (hash-ref (graph-tasks beeatlas-graph) 'collectors-events-export))
               '(collectors.events.json collector_event_pages.json)
               "collectors-events writes a distinct enriched file, not collectors.json in place")
