@@ -343,6 +343,8 @@
     ;; as dedup_candidates.csv above: derived, at a fixed path in data/, never an
     ;; EXPORT_DIR artifact. Found by --trace-reads; before this the gates and their
     ;; producers communicated through a file the graph had never heard of.
+    [(eq? artifact 'checklist_name_resolution_audit.csv)
+     (build-path DATA "checklist_name_resolution_audit.csv")]
     [(eq? artifact 'lineage_unresolved.csv) (build-path DATA "lineage_unresolved.csv")]
     [(eq? artifact 'inactive_unresolved.csv) (build-path DATA "inactive_unresolved.csv")]
     ;; 'code artifacts (st-whi): the shared Python helpers live in data/ at their
@@ -642,6 +644,14 @@
    ;; something it never ran.
    (make-artifact 'occurrence_synonyms.csv    'file #:provenance 'authoritative)
    (make-artifact 'places.toml                'file #:provenance 'authoritative)
+   ;; What checklist-resolution-gate actually reads (st-eo0 correction). Committed,
+   ;; and written ONLY by `resolve_checklist_names.py --refresh-checklist' — a manual
+   ;; curator command, not a graph task — so 'authoritative with no producer, like
+   ;; the seeds above. Worth knowing when reading the gate: the nightly path of
+   ;; resolve-checklist-names returns immediately (`if not refresh: return'), so this
+   ;; file is refreshed only when a human refreshes it. On disk it was last written
+   ;; 2026-06-11.
+   (make-artifact 'checklist_name_resolution_audit.csv 'file #:provenance 'authoritative)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
    ;; st-b2m. Each gate's DECLARED input and the file it actually reads are
@@ -829,20 +839,31 @@
    ;; ecdysis_data input declares that edge; without it the planner scheduled checklist
    ;; first and the subsequent replace wiped canonical_name, emptying
    ;; int_species_host_plants and failing species-export (st-84u).
-   ;; occurrence_synonyms.csv on the next four: each reaches the seed OUTSIDE dbt.
-   ;; checklist and inat-obs go through the shared helper canonical_name.py, whose
-   ;; read is lazy (_ensure_synonyms) — py-imports makes the HELPER a 'code input,
-   ;; so its code is hashed, but the CSV that helper opens is data and was
-   ;; invisible until --trace-reads observed it (st-eo0).
+   ;; NOT occurrence_synonyms.csv, though checklist_pipeline imports canonical_name,
+   ;; which names the seed. canonical_name opens it only from apply_synonym, and
+   ;; NOTHING in data/ calls apply_synonym — only tests do. Occurrence synonymy flows
+   ;; through dbt's int_synonyms now, so the helper's seed path is dead on the
+   ;; pipeline. st-eo0 declared this edge from module-level reachability and was
+   ;; wrong; --trace-reads showed the read never happens. Same for inat-obs below.
    (make-task 'checklist 'boundary
-              #:inputs '(ecdysis_data occurrence_synonyms.csv) #:outputs '(checklist_raw)
+              #:inputs '(ecdysis_data) #:outputs '(checklist_raw)
               #:invoke (py "checklist_pipeline" "load_checklist"))
    (make-task 'resolve-checklist-names 'transform
-              #:inputs '(checklist_raw occurrence_synonyms.csv)
+              ;; The nightly path is `if not refresh: return' — this task is a NO-OP
+              ;; unless a human passes --refresh-checklist. Its occurrence_synonyms.csv
+              ;; read, and its writes to the gbif_checklist_synonyms / curated_taxon_ids
+              ;; seeds, all sit past that guard, so none of them is an edge of the task
+              ;; AS THE GRAPH INVOKES IT (st-eo0 correction).
+              #:inputs '(checklist_raw)
               #:outputs '(checklist_resolved)
               #:invoke (py "resolve_checklist_names" "resolve_checklist_names"))
    (make-task 'checklist-resolution-gate 'gate
-              #:inputs '(checklist_resolved occurrence_synonyms.csv)
+              ;; Reads the AUDIT csv, not the synonymy seed — st-eo0 guessed the seed
+              ;; from the module and got it wrong; check_checklist_resolution_gate opens
+              ;; checklist_name_resolution_audit.csv and nothing else. Found by running
+              ;; --trace-reads on the task, which is possible offline precisely because
+              ;; the resolve step above is a no-op without --refresh-checklist.
+              #:inputs '(checklist_resolved checklist_name_resolution_audit.csv)
               #:outputs '(checklist-resolution-verified)
               #:invoke (py "resolve_checklist_names" "check_checklist_resolution_gate"))
    ;; Expert-feed observations + per-observation identification detail from the
@@ -856,7 +877,7 @@
    ;; (canonicalize + WABA specimen dedup) into inat_obs_data, so it caches on
    ;; its inputs like any other DB->DB step instead of re-running as ingestion.
    (make-task 'inat-obs 'transform
-              #:inputs '(inat_expert_data waba_data occurrence_synonyms.csv)
+              #:inputs '(inat_expert_data waba_data)
               #:outputs '(inat_obs_data)
               #:invoke (py "inat_obs_pipeline" "load_inat_obs"))
    ;; integrity gate (st-0vz): block publish if inat_obs_data's record count
@@ -1150,6 +1171,11 @@
    ;; code, and false here: this task opens the CSV itself, so the seeds dir was
    ;; nowhere in its address and a curator edit cache-skipped it. Found by
    ;; --trace-reads, not by reading.
+   ;; This is the ONE task outside dbt that reads the seed. st-eo0 first declared it
+   ;; on four others too, reasoning from which MODULES name the path; each of those
+   ;; reads turned out to sit behind a guard the graph never opens. Module-level
+   ;; reachability is not task-level reachability, and only the trace could tell
+   ;; them apart.
    ;; EDGE VERIFIED and determinism-clean: both outputs are byte-identical across
    ;; runs after beeatlas-8td SITE 2 (0a025ff4) gave the event query a total-order
    ;; tiebreak (was reordering tied first_page_events rows under DuckDB parallelism).
