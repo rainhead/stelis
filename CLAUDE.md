@@ -441,9 +441,12 @@ in code:
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal (trimmed to fit this repo's conventions) -->
 ## Work tracking — beads (`bd`)
 
-Track work in **bd (beads)**, not TodoWrite/markdown TODO lists. Issues live in a
-local Dolt DB under `.beads/`; `bd` auto-exports to `.beads/issues.jsonl` (the
-git-tracked view). Run `bd prime` for the full command reference.
+Track work in **bd (beads)**, not TodoWrite/markdown TODO lists. The source of
+truth is the embedded Dolt DB under `.beads/embeddeddolt/`, replicated to the
+GitHub remote (see the push rule below). Run `bd prime` for the full command
+reference.
+
+Query it with `bd list` / `bd show` / `bd search` — there is no file to grep.
 
 ```bash
 bd ready                # Find available work
@@ -455,7 +458,10 @@ bd close <id>           # Complete work
 - This tracks project *work items*. Persistent facts about the user/project still
   go in the file-based memory (see the memory section of the global CLAUDE.md), not
   `bd remember` — the two don't overlap.
-- **Push only when asked** (global rule). Beads' default "mandatory
-  push" session protocol does **not** apply here; the user drives
-  pushes. `bd`'s local DB works fully offline.
+- **Push beads regularly, without asking** (2026-08-16). `bd dolt push` replicates
+  the Dolt data plane to `refs/dolt/data` on this repo's GitHub remote; it never
+  touches `refs/heads/main`. Push after filing or closing issues and before ending
+  a session — un-pushed beads live only in `.beads/embeddeddolt/` on one machine.
+  This is the **one** exception to the global "push only when asked" rule, which
+  still governs `git push` of code.
 <!-- END BEADS INTEGRATION -->

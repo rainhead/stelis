@@ -64,6 +64,12 @@ backup/
 *.db-shm
 db.sqlite
 bd.db
+# The pre-Dolt export. bd stopped writing it at the 2026-08-04 migration, but it
+# stayed git-tracked and kept rendering as a current issue list while missing
+# every issue filed since. Untracked 2026-08-16; the Dolt DB is the source of
+# truth and `refs/dolt/data` on the GitHub remote is the replica. Named exactly,
+# NOT *.jsonl — interactions.jsonl is still tracked.
+issues.jsonl
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
