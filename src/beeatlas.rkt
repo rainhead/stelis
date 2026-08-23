@@ -339,6 +339,12 @@
     ;; EXPORT_DIR artifact. Surfaced by --build --all (dedup-candidates is pruned for
     ;; occurrences.db); the st-6qc guard needs a resolvable path to verify it.
     [(eq? artifact 'dedup_candidates.csv) (build-path DATA "dedup_candidate_pairs.csv")]
+    ;; The two triage CSVs the resolution/inactive gates READ (st-b2m) — same shape
+    ;; as dedup_candidates.csv above: derived, at a fixed path in data/, never an
+    ;; EXPORT_DIR artifact. Found by --trace-reads; before this the gates and their
+    ;; producers communicated through a file the graph had never heard of.
+    [(eq? artifact 'lineage_unresolved.csv) (build-path DATA "lineage_unresolved.csv")]
+    [(eq? artifact 'inactive_unresolved.csv) (build-path DATA "inactive_unresolved.csv")]
     ;; 'code artifacts (st-whi): the shared Python helpers live in data/ at their
     ;; own basenames — fixed paths, so they read as ambient inputs everywhere
     ;; (never seeded, never EXPORT_DIR-relative).
@@ -638,6 +644,23 @@
    (make-artifact 'places.toml                'file #:provenance 'authoritative)
    (make-artifact 'occurrences.db               'file)
    (make-artifact 'dedup_candidates.csv         'file)
+   ;; st-b2m. Each gate's DECLARED input and the file it actually reads are
+   ;; COMPLEMENTS, not two views of one fact: canonical_to_taxon_id holds the names
+   ;; that RESOLVED, lineage_unresolved.csv the ones that FAILED (with reason);
+   ;; inactive_remaps holds the 1-successor cases auto-remapped, inactive_unresolved
+   ;; .csv the triage rows that could NOT be. A name absent from the bridge need not
+   ;; be in the unresolved list — it may never have been attempted — so the relation
+   ;; cannot answer the gate's question and reading it instead was never an option.
+   ;; That is also why this was a live hole rather than hygiene: a new name that
+   ;; fails to resolve leaves the bridge UNCHANGED (failures never touch it), so a
+   ;; gate keyed only on the bridge would cache-skip while the CSV holds a blocking
+   ;; bee name — the exact condition the gate exists to block. Same silent-gap class
+   ;; as st-7hw, one level down: resolve-taxon-ids' own inputs were fixed for it,
+   ;; the gate's were not.
+   ;; 'derived: rewritten wholesale every run, so safe to destroy and rebuild, and
+   ;; each has a producer as 'derived requires.
+   (make-artifact 'lineage_unresolved.csv       'file #:provenance 'derived)
+   (make-artifact 'inactive_unresolved.csv      'file #:provenance 'derived)
    ;; topology-postprocess reads each raw region mart @export copy and writes a
    ;; distinctly-named cleaned sibling (beeatlas-hyq made this non-in-place): the
    ;; raw <name>.geojson stays dbt-build's/place-marts' output, .clean.geojson is
@@ -852,16 +875,19 @@
    (make-task 'resolve-taxon-ids 'transform
               #:inputs '(inat_observations taxa.csv.gz
                          ecdysis_data checklist_raw inat_obs_data)
-              #:outputs '(canonical_to_taxon_id)
+              #:outputs '(canonical_to_taxon_id lineage_unresolved.csv)
               #:invoke (py "resolve_taxon_ids" "resolve_taxon_ids"))
    (make-task 'resolution-gate 'gate
-              #:inputs '(canonical_to_taxon_id) #:outputs '(resolution-verified)
+              #:inputs '(canonical_to_taxon_id lineage_unresolved.csv)
+              #:outputs '(resolution-verified)
               #:invoke (py "resolve_taxon_ids" "check_resolution_gate"))
    (make-task 'inactive-remap 'transform
-              #:inputs '(canonical_to_taxon_id) #:outputs '(inactive_remaps)
+              #:inputs '(canonical_to_taxon_id)
+              #:outputs '(inactive_remaps inactive_unresolved.csv)
               #:invoke (py "resolve_taxon_ids" "generate_inactive_remaps"))
    (make-task 'inactive-gate 'gate
-              #:inputs '(inactive_remaps) #:outputs '(inactive-verified)
+              #:inputs '(inactive_remaps inactive_unresolved.csv)
+              #:outputs '(inactive-verified)
               #:invoke (py "resolve_taxon_ids" "check_inactive_gate"))
    (make-task 'taxon-lineage-extended 'transform
               #:inputs '(taxa.csv.gz) #:outputs '(taxon_lineage_extended)
