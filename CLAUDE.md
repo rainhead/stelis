@@ -382,7 +382,10 @@ where the interesting-vs-foreign filter is DERIVED from the roots the graph
 already names rather than hand-kept, so a new producer widens it automatically
 (the dir-extent.rkt move). The two directions are NOT symmetric: an undeclared
 read is a strong signal, an unread declaration is weak (a data-dependent branch
-makes one run a lower bound), and the report keeps them apart. KNOWN BLIND SPOT,
+makes one run a lower bound), and the report keeps them apart. A WRITE is not a
+read: the probe records the open mode, and an undeclared write is reported in its
+own section and left OUT of the exit verdict — an undeclared output is
+`--verify-edges`' question (st-6w9), and calling it a dependency would be false. KNOWN BLIND SPOT,
 stated in every report rather than left to be discovered: a read inside a C
 extension is invisible — duckdb reading a parquet file emits nothing — so the
 relation-grain half needs its own instrument (st-25h step 1b). Tracing is

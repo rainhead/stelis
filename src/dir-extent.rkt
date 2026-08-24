@@ -40,7 +40,8 @@
 
 (provide dir-artifact-roots
          make-dir-exclusions
-         check-dir-extents)
+         check-dir-extents
+         strictly-inside?)
 
 ;; strictly-inside? : path path -> boolean
 ;; Is `p` a proper descendant of `root`? Equal paths are NOT inside — an artifact

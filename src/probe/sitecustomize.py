@@ -65,7 +65,13 @@ def _install(log_path):
             path = args[0]
             if not isinstance(path, (str, bytes, os.PathLike)):
                 return  # an already-open fd; nothing to name
-            path = os.path.abspath(os.fsdecode(path))
+            # realpath, not abspath: `roots` below is realpath'd, and comparing
+            # the two normalizations is not a comparison at all — a venv reached
+            # through a symlink would escape the prefix filter and leak every
+            # stdlib read into the report as a finding. Same class of bug as the
+            # one-hop symlink resolution fixed on the Racket side; fixing the
+            # instance there and not the class here is what left it standing.
+            path = os.path.realpath(os.fsdecode(path))
             if path in seen:
                 return
             seen.add(path)
@@ -83,7 +89,7 @@ def _install(log_path):
         except Exception:
             pass
 
-    me = os.path.abspath(__file__)
+    me = os.path.realpath(__file__)
 
     def sweep():
         # CODE dependence. Runs at normal interpreter exit only — a task killed
@@ -94,7 +100,7 @@ def _install(log_path):
                 f = getattr(mod, "__file__", None)
                 if not f:
                     continue  # builtin or frozen: no file to depend on
-                f = os.path.abspath(f)
+                f = os.path.realpath(f)
                 if f.startswith(roots) or f == me:
                     continue  # the probe is not a dependency of the task
                 emit("module", name, f)
@@ -121,7 +127,6 @@ def _chain_load(emit):
 
         ours = os.path.realpath(os.path.dirname(__file__))
         others = [p for p in sys.path if p and os.path.realpath(p) != ours]
-        spec = importlib.util.find_spec  # noqa: F841 - kept for readability below
         found = importlib.machinery.PathFinder.find_spec("sitecustomize", others)
         if found is None:
             return

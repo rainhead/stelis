@@ -715,59 +715,16 @@
   ;; would mean mutating real files. This asks the complementary question by
   ;; OBSERVATION: run the task normally and classify everything it opened.
   [(eq? (mode) 'trace-reads)
-   (define t (hash-ref (graph-tasks beeatlas-graph) name
-                       (lambda () (error 'stelis "no task named ~a" name))))
    (define out (scratch-out))
    ;; The log must NOT land in EXPORT_DIR: that directory's contents are
    ;; content-addressed, and a 'dir output's digest would move because we
    ;; observed it. Tracing has to be invisible to the thing it observes.
    (define log (build-path (make-temporary-directory) (format "~a.trace" name)))
 
-   ;; Resolve the DECLARED edge to real paths. A 'dir input is kept apart from a
-   ;; file one: a read of any file inside it satisfies the declaration, because
-   ;; the declaration is of the directory and no run reads every member.
-   (define (resolved-of names)
-     (for*/list ([a (in-list names)]
-                 [p (in-value (env-resolve benv a))]
-                 #:when p)
-       (cons a (full-resolve p))))
-   (define (dir? a)
-     (define art (hash-ref (graph-artifacts beeatlas-graph) a #f))
-     (and art (eq? 'dir (artifact-kind art))))
-   (define ins (resolved-of (task-inputs t)))
-   (define outs (resolved-of (task-outputs t)))
-   (define (paths-of pairs pred)
-     (for/list ([p (in-list pairs)] #:when (pred (car p))) (cdr p)))
-   (define declared-dirs (paths-of ins dir?))
-   (define output-dirs (paths-of outs dir?))
-   (define declared (list->set (paths-of ins (lambda (a) (not (dir? a))))))
-   (define outputs (list->set (paths-of outs (lambda (a) (not (dir? a))))))
-   ;; recipe `code' is NOT an artifact (the uv pin files ride every uv recipe),
-   ;; so it has to be collected from the invoke rather than from task-inputs.
-   (define code
-     (list->set
-      (for/list ([e (in-list (invoke-code (task-invoke t)))])
-        (full-resolve (code-entry-path e)))))
-
-   ;; The interesting/uninteresting filter, DERIVED from the graph rather than
-   ;; hand-kept: a directory the graph already names something in is this build's
-   ;; business, and everything else (the venv, the stdlib, a temp file) is not.
-   ;; A new producer widens it automatically — the dir-extent.rkt move, taken for
-   ;; the same reason: a hand-kept list's failure mode is silent.
-   (define roots
-     (remove-duplicates
-      (for*/list ([a (in-list (hash-keys (graph-artifacts beeatlas-graph)))]
-                  [p (in-value (env-resolve benv a))]
-                  #:when p
-                  [full (in-value (full-resolve p))])
-        (if (dir? a) full (or (path-only full) full)))))
-   (define code-roots
-     (remove-duplicates
-      (for*/list ([(tn tt) (in-hash (graph-tasks beeatlas-graph))]
-                  [e (in-list (invoke-code (task-invoke tt)))]
-                  [full (in-value (full-resolve (code-entry-path e)))])
-        (or (path-only full) full))))
-   (define all-roots (remove-duplicates (append roots code-roots)))
+   ;; The whole declared edge, resolved. Reading the graph is read-trace.rkt's
+   ;; job; this clause keeps only the IO — the resolver, the run, the report.
+   (define edge
+     (resolve-task-edge beeatlas-graph name (lambda (a) (env-resolve benv a))))
 
    (printf "Tracing ~a  (EXPORT_DIR=~a)\n\n" name out)
    (define exit-code
@@ -777,18 +734,19 @@
    (printf "\n~a ~a — exit ~a\n\n" (if (zero? exit-code) "✓" "✗") name exit-code)
 
    (define-values (reads remarks swept?) (parse-trace-log log))
-   (when (null? reads)
-     ;; No trace at all is not "no undeclared reads" — it is a probe that never
-     ;; installed. Saying so is the difference between an answer and a silence
-     ;; that looks like one.
-     (eprintf "! no reads observed. The probe did not install (is this a Python runtime?).\n")
-     (for ([r (in-list remarks)]) (eprintf "  probe: ~a\n" r))
+   ;; Two different silences, and conflating them misdiagnoses one of them. A
+   ;; probe that never installed leaves no remarks at all (wrong runtime, no
+   ;; sitecustomize on the path); an installed probe that observed nothing says
+   ;; so, and THAT is a real answer about the task. Only the first is an error.
+   (define installed? (or (not (null? remarks)) swept?))
+   (when (and (null? reads) (not installed?))
+     (eprintf "! no trace log was written — the probe did not install (is this a Python runtime?).\n")
      (exit 1))
-   (define rep
-     (build-trace-report name reads remarks swept?
-                         #:declared declared #:declared-dirs declared-dirs
-                         #:outputs outputs #:output-dirs output-dirs
-                         #:code code #:roots all-roots))
+   (when (null? reads)
+     (eprintf "! the probe installed but observed no reads at all. That is an answer, not a\n")
+     (eprintf "  failure: this task opened nothing outside the interpreter's own installation.\n")
+     (for ([r (in-list remarks)]) (eprintf "  probe: ~a\n" r)))
+   (define rep (build-trace-report name reads remarks swept? edge))
    (display (trace-report->string rep))
    ;; Exit non-zero on a finding, for the same reason --verify-edges does: a
    ;; check whose exit code is always 0 is a check nobody notices. A caller that

@@ -29,6 +29,8 @@
 
 (require racket/runtime-path
          racket/set
+         "model.rkt"
+         (only-in "dir-extent.rkt" strictly-inside?)
          racket/list
          racket/path
          racket/string
@@ -37,6 +39,10 @@
 (provide trace-probe-dir
          trace-env
          parse-trace-log
+         (struct-out task-edge)
+         resolve-task-edge
+         graph-known-roots
+         open-mode-write?
          (struct-out observed-read)
          (struct-out trace-report)
          full-resolve
@@ -49,16 +55,20 @@
 
 ;; ---------------------------------------------------------------- environment
 
-;; trace-env : path-string (listof (cons string string)) -> (listof (cons string string))
-;; The two variables that turn the probe on, prepended to a task's existing env.
-;; PYTHONPATH is PREPENDED rather than replaced: a recipe that already sets it
-;; still gets its own entries, and ours only has to win the `sitecustomize` name
-;; (the probe chain-loads any real one it shadows). A traced run and an untraced
-;; run therefore differ by exactly these two variables.
+;; trace-env : path-string (listof (cons string string))
+;;             -> (listof (cons string string))
+;; The two variables that turn the probe on, folded into a task's existing env.
+;; PYTHONPATH is PREPENDED to whatever `base' already carries, so a recipe that
+;; sets its own still gets its entries and ours only has to win the
+;; `sitecustomize' name (the probe chain-loads any real one it shadows). It reads
+;; `base' rather than (getenv "PYTHONPATH") deliberately: the subprocess's
+;; PYTHONPATH is the one being composed, and consulting Stelis's own environment
+;; instead would both miss a recipe's value and silently inherit whatever the
+;; operator's shell happened to export into the hermetic runtime.
 (define (trace-env log-path [base '()])
-  (define existing (getenv "PYTHONPATH"))
+  (define existing (cond [(assoc "PYTHONPATH" base) => cdr] [else #f]))
   (define ours (path->string (path->complete-path trace-probe-dir)))
-  (append base
+  (append (filter (lambda (kv) (not (string=? (car kv) "PYTHONPATH"))) base)
           (list (cons "STELIS_TRACE" (if (path? log-path)
                                          (path->string log-path)
                                          log-path))
@@ -159,100 +169,186 @@
        (if (equal? next current) current (hop next (sub1 fuel)))])))
 
 ;; path-under? : path path -> boolean
-;; Is `p' the root itself, or strictly inside it? Element-wise, so a sibling
-;; whose name merely shares a prefix (`/a/bc` under `/a/b`) is not a match.
+;; Is `p' the root itself, or inside it? The strict half is dir-extent.rkt's
+;; `strictly-inside?' — the module that owns this lesson (`/a/bc' is not inside
+;; `/a/b' even though one string prefixes the other, and `/a/b' vs `/a/b/' are not
+;; `equal?'). Reimplementing the element-wise walk here made a second place for
+;; that lesson to be re-learned or half-forgotten.
 (define (path-under? p root)
-  (define pe (explode-path p))
-  (define re (explode-path root))
-  (and (>= (length pe) (length re))
-       (for/and ([a (in-list (take pe (length re)))]
-                 [b (in-list re)])
-         (equal? a b))))
+  (or (equal? (explode-path p) (explode-path root))
+      (strictly-inside? p root)))
+
+;; ---------------------------------------------------------- what a task's edge is
+
+;; task-edge : one task's DECLARED edge, resolved to real paths — everything the
+;; classifier needs, as one value. These six travelled as six keyword arguments
+;; through classify-read, build-trace-report and the CLI call site, which is a type
+;; asking to be born; more to the point, three of them are only meaningful together
+;; (a file set and its companion dir list are one declaration, split by kind).
+;;   declared/outputs : sets of resolved paths, for the non-'dir artifacts
+;;   declared-dirs/output-dirs : lists of resolved 'dir roots, satisfied by a read
+;;     of ANY file inside them — the declaration is of the directory, and no run
+;;     reads every member
+;;   code : recipe code paths, already hashed into the task's input address
+;;   roots : the directories the GRAPH knows about; everything outside is foreign
+(struct task-edge (declared declared-dirs outputs output-dirs code roots) #:transparent)
+
+;; resolve-task-edge : graph symbol (symbol -> (or/c path-string #f)) -> task-edge
+;; Read the graph and hand back the resolved edge. This lives here rather than at
+;; the CLI because it is graph reasoning, not IO — the caller supplies `resolve'
+;; and keeps the only impure part, the delta-explain seam idiom. It was ~50 lines
+;; inside main.rkt's command clause, where it could not be tested.
+(define (resolve-task-edge g name resolve)
+  (define t (hash-ref (graph-tasks g) name
+                      (lambda () (error 'resolve-task-edge "no task named ~a" name))))
+  (define (dir? a)
+    (define art (hash-ref (graph-artifacts g) a #f))
+    (and art (eq? 'dir (artifact-kind art))))
+  (define (resolved-of names)
+    (for*/list ([a (in-list names)]
+                [p (in-value (resolve a))]
+                #:when p)
+      (cons a (full-resolve p))))
+  (define ins (resolved-of (task-inputs t)))
+  (define outs (resolved-of (task-outputs t)))
+  (define (paths-of pairs keep?)
+    (for/list ([pr (in-list pairs)] #:when (keep? (car pr))) (cdr pr)))
+  (task-edge
+   (list->set (paths-of ins (lambda (a) (not (dir? a)))))
+   (paths-of ins dir?)
+   (list->set (paths-of outs (lambda (a) (not (dir? a)))))
+   (paths-of outs dir?)
+   ;; recipe `code' is NOT an artifact (the uv pin files ride every uv recipe), so
+   ;; it comes off the invoke rather than off task-inputs.
+   (list->set (for/list ([e (in-list (invoke-code (task-invoke t)))])
+                (full-resolve (code-entry-path e))))
+   (graph-known-roots g resolve)))
+
+;; graph-known-roots : graph (symbol -> (or/c path-string #f)) -> (listof path)
+;; The interesting/uninteresting frontier, DERIVED from the graph rather than
+;; hand-kept: a directory the graph already names something in is this build's
+;; business, and everything else (the venv, the stdlib, a temp file) is not. A new
+;; producer widens it automatically — the dir-extent.rkt move, taken for the same
+;; reason: a hand-kept list's failure mode is silent.
+(define (graph-known-roots g resolve)
+  (remove-duplicates
+   (append
+    (for*/list ([a (in-list (hash-keys (graph-artifacts g)))]
+                [p (in-value (resolve a))]
+                #:when p
+                [full (in-value (full-resolve p))])
+      (define art (hash-ref (graph-artifacts g) a #f))
+      (if (and art (eq? 'dir (artifact-kind art))) full (or (path-only full) full)))
+    (for*/list ([(tn tt) (in-hash (graph-tasks g))]
+                [e (in-list (invoke-code (task-invoke tt)))]
+                [full (in-value (full-resolve (code-entry-path e)))])
+      (or (path-only full) full)))))
 
 ;; ------------------------------------------------------------- classification
 
-;; classify-read : path sets... -> symbol
-;; The PURE core, filesystem-free (its inputs are already-resolved paths), so it
-;; is the part unit-tested directly — as with edge-verify.rkt's classify-outputs.
+;; open-mode-write? : (or/c string #f) -> boolean
+;; Did this open ACQUIRE the file's contents, or replace them? The probe records
+;; the mode and nothing consulted it, so a mode-"w" open — a WRITE — was reported
+;; as an undeclared read, under the words "the task depends on these". That is a
+;; false claim about causation, and it collapses the very distinction st-6w9 was
+;; filed to keep: an undeclared INPUT is this tool's question, an undeclared
+;; OUTPUT is --verify-edges'. An unknown mode (os.open, which reports flags rather
+;; than a mode string) counts as a read, because a missed read is the silent
+;; failure and a mislabelled write is the loud one.
+(define (open-mode-write? mode)
+  (and (string? mode)
+       (for/or ([ch (in-string "wax+")]) (and (memv ch (string->list mode)) #t))))
+
+;; classify-read : path task-edge -> symbol
+;; The PURE core, filesystem-free (its input paths are already resolved), so it is
+;; the part unit-tested directly — as with edge-verify.rkt's classify-outputs.
 ;;
 ;;   'declared   — a declared input of this task (or a file inside a declared
 ;;                 'dir input)
-;;   'own-output — something this task declares it writes; reading it back is not
-;;                 an undeclared dependency
+;;   'own-output — something this task declares it writes; touching it is not a
+;;                 dependency on anyone else
 ;;   'code       — already hashed into the task's input address as recipe code
 ;;   'undeclared — under a root the GRAPH knows about, but declared by nobody:
 ;;                 THE FINDING
-;;   'foreign    — outside every root the graph knows. The venv, the stdlib, a
-;;                 temp file. Not this graph's business, and deliberately not
-;;                 reported: the filter is derived from the graph rather than
-;;                 hand-kept, so a new producer widens it automatically (the
-;;                 dir-extent.rkt move — a hand-kept list's failure mode is
-;;                 silent).
-(define (classify-read p #:declared declared #:declared-dirs declared-dirs
-                       #:outputs outputs #:output-dirs output-dirs
-                       #:code code #:roots roots)
+;;   'foreign    — outside every root the graph knows. Not this graph's business,
+;;                 and deliberately not reported.
+(define (classify-read p edge)
   (cond
-    [(set-member? declared p) 'declared]
-    [(for/or ([d (in-list declared-dirs)]) (path-under? p d)) 'declared]
-    [(set-member? outputs p) 'own-output]
-    [(for/or ([d (in-list output-dirs)]) (path-under? p d)) 'own-output]
-    [(set-member? code p) 'code]
-    [(for/or ([r (in-list roots)]) (path-under? p r)) 'undeclared]
+    [(set-member? (task-edge-declared edge) p) 'declared]
+    [(for/or ([d (in-list (task-edge-declared-dirs edge))]) (path-under? p d)) 'declared]
+    [(set-member? (task-edge-outputs edge) p) 'own-output]
+    [(for/or ([d (in-list (task-edge-output-dirs edge))]) (path-under? p d)) 'own-output]
+    [(set-member? (task-edge-code edge) p) 'code]
+    [(for/or ([r (in-list (task-edge-roots edge))]) (path-under? p r)) 'undeclared]
     [else 'foreign]))
 
 ;; trace-report : one task's verdict.
-;;   undeclared — reads nobody declared, each (cons path kind). THE finding.
+;;   undeclared — READS nobody declared, each (cons path kind). THE finding.
+;;   undeclared-writes — files the task WROTE that it declares no output for.
+;;     Reported separately and NOT part of the exit verdict: this command's name
+;;     is its contract, and an undeclared output is --verify-edges' question
+;;     (st-6w9). Surfacing it silently would be worse than either.
 ;;   unread     — declared inputs no read touched. WEAK (see the header note).
-;;   counts     — an alist of classification -> how many, for the "and the rest
-;;                looked fine" line, so a clean run still shows it observed
-;;                something rather than silently observing nothing.
+;;   counts     — classification -> how many, for the "and the rest looked fine"
+;;                line, so a clean run shows it observed something rather than
+;;                silently observing nothing.
 ;;   swept?     — did the module sweep complete? #f means the code half is partial.
 ;;   remarks    — the probe's own log lines (install, chain-load, failures).
-(struct trace-report (task undeclared unread counts swept? remarks) #:transparent)
+(struct trace-report (task undeclared undeclared-writes unread counts swept? remarks)
+  #:transparent)
 
-;; build-trace-report : symbol (listof observed-read) sets... -> trace-report
-(define (build-trace-report task reads remarks swept?
-                           #:declared declared #:declared-dirs declared-dirs
-                           #:outputs outputs #:output-dirs output-dirs
-                           #:code code #:roots roots)
-  (define-values (undeclared touched counts)
-    (for/fold ([undeclared '()] [touched (set)] [counts (hash)])
-              ([r (in-list reads)])
-      (define p (full-resolve (observed-read-path r)))
-      (define c (classify-read p
-                               #:declared declared #:declared-dirs declared-dirs
-                               #:outputs outputs #:output-dirs output-dirs
-                               #:code code #:roots roots))
-      (values (if (eq? c 'undeclared)
+;; build-trace-report : symbol (listof observed-read) (listof string) boolean task-edge
+;;                      -> trace-report
+(define (build-trace-report task reads remarks swept? edge)
+  ;; Resolve every observed path ONCE. The dir-touched pass below needs them too,
+  ;; and re-resolving there walked the filesystem a second time for every read.
+  (define resolved
+    (for/list ([r (in-list reads)])
+      (cons (full-resolve (observed-read-path r)) r)))
+  (define-values (undeclared undeclared-writes touched counts)
+    (for/fold ([undeclared '()] [writes '()] [touched (set)] [counts (hash)])
+              ([pr (in-list resolved)])
+      (define p (car pr))
+      (define r (cdr pr))
+      (define c (classify-read p edge))
+      (define write? (and (eq? (observed-read-kind r) 'open)
+                          (open-mode-write? (observed-read-detail r))))
+      (values (if (and (eq? c 'undeclared) (not write?))
                   (cons (cons p (observed-read-kind r)) undeclared)
                   undeclared)
+              (if (and (eq? c 'undeclared) write?) (cons p writes) writes)
               (if (eq? c 'declared) (set-add touched p) touched)
               (hash-update counts c add1 0))))
   ;; A declared 'dir input counts as touched when ANY file inside it was read —
   ;; the declaration is of the directory, and no run reads every member.
   (define dir-touched
-    (for/set ([d (in-list declared-dirs)]
-              #:when (for/or ([r (in-list reads)])
-                       (path-under? (full-resolve (observed-read-path r)) d)))
+    (for/set ([d (in-list (task-edge-declared-dirs edge))]
+              #:when (for/or ([pr (in-list resolved)]) (path-under? (car pr) d)))
       d))
+  (define (sorted-paths xs) (sort xs string<? #:key path->string))
   (trace-report task
                 (sort (remove-duplicates undeclared)
                       string<? #:key (lambda (x) (path->string (car x))))
-                (sort (for/list ([d (in-set (set-subtract
-                                             (set-union declared (list->set declared-dirs))
-                                             (set-union touched dir-touched)))])
-                        d)
-                      string<? #:key path->string)
+                (sorted-paths (remove-duplicates undeclared-writes))
+                (sorted-paths
+                 (set->list (set-subtract
+                             (set-union (task-edge-declared edge)
+                                        (list->set (task-edge-declared-dirs edge)))
+                             (set-union touched dir-touched))))
                 counts swept? remarks))
 
 ;; trace-report->string : trace-report -> string
 (define (trace-report->string rep)
   (define (n c) (hash-ref (trace-report-counts rep) c 0))
   (define out (open-output-string))
-  (fprintf out "~a — observed ~a reads (~a declared, ~a own output, ~a code, ~a foreign)\n"
+  ;; Every classification the total counts is also shown. The breakdown used to
+  ;; omit 'undeclared while the total included it, so the numbers stopped adding
+  ;; up exactly when there was a finding to report — the one moment the report
+  ;; most needs to be trusted.
+  (fprintf out "~a — observed ~a reads (~a declared, ~a own output, ~a code, ~a undeclared, ~a foreign)\n"
            (trace-report-task rep)
            (+ (n 'declared) (n 'own-output) (n 'code) (n 'undeclared) (n 'foreign))
-           (n 'declared) (n 'own-output) (n 'code) (n 'foreign))
+           (n 'declared) (n 'own-output) (n 'code) (n 'undeclared) (n 'foreign))
   (cond
     [(null? (trace-report-undeclared rep))
      (fprintf out "  ✓ no undeclared reads under any path the graph knows about\n")]
@@ -261,6 +357,11 @@
               (length (trace-report-undeclared rep)))
      (for ([u (in-list (trace-report-undeclared rep))])
        (fprintf out "      ~a  [~a]\n" (path->string (car u)) (cdr u)))])
+  (unless (null? (trace-report-undeclared-writes rep))
+    (fprintf out "  · ~a undeclared WRITE(s) — the task wrote these and declares no output for\n    them. Not counted in this command's verdict: an undeclared output is\n    --verify-edges' question (st-6w9), and calling it a dependency would be false.\n"
+             (length (trace-report-undeclared-writes rep)))
+    (for ([w (in-list (trace-report-undeclared-writes rep))])
+      (fprintf out "      ~a\n" (path->string w))))
   (unless (null? (trace-report-unread rep))
     (fprintf out "  · ~a declared input(s) went unread THIS run (weak signal — a data-dependent\n    branch makes one run a lower bound, not proof the declaration is spurious):\n"
              (length (trace-report-unread rep)))

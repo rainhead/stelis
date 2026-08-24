@@ -34,10 +34,7 @@
                   #:output-dirs [output-dirs '()]
                   #:code [code (set)]
                   #:roots [roots '()])
-  (classify-read path
-                 #:declared declared #:declared-dirs declared-dirs
-                 #:outputs outputs #:output-dirs output-dirs
-                 #:code code #:roots roots))
+  (classify-read path (task-edge declared declared-dirs outputs output-dirs code roots)))
 
 (check-equal? (classify (p "/w/in.parquet") #:declared (set (p "/w/in.parquet")))
               'declared
@@ -130,9 +127,8 @@
             (list (observed-read 'open (path->string (p "/repo/in.parquet")) "r")
                   (observed-read 'module (path->string (p "/repo/exporter.py")) "exporter"))
             '() #t
-            #:declared (set (p "/repo/in.parquet")) #:declared-dirs '()
-            #:outputs (set) #:output-dirs '()
-            #:code (set (p "/repo/exporter.py")) #:roots (list (p "/repo")))])
+            (task-edge (set (p "/repo/in.parquet")) '() (set) '()
+                       (set (p "/repo/exporter.py")) (list (p "/repo"))))])
   (check-equal? (trace-report-undeclared rep) '() "a correct edge reports no finding")
   (check-equal? (trace-report-unread rep) '() "and nothing declared went unread"))
 
@@ -144,9 +140,8 @@
             'gate
             (list (observed-read 'open (path->string (p "/repo/seeds/synonyms.csv")) "r"))
             '() #t
-            #:declared (set (p "/repo/declared-but-idle.parquet")) #:declared-dirs '()
-            #:outputs (set) #:output-dirs '()
-            #:code (set) #:roots (list (p "/repo")))])
+            (task-edge (set (p "/repo/declared-but-idle.parquet")) '() (set) '()
+                       (set) (list (p "/repo"))))])
   (check-equal? (map car (trace-report-undeclared rep))
                 (list (p "/repo/seeds/synonyms.csv"))
                 "the undeclared read is the finding")
@@ -199,3 +194,68 @@
             "a nonexistent path resolves to itself rather than failing")
 
 (delete-directory/files fr-root)
+
+
+;; --- a WRITE is not a read (review finding) ---------------------------------
+;;
+;; The probe records the open mode and nothing consulted it, so a mode-"w" open
+;; was reported as an undeclared READ, under the words "the task depends on
+;; these". That is a false claim about causation, and it collapses the
+;; distinction st-6w9 exists to keep: an undeclared INPUT is this tool's
+;; question, an undeclared OUTPUT is --verify-edges'.
+
+(check-true  (open-mode-write? "w"))
+(check-true  (open-mode-write? "wb"))
+(check-true  (open-mode-write? "a"))
+(check-true  (open-mode-write? "r+") "read-update still writes")
+(check-false (open-mode-write? "r"))
+(check-false (open-mode-write? "rb"))
+(check-false (open-mode-write? #f)
+             "an unknown mode (os.open reports flags, not a mode) counts as a READ — a missed read is the silent failure, a mislabelled write the loud one")
+
+(let ([rep (build-trace-report
+            'inactive-remap
+            (list (observed-read 'open (path->string (p "/repo/seeds/auto.csv")) "w")
+                  (observed-read 'open (path->string (p "/repo/seeds/in.csv")) "r"))
+            '() #t
+            (task-edge (set) '() (set) '() (set) (list (p "/repo"))))])
+  (check-equal? (map car (trace-report-undeclared rep))
+                (list (p "/repo/seeds/in.csv"))
+                "only the READ is a finding about a dependency")
+  (check-equal? (trace-report-undeclared-writes rep)
+                (list (p "/repo/seeds/auto.csv"))
+                "the WRITE is reported separately, as an output question")
+  ;; The verdict this command's exit code is built from must not include writes:
+  ;; its name is its contract.
+  (define text (trace-report->string rep))
+  (check-true (regexp-match? #rx"UNDECLARED read" text))
+  (check-true (regexp-match? #rx"undeclared WRITE" text)
+              "surfacing it silently would be worse than either"))
+
+;; --- the counts must add up, especially when there IS a finding -------------
+;;
+;; The total included 'undeclared while the breakdown omitted it, so the numbers
+;; stopped agreeing exactly when the report most needs to be trusted.
+(let* ([rep (build-trace-report
+             'gate
+             (list (observed-read 'open (path->string (p "/repo/a.csv")) "r")
+                   (observed-read 'open (path->string (p "/elsewhere/b.csv")) "r"))
+             '() #t
+             (task-edge (set) '() (set) '() (set) (list (p "/repo"))))]
+       [text (trace-report->string rep)]
+       [m (regexp-match #rx"observed ([0-9]+) reads \\(([0-9]+) declared, ([0-9]+) own output, ([0-9]+) code, ([0-9]+) undeclared, ([0-9]+) foreign\\)" text)])
+  (check-true (and m #t) "the breakdown names every classification the total counts")
+  (when m
+    (define ns (map string->number (cdr m)))
+    (check-equal? (car ns) (apply + (cdr ns))
+                  "total equals the sum of the parts it shows")))
+
+;; --- trace-env composes the TASK's env, not Stelis's ------------------------
+(let ([env (trace-env "/tmp/t.log" (list (cons "EXPORT_DIR" "/out")
+                                         (cons "PYTHONPATH" "/recipe/libs")))])
+  (check-equal? (cdr (assoc "EXPORT_DIR" env)) "/out" "existing entries survive")
+  (check-equal? (length (filter (lambda (kv) (string=? (car kv) "PYTHONPATH")) env)) 1
+                "exactly one PYTHONPATH — appending a second would leave two conflicting entries")
+  (check-true (regexp-match? #rx":/recipe/libs$" (cdr (assoc "PYTHONPATH" env)))
+              "a recipe's own PYTHONPATH is PREPENDED to, not discarded")
+  (check-equal? (cdr (assoc "STELIS_TRACE" env)) "/tmp/t.log"))
