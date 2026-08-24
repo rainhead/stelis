@@ -31,7 +31,7 @@ Feedback and pointers are very welcome all the same — please
 
 ## Prerequisites
 
-- **Racket v9.2 CS** on `PATH`, plus the Datalog package:
+- **Racket v9.3 CS** on `PATH`, plus the Datalog package:
   `raco pkg install datalog`. No build step — Racket compiles on demand.
 - A checkout of **[beeatlas](https://github.com/rainhead/beeatlas)** at
   `~/dev/beeatlas` (the graph shells into it).
