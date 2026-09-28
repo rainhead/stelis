@@ -14,7 +14,11 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 0 "nothing in slice 1 is off the path to days")
+(check-equal? (set-count pruned) 1 "only the manifest is off the path to days")
+
+(define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
+(check-equal? manifest-plan '(snapshot occurrence-days manifest)
+              "the manifest comes after the day files, so it never claims a build whose files aren't in place")
 
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'snapshot)) 'boundary
               "the snapshot asks Postgres every build — it cannot know otherwise")

@@ -10,7 +10,10 @@
 ;;
 ;;   snapshot ──▶ occurrences-snapshot ──▶ occurrence-days ──▶ days/
 ;;   (boundary)   (db-relation)            (transform)         (one file per
-;;                                                              Pacific day)
+;;       │                                                      Pacific day)
+;;       └──────▶ snapshot-meta ─────────────────▶ manifest ──▶ manifest.json
+;;                (when it was taken)      (after days/)       (what the build
+;;                                                              covered)
 ;;
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
@@ -89,19 +92,34 @@
    ;; What the snapshot read from Postgres. Derived: it is ours to rebuild from
    ;; the database at any time, and the build never writes back.
    (make-artifact 'occurrences-snapshot 'db-relation)
+   ;; When the snapshot was taken, read before anything else. A separate relation
+   ;; so that it moving on every build does not move the occurrences' digest:
+   ;; the day files still cut off when the data hasn't changed.
+   (make-artifact 'snapshot-meta 'db-relation)
    ;; One JSON array per Pacific day, newest first — what fetchOccurrences gets
    ;; for that day with no region selected.
-   (make-artifact 'days 'dir)))
+   (make-artifact 'days 'dir)
+   ;; What the last build covered (salish-t3g.4): the frontend reads a missing
+   ;; day file as empty only for a covered day, and watches it for new builds.
+   ;; It changes every build by design, since the snapshot time does.
+   (make-artifact 'manifest.json 'file)))
 
 (define tasks
   (list
    (make-task 'snapshot 'boundary
-              #:outputs '(occurrences-snapshot)
+              #:outputs '(occurrences-snapshot snapshot-meta)
               #:invoke (tsx "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(days)
-              #:invoke (tsx "scripts/read-path/occurrence-days.ts" SNAPSHOT-DB))))
+              #:invoke (tsx "scripts/read-path/occurrence-days.ts" SNAPSHOT-DB))
+   ;; Takes days as an input only for its ORDER: the manifest must never claim a
+   ;; build whose files are not yet in place, and a failed day export must leave
+   ;; the last manifest standing. It reads nothing from days/.
+   (make-task 'manifest 'transform
+              #:inputs '(snapshot-meta days)
+              #:outputs '(manifest.json)
+              #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
 (define salishsea-graph (build-graph tasks artifacts))
 
@@ -110,11 +128,13 @@
 (define (salishsea-path artifact export-dir)
   (case artifact
     [(days) (build-path export-dir "days")]
+    [(manifest.json) (build-path export-dir "manifest.json")]
     [else #f]))
 
 (define (relation-tables artifact)
   (case artifact
     [(occurrences-snapshot) '("snapshot.occurrences")]
+    [(snapshot-meta) '("snapshot.meta")]
     [else #f]))
 
 (define (resolve-relation artifact)
