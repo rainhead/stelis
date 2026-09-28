@@ -82,6 +82,11 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   reach the fixed-path inputs — the sandbox, the seeds, committed content —
   because withholding those would mean mutating real files; this asks by
   OBSERVATION, so nothing is withheld. Exits non-zero on an undeclared read).
+- **Projects:** every mode takes `--project <name>` (`beeatlas`, the default, or
+  `salishsea`), placed before the target. Each project has its own state dir, and
+  build records name their project: a state dir holding another project's builds
+  is refused rather than read across (st-z1c). salishsea's state defaults into its
+  own checkout; beeatlas's stays cwd-relative `.stelis` (st-7f4).
 - **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner
@@ -417,8 +422,22 @@ renders NOTHING (dev builds, pre-feature builds — silence over accusation);
 outcomes carry a STAGE so "site-root-absent, expected on a fresh host" never
 reads like "integration-gate", the alarm. One self-reported bit — the first
 deliberate step into st-s8i territory, no destination observation ·
+[`project.rkt`](src/project.rkt) a PROJECT as one value (st-ml9.1): a graph plus
+everything the CLI needs to build it — path resolver, runtimes, relation
+resolvers, build clock, checkout, default state dir. main.rkt is written against
+it, so a second graph is a second value, not a second CLI ·
+[`salishsea.rkt`](src/salishsea.rkt) the second project (st-ml9): salishsea.io's
+logged-out reads as static files. A boundary snapshots Supabase into a local
+DuckDB file (rows serialized by Postgres's `to_jsonb`, PostgREST's own
+serializer, so the files match what the frontend parses), and a transform writes
+one file per Pacific day. The snapshot reruns every build; an unchanged database
+digests the same, and early cutoff skips the rest. Scripts live in salishsea's
+`scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
+
+salishsea's tasks run at its `.nvmrc` node, in its checkout; the snapshot reads
+`SUPABASE_DB_URL` from the caller's environment and never prints it.
 
 Execution shells into `~/dev/beeatlas` via the runtimes declared in `beeatlas.rkt`:
 **uv** (Python 3.14, `data/`) for loaders/exporters and **uvx** (Python 3.13,

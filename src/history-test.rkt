@@ -234,3 +234,31 @@
               "garbage and other-version receipts are skipped, never errors")
 
 (delete-directory/files tmp)
+
+;; --- which project a history belongs to (st-z1c) -------------------------------
+;; A record names its project; a keyless record predates the field and is
+;; beeatlas's, because beeatlas was the only graph when it was written.
+(let ([dir (make-temporary-file "stelis-history-project-~a" 'directory)])
+  (check-equal? (history-foreign-projects dir 'salishsea) '()
+                "an empty dir belongs to nobody, so it refuses nobody")
+  ;; a legacy line, exactly as every pre-st-z1c build wrote it: no 'project
+  (with-output-to-file (build-path dir "history.rktd")
+    (lambda ()
+      (write (hash 'version 3 'target 'all 'graph-hash "g" 'epoch "1" 'records '()))
+      (newline)))
+  (check-equal? (history-foreign-projects dir 'beeatlas) '()
+                "a keyless record is beeatlas's")
+  (check-equal? (history-foreign-projects dir 'salishsea) '(beeatlas)
+                "...so salishsea sees it as foreign")
+  (history-append! dir 'mid g "2" build1 #:project 'salishsea)
+  (check-equal? (history-foreign-projects dir 'salishsea) '(beeatlas)
+                "a mixed dir still names the foreign project")
+  (check-equal? (history-foreign-projects dir 'beeatlas) '(salishsea)
+                "...from either side")
+  (check-equal? (length (history-load dir)) 2
+                "the key is additive: both lines still load as builds"))
+
+(let ([dir (make-temporary-file "stelis-history-project-~a" 'directory)])
+  (history-append! dir 'mid g "1" build1)
+  (check-equal? (history-foreign-projects dir 'beeatlas) '()
+                "history-append! without #:project writes a beeatlas record"))

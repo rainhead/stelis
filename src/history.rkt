@@ -42,6 +42,8 @@
          history-observations
          history-key-observations
          history-graph
+         history-foreign-projects
+         LEGACY-PROJECT
          publish-receipts-load
          publish-receipt-append!)
 
@@ -80,7 +82,42 @@
 
 (define (history-file state-dir) (build-path state-dir "history.rktd"))
 
-;; history-append! : path-string symbol graph string (listof trace-record) -> string
+;; --- Which project a history belongs to (st-z1c) ------------------------------
+;; A build record names its PROJECT, so a state dir can refuse builds that aren't
+;; its own. Before a second graph existed there was nothing to name, and a shared
+;; dir would have interleaved two timelines into one log with nothing to separate
+;; them — --history and --why would then read across both, confidently. Separate
+;; dirs per project are the convention, but convention fails silently on one
+;; misconfigured STELIS_STATE_DIR; a record that says whose it is fails loudly.
+;;
+;; The field is additive, not a HISTORY-VERSION bump: a bump would make every
+;; existing line read as a stale miss and throw away the whole timeline to add one
+;; symbol. A line WITHOUT the field was written before this existed, when beeatlas
+;; was the only graph — so keyless means beeatlas, as a fact about the past rather
+;; than a default about the future.
+(define LEGACY-PROJECT 'beeatlas)
+
+;; history-foreign-projects : path-string symbol -> (listof symbol)
+;; The projects OTHER than `project' that have builds recorded under `state-dir',
+;; sorted; '() when the dir is empty, missing, or wholly `project''s. Reads every
+;; line regardless of version — a stale-version line is still a record of SOME
+;; project's build, and a dir that holds one is still that project's dir.
+(define (history-foreign-projects state-dir project)
+  (define f (history-file state-dir))
+  (cond
+    [(not (file-exists? f)) '()]
+    [else
+     (define seen
+       (for*/list ([line (in-list (file->lines f))]
+                   [e (in-value (with-handlers ([exn:fail? (lambda (_) #f)])
+                                  (read (open-input-string line))))]
+                   #:when (hash? e))
+         (hash-ref e 'project LEGACY-PROJECT)))
+     (sort (remove-duplicates (remove* (list project) seen))
+           symbol<?)]))
+
+;; history-append! : path-string symbol graph string (listof trace-record)
+;;                   [#:project symbol] -> string
 ;; Append one build to the log (creating .stelis/ as needed), storing the topology
 ;; snapshot and each record's keyed maps as blocks. Returns the graph-hash it
 ;; recorded. Append-only: existing lines are never rewritten.
@@ -89,7 +126,8 @@
 ;; the payload — because the version is a field INSIDE the snapshot value
 ;; (model.rkt's GRAPH-SNAPSHOT-VERSION) and the hash is the filename, verifiable by
 ;; re-hashing the bytes rather than by trusting a field that sits next to them.
-(define (history-append! state-dir target g epoch records)
+(define (history-append! state-dir target g epoch records
+                         #:project [project LEGACY-PROJECT])
   (define h (block-put! state-dir (graph->drisl g)))
   (make-directory* state-dir)
   (call-with-output-file (history-file state-dir) #:exists 'append
@@ -98,6 +136,7 @@
       ;; symbol/string/list values, so line-oriented reading can skip a single
       ;; corrupt build without losing the rest.
       (write (hash 'version HISTORY-VERSION
+                   'project project
                    'target target
                    'graph-hash h
                    'epoch epoch

@@ -45,10 +45,12 @@
          "corrections-drift.rkt"  ; make-corrections-drift-check (st-t4t)
          "taxon-derive.rkt"  ; make-taxon-reasoning (st-ozp)
          "fan-out-key.rkt"
+         "project.rkt"
          "rkt-imports.rkt"  ; rkt-import-closure (st-egh)
          "py-imports.rkt") ; make-data-import-scan (st-6ga/st-whi)
 
-(provide beeatlas-graph
+(provide beeatlas-project
+         beeatlas-graph
          beeatlas-runtimes
          beeatlas-path
          beeatlas-db
@@ -1367,3 +1369,23 @@
 ;; (st-0kf: the leaf check used to be called here explicitly. build-graph runs it
 ;; now, so no graph can skip it by forgetting — which is the point, since a graph
 ;; that forgot would fail silently.)
+
+;; The whole of the above as one value the CLI selects (st-ml9.1). Every field is
+;; a name this module already exported; the struct only gathers them. The default
+;; state dir stays cwd-relative `.stelis' — beeatlas has a timeline there on every
+;; checkout that hasn't set STELIS_STATE_DIR, and moving the default would start a
+;; silent empty one (st-7f4).
+(define beeatlas-project
+  (make-project 'beeatlas
+                #:graph beeatlas-graph
+                #:runtimes beeatlas-runtimes
+                #:path beeatlas-path
+                #:resolve-relation beeatlas-resolve-relation
+                #:resolve-relation-columns beeatlas-resolve-relation-columns
+                #:resolve-store-keys beeatlas-resolve-store-keys
+                #:partial-tasks beeatlas-partial-tasks
+                #:edge-verify-tasks beeatlas-edge-verify-tasks
+                #:source-date-epoch beeatlas-source-date-epoch
+                #:checkout (string->path BEEATLAS)
+                #:checkout-env "BEEATLAS_DIR"
+                #:default-state-dir (build-path ".stelis")))

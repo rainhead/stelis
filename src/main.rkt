@@ -28,7 +28,9 @@
          racket/runtime-path
          racket/string
          "model.rkt"
-         "beeatlas.rkt"
+         "project.rkt"
+         (only-in "beeatlas.rkt" beeatlas-project)
+         (only-in "salishsea.rkt" salishsea-project)
          "cache.rkt"
          "exec.rkt"
          "explain.rkt"
@@ -53,6 +55,7 @@
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
 (define all? (make-parameter #f))           ; --all: build the whole graph (replaces run.py)
 (define mark-publish-args (make-parameter #f)) ; --mark-publish: (build epoch outcome stage path)
+(define project-arg (make-parameter 'beeatlas)) ; --project: which graph (st-ml9.1)
 
 (define name
   (command-line
@@ -92,6 +95,8 @@
                        (mode 'mark-publish)
                        (mark-publish-args (list build epoch outcome stage path))]
    #:once-each
+   [("--project") proj "build PROJ's graph (beeatlas | salishsea; default beeatlas). Its build state is its own: a state dir holding another project's builds is refused"
+                  (project-arg (string->symbol proj))]
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
    [("--last") "with --explain: report what the last real --build decided and did"
@@ -113,6 +118,23 @@
             (eq? (mode) 'verify-edges) (eq? (mode) 'render-log)
             (eq? (mode) 'last-build) (eq? (mode) 'mark-publish))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
+
+;; --- the project (st-ml9.1) ------------------------------------------------------
+;; Everything below is written against P rather than against beeatlas by name. The
+;; registry is the one place that knows which projects exist.
+(define projects (hash 'beeatlas beeatlas-project
+                      'salishsea salishsea-project))
+(define P
+  (hash-ref projects (project-arg)
+            (lambda ()
+              (error 'stelis "--project ~a: no such project (known: ~a)"
+                     (project-arg)
+                     (string-join (sort (map symbol->string (hash-keys projects)) string<?)
+                                  ", ")))))
+(define G (project-graph P))
+(define RT (project-runtimes P))
+(define (artifact-path a dir) ((project-path P) a dir))
+(define (source-date-epoch) ((project-source-date-epoch P)))
 
 ;; block->datum : any -> any
 ;; A decoded block, rendered for reading: maps become alists SORTED by key (a hash
@@ -166,7 +188,7 @@
   (let ([env (getenv "STELIS_STATE_DIR")])
     (and env (not (string=? env "")) env)))
 (define stelis-state
-  (if stelis-state-env (string->path stelis-state-env) (build-path ".stelis")))
+  (if stelis-state-env (string->path stelis-state-env) (project-default-state-dir P)))
 (define stelis-cache (build-path stelis-state "cache"))
 
 ;; An empty state dir is INDISTINGUISHABLE from a never-built one — history.rkt
@@ -181,9 +203,33 @@
   (if stelis-state-env
       (format "  (STELIS_STATE_DIR=~a)\n" stelis-state-env)
       (string-append
-       "  STELIS_STATE_DIR is unset, so this path is relative to the current\n"
-       "  directory. If the history was relocated, point at it:\n"
-       "    STELIS_STATE_DIR=<dir> racket src/main.rkt --history\n")))
+       (format "  STELIS_STATE_DIR is unset, so this is ~a's default state dir~a.\n"
+               (project-name P) (default-state-dir-qualifier))
+       "  If the history was relocated, point at it:\n"
+       (format "    STELIS_STATE_DIR=<dir> racket src/main.rkt --project ~a --history\n"
+               (project-name P)))))
+
+;; beeatlas's default is cwd-relative (st-7f4); a newer project's lives in its own
+;; checkout. Only the first can silently change meaning with the shell's cwd, so
+;; only it says so.
+(define (default-state-dir-qualifier)
+  (if (relative-path? (project-default-state-dir P))
+      (format ", relative to the current directory (~a)" (current-directory))
+      ""))
+
+;; --- one state dir, one project (st-z1c) -----------------------------------------
+;; Refuse, before anything reads or appends, a state dir whose history records
+;; another project's builds. Reading across two timelines answers --history and
+;; --why confidently and wrongly; appending interleaves them for good. Separate dirs
+;; are the convention and this is what makes breaking it loud.
+(let ([foreign (history-foreign-projects stelis-state (project-name P))])
+  (unless (null? foreign)
+    (eprintf "~a holds builds of ~a, not ~a — refusing to read or extend another project's history.\n"
+             (path->string stelis-state)
+             (string-join (map symbol->string foreign) ", ")
+             (project-name P))
+    (eprintf "  Each project needs its own state dir.\n~a" (state-dir-note))
+    (exit 1)))
 
 ;; --- Where the prospective answer comes from (st-5rl) --------------------------
 ;;
@@ -213,19 +259,21 @@
          (string->symbol (path->string (path-replace-extension p #"")))))
      (values (length names)
              (for/sum ([n (in-list names)]
-                       #:when (hash-ref (graph-tasks beeatlas-graph) n #f))
+                       #:when (hash-ref (graph-tasks G) n #f))
                1))]))
 
 ;; Printed at the top of --why and --explain. Two facts, because two env vars can
 ;; independently send this off the rails and neither failure is visible in the
 ;; output otherwise.
 (define (print-context-banner!)
-  ;; BEEATLAS defaults to the author's laptop path, so on any other host an unset
-  ;; BEEATLAS_DIR makes every code file "missing" and every task unaddressable —
-  ;; naming /Users/... paths that obviously aren't there, but only if you look.
-  (unless (directory-exists? BEEATLAS)
-    (printf "WARNING: no beeatlas checkout at ~a — every task will report its code\n\
-         as missing. Set BEEATLAS_DIR.\n\n" BEEATLAS))
+  ;; A checkout defaults to the author's laptop path, so on any other host an unset
+  ;; BEEATLAS_DIR (or the project's equivalent) makes every code file "missing" and
+  ;; every task unaddressable — naming /Users/... paths that obviously aren't there,
+  ;; but only if you look.
+  (unless (directory-exists? (project-checkout P))
+    (printf "WARNING: no ~a checkout at ~a — every task will report its code\n\
+         as missing. Set ~a.\n\n"
+            (project-name P) (project-checkout P) (project-checkout-env P)))
   (define-values (total mine) (cache-entry-counts))
   (cond
     [(zero? mine)
@@ -238,9 +286,11 @@
      (printf "  content-addressable. That is a fact about this dir, not about the\n")
      (printf "  engine.\n")
      (unless stelis-state-env
-       (printf "  STELIS_STATE_DIR is unset, so that path is relative to the current\n")
-       (printf "  directory (~a). If the build state lives elsewhere:\n" (current-directory))
-       (printf "    STELIS_STATE_DIR=<dir> racket src/main.rkt ...\n"))
+       (printf "  STELIS_STATE_DIR is unset, so that is ~a's default state dir~a.\n"
+               (project-name P) (default-state-dir-qualifier))
+       (printf "  If the build state lives elsewhere:\n")
+       (printf "    STELIS_STATE_DIR=<dir> racket src/main.rkt --project ~a ...\n"
+               (project-name P)))
      (newline)]
     [else
      (printf "Reading build state: ~a (~a task entr~a)\n"
@@ -265,39 +315,38 @@
 ;; the one build environment every cache-aware mode shares. resolve-relation
 ;; content-addresses db-relation inputs via DuckDB (st-d5d), so early cutoff
 ;; reaches the pre-dbt graph and not only the file edges around dbt-build.
-(define (beeatlas-env export-dir cache-dir)
-  (make-build-env beeatlas-path export-dir cache-dir
-                  #:resolve-relation beeatlas-resolve-relation
-                  #:resolve-relation-columns beeatlas-resolve-relation-columns
-                  #:resolve-store-keys beeatlas-resolve-store-keys
+(define (project-env export-dir cache-dir)
+  (make-build-env (project-path P) export-dir cache-dir
+                  #:resolve-relation (project-resolve-relation P)
+                  #:resolve-relation-columns (project-resolve-relation-columns P)
+                  #:resolve-store-keys (project-resolve-store-keys P)
                   ;; st-top: recipe hashes cover the resolved argv +
                   ;; named code files, so script/pin edits invalidate
-                  #:runtimes beeatlas-runtimes
+                  #:runtimes RT
                   ;; st-hdm: a 'dir artifact holding ANOTHER artifact's output
                   ;; counts only its own files. Derived from the graph, so a new
                   ;; producer carves itself out and cannot be forgotten — the
                   ;; alternative, a declared exclusion list, is a hand-kept mirror
                   ;; of other producers' extents whose failure mode is silent.
                   #:resolve-dir-exclusions
-                  (make-dir-exclusions beeatlas-graph
-                                       (lambda (a) (beeatlas-path a export-dir)))
+                  (make-dir-exclusions G (lambda (a) (artifact-path a export-dir)))
                   ;; st-jkl: the RESOLVED interpreter behind a runtime that
                   ;; declares an identity probe (node), observed through its own
                   ;; launch prefix and memoized once per env. Lazy — pure modes
                   ;; that never snapshot a node task never launch it.
                   #:resolve-runtime-identity
-                  (make-runtime-identity-resolver beeatlas-runtimes)))
+                  (make-runtime-identity-resolver RT)))
 
-(define benv (beeatlas-env (scratch-out-path) stelis-cache))
+(define benv (project-env (scratch-out-path) stelis-cache))
 
 ;; ADR 0004 (st-3mi): the deterministic build clock injected into every executed
 ;; task's hermetic env, so outputs that stamp a build time stay byte-stable.
 ;; Computed per exec (not at top level) so pure planning modes never shell git.
 (define (task-env out)
   (list (cons "EXPORT_DIR" (path->string out))
-        (cons "SOURCE_DATE_EPOCH" (beeatlas-source-date-epoch))))
+        (cons "SOURCE_DATE_EPOCH" (source-date-epoch))))
 
-;; beeatlas-rebuild-keys-of : symbol
+;; rebuild-keys-of : symbol
 ;;   -> (or/c (cons (listof string) (listof string)) #f)
 ;; The run-plan #:rebuild-keys-of hook (st-pd1): the (rebuild-keys . removed-relpaths)
 ;; that makes a partial-capable task a TARGETED rebuild, or #f for a full one. For a
@@ -311,14 +360,14 @@
 ;; prune = removed + ".json" — which is right for notes-harvest and wrong for any
 ;; task whose output is not keyed by the input it read. This function now decides
 ;; only WHETHER to go partial; the policy module decides what partial means.
-(define (beeatlas-rebuild-keys-of name)
-  (and (memq name beeatlas-partial-tasks)
-       (let-values ([(dec _snap) (decision+snapshot beeatlas-graph name benv)])
+(define (rebuild-keys-of name)
+  (and (memq name (project-partial-tasks P))
+       (let-values ([(dec _snap) (decision+snapshot G name benv)])
          (and (eq? 'run (decision-verdict dec))
               (eq? 'input-changed (decision-reason dec))
-              (let ([deltas (input-key-deltas beeatlas-graph dec benv stelis-state)])
+              (let ([deltas (input-key-deltas G dec benv stelis-state)])
                 (and (pair? deltas)
-                     (deltas->rebuild+prune beeatlas-graph name deltas)))))))
+                     (deltas->rebuild+prune G name deltas)))))))
 
 ;; verify-seeds (st-dtq): the (src . basename) files to copy into a --verify
 ;; suffix's fresh build dir. The suffix's EXTERNAL input artifacts — those not
@@ -340,7 +389,7 @@
                  #:unless (set-member? produced i))
        i)))
   (for*/list ([a (in-list externals)]
-              [p (in-value (beeatlas-path a ref-dir))]
+              [p (in-value (artifact-path a ref-dir))]
               #:when (and (path? p) (file-exists? p)
                           ;; only EXPORT_DIR-relative inputs need seeding
                           (equal? (path-only p) (path->directory-path ref-dir))))
@@ -351,10 +400,10 @@
 ;; run.py replacement. Otherwise the target's minimal-upstream plan.
 (define (plan-for)
   (if (all?)
-      (values (topo-sort beeatlas-graph
-                         (list->set (hash-keys (graph-tasks beeatlas-graph))))
+      (values (topo-sort G
+                         (list->set (hash-keys (graph-tasks G))))
               (set))
-      (plan beeatlas-graph name)))
+      (plan G name)))
 
 ;; Restrict a plan to the suffix beginning at --from, when given. Used by both
 ;; --build (what runs) and --commands (what the dry run previews), so the preview
@@ -378,7 +427,7 @@
 (define-runtime-path engine-src-dir ".")
 (define (build-log-rewrites)
   (define (dir-prefix p) (regexp-replace #rx"/*$" (~a p) "/"))
-  (list (cons (dir-prefix BEEATLAS) "beeatlas/")
+  (list (cons (dir-prefix (project-checkout P)) (format "~a/" (project-name P)))
         (cons (dir-prefix (simplify-path engine-src-dir)) "stelis/src/")
         (cons (dir-prefix (find-system-path 'home-dir)) "~/")))
 (define (write-build-log!)
@@ -538,7 +587,7 @@
         (define key (caddr m))
         ;; A name that isn't in the graph is a typo, and must not reach the walk —
         ;; there it is indistinguishable from a real artifact never built.
-        (unless (hash-ref (graph-artifacts beeatlas-graph) art #f)
+        (unless (hash-ref (graph-artifacts G) art #f)
           (eprintf "~a — no artifact by that name in the graph.\n" art)
           (exit 1))
         (when (null? (history-load stelis-state))
@@ -601,7 +650,7 @@
         ;; a fan-out 'dir OR a db-relation: refine each ± into WHICH parts moved —
         ;; keys (paths) for a dir (st-6dv), columns for a relation (st-7vz)
         [(pair? kobs)
-         (define kind (let ([a (hash-ref (graph-artifacts beeatlas-graph) name #f)])
+         (define kind (let ([a (hash-ref (graph-artifacts G) name #f)])
                         (and a (artifact-kind a))))
          (define noun (if (eq? kind 'db-relation) "column" "key"))
          (define source (case kind
@@ -674,7 +723,7 @@
    ;; A name that isn't in the graph is a typo, and must never reach the delta —
    ;; there it would be indistinguishable from a real artifact with no timeline.
    ;; Both refuse, but only here can we say WHICH mistake it was.
-   (unless (hash-ref (graph-artifacts beeatlas-graph) name #f)
+   (unless (hash-ref (graph-artifacts G) name #f)
      (eprintf "~a — no artifact by that name in the graph.\n" name)
      (exit 1))
    (define kobs (history-key-observations stelis-state name))
@@ -700,7 +749,7 @@
   [(eq? (mode) 'run)
    (define out (scratch-out))
    (printf "Running ~a  (EXPORT_DIR=~a)\n" name out)
-   (define code (run-task beeatlas-graph name beeatlas-runtimes
+   (define code (run-task G name RT
                           #:env (task-env out)))
    (printf "\n~a ~a — exit ~a\n" (if (zero? code) "✓" "✗") name code)
    (define db (build-path out "occurrences.db"))
@@ -724,11 +773,11 @@
    ;; The whole declared edge, resolved. Reading the graph is read-trace.rkt's
    ;; job; this clause keeps only the IO — the resolver, the run, the report.
    (define edge
-     (resolve-task-edge beeatlas-graph name (lambda (a) (env-resolve benv a))))
+     (resolve-task-edge G name (lambda (a) (env-resolve benv a))))
 
    (printf "Tracing ~a  (EXPORT_DIR=~a)\n\n" name out)
    (define exit-code
-     (run-task beeatlas-graph name beeatlas-runtimes
+     (run-task G name RT
                #:env (trace-env log (task-env out))
                #:label name))
    (printf "\n~a ~a — exit ~a\n\n" (if (zero? exit-code) "✓" "✗") name exit-code)
@@ -758,34 +807,35 @@
    (define-values (ordered pruned) (plan-for))
    (define to-run (plan-suffix ordered))
    ;; st-6qc: refuse to build a plan whose file/dir outputs can't be verified.
-   (check-output-paths-resolvable beeatlas-graph to-run benv)
+   (check-output-paths-resolvable G to-run benv)
    ;; st-qxq: and refuse if a partial-capable task has a shape whose REMOVALS have
    ;; no safe answer. Checked here, over the whole declared set rather than the
    ;; plan, because it is a property of how the graph is AUTHORED — it should fail
    ;; while someone is editing it, not on the rare later build where a key finally
    ;; disappears and the wrong thing silently happens.
-   (check-partial-tasks beeatlas-graph beeatlas-partial-tasks)
+   (check-partial-tasks G (project-partial-tasks P))
    ;; st-hdm: and refuse if two 'dir artifacts claim the same root. Nesting is how
    ;; a carve-out is expressed; an exact collision means neither carves out the
    ;; other, so both would content-address the same bytes while both claimed to
    ;; produce them.
-   (check-dir-extents beeatlas-graph (lambda (a) (beeatlas-path a (scratch-out-path))))
+   (check-dir-extents G (lambda (a) (artifact-path a (scratch-out-path))))
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            (or name "the whole graph") (length to-run)
            (if (from-task) (format ", from ~a" (from-task)) "")
            out)
    (define-values (status records)
-     (run-plan beeatlas-graph to-run beeatlas-runtimes
+     (run-plan G to-run RT
                #:env (task-env out)
                #:context benv
                #:state-dir stelis-state
-               #:rebuild-keys-of beeatlas-rebuild-keys-of))
+               #:rebuild-keys-of rebuild-keys-of))
    ;; st-sds: append this build to the history (retiring last-build.rktd). The
    ;; source-epoch is sequence metadata for browsing only — freshness never reads
    ;; it. The graph snapshot is written once per distinct topology.
-   (history-append! stelis-state (or name 'all) beeatlas-graph
-                    (beeatlas-source-date-epoch) records)
+   (history-append! stelis-state (or name 'all) G
+                    (source-date-epoch) records
+                    #:project (project-name P))
    ;; st-9rf: refresh the operator build log AFTER the append, so the page
    ;; describes the build that just finished — records and all, failures
    ;; included (partial success is exactly what an operator page is for).
@@ -801,13 +851,13 @@
   [(eq? (mode) 'verify)
    ;; st-6qc: same guard as --build — the plan verify will run must have
    ;; verifiable file/dir outputs.
-   (define-values (ordered _pruned) (plan beeatlas-graph name))
+   (define-values (ordered _pruned) (plan G name))
    (define to-run (plan-suffix ordered))
-   (check-output-paths-resolvable beeatlas-graph to-run benv)
+   (check-output-paths-resolvable G to-run benv)
    ;; st-dtq (1): compare the TARGET's on-disk file/dir, not a hardcoded
    ;; occurrences.db. The basename is stable across export-dirs, so any resolvable
    ;; target (a file, or a 'dir tree — st-cly) gives it.
-   (define target-path (beeatlas-path name (scratch-out-path)))
+   (define target-path (artifact-path name (scratch-out-path)))
    (unless (path? target-path)
      (error 'stelis "--verify ~a: target has no resolvable path to compare" name))
    ;; A target that does NOT live under the export dir (the app bundle, st-hdm:
@@ -828,19 +878,19 @@
    ;; EXTERNAL inputs (produced outside the suffix), taken from the populated
    ;; scratch dir a prior --build/--run left behind — holding upstream fixed so we
    ;; measure the suffix's own determinism. (Full-plan --verify needs no seeding.)
-   (define seed (verify-seeds beeatlas-graph to-run (scratch-out-path)))
+   (define seed (verify-seeds G to-run (scratch-out-path)))
    ;; each build gets its own env, with its cache INSIDE that build's throwaway
    ;; dir — an in-process node needs an env to resolve paths at all (st-ozp), and
    ;; a shared cache would let build 2 skip and make the comparison vacuous.
-   (exit (if (verify-determinism beeatlas-graph name beeatlas-runtimes
+   (exit (if (verify-determinism G name RT
                                  #:from (from-task)
                                  #:seed seed
                                  #:out-file out-file
                                  #:make-context
-                                 (lambda (dir) (beeatlas-env dir (build-path dir ".cache")))
+                                 (lambda (dir) (project-env dir (build-path dir ".cache")))
                                  #:extra-env
                                  (list (cons "SOURCE_DATE_EPOCH"
-                                             (beeatlas-source-date-epoch))))
+                                             (source-date-epoch))))
              0 1))]
 
   ;; --- do the declared edges match what the tasks actually do? -------------
@@ -869,23 +919,25 @@
             reference))
    ;; Name what is NOT covered, in the same breath as the result. A harness over a
    ;; curated subset reads as coverage it does not have unless it says otherwise
-   ;; (the cap is beeatlas-edge-verify-tasks; see its comment for why it is narrow).
-   (define covered (list->seteq beeatlas-edge-verify-tasks))
+   ;; (the cap is the project's edge-verify-tasks — for beeatlas, see
+   ;; beeatlas-edge-verify-tasks's comment for why it is narrow).
+   (define covered (list->seteq (project-edge-verify-tasks P)))
    (define candidates
-     (sort (for/list ([(tn t) (in-hash (graph-tasks beeatlas-graph))]
+     (sort (for/list ([(tn t) (in-hash (graph-tasks G))]
                       #:when (recipe? (task-invoke t))
                       #:when (for/or ([o (in-list (task-outputs t))])
                                (export-dir-artifact?
-                                (lambda (a dir) (beeatlas-path a dir)) o))
+                                artifact-path o))
                       #:unless (set-member? covered tn))
        tn)
            symbol<?))
-   (define clean? (verify-edges beeatlas-graph beeatlas-edge-verify-tasks
-                                beeatlas-runtimes beeatlas-path reference))
+   (define clean? (verify-edges G (project-edge-verify-tasks P)
+                                RT artifact-path reference))
    (unless (null? candidates)
      (printf "\nNOT COVERED — ~a task(s) this harness could verify but does not:\n  ~a\n"
              (length candidates) (string-join (map symbol->string candidates) " "))
-     (printf "  Widen beeatlas-edge-verify-tasks by verifying one, not by adding a name.\n"))
+     (printf "  Widen ~a's edge-verify-tasks by verifying one, not by adding a name.\n"
+             (project-name P)))
    (exit (if clean? 0 1))]
 
   ;; --- why is NAME stale? (a task or an artifact) -------------------------
@@ -896,14 +948,14 @@
   [(eq? (mode) 'why)
    (define-values (subject-task targets)
      (cond
-       [(hash-ref (graph-tasks beeatlas-graph) name #f)
+       [(hash-ref (graph-tasks G) name #f)
         => (lambda (t)
              (when (null? (task-outputs t))
                (error 'stelis "--why ~a: task has no outputs to scope a plan by" name))
              (values name (task-outputs t)))]
-       [(producer-of beeatlas-graph name)
+       [(producer-of G name)
         => (lambda (p) (values p (list name)))]
-       [(hash-ref (graph-artifacts beeatlas-graph) name #f)
+       [(hash-ref (graph-artifacts G) name #f)
         (error 'stelis "--why ~a: an external input — no producing task, nothing to rebuild"
                name)]
        ;; a colon says they meant the per-key question, which lives on --history:
@@ -918,13 +970,13 @@
         (error 'stelis "--why ~a: no task or artifact by that name in the graph" name)]))
    (define required
      (for/fold ([s (set)]) ([a (in-list targets)])
-       (set-union s (required-tasks beeatlas-graph a))))
-   (define to-run (plan-suffix (topo-sort beeatlas-graph required)))
+       (set-union s (required-tasks G a))))
+   (define to-run (plan-suffix (topo-sort G required)))
    (unless (memq subject-task to-run)
      (error 'stelis "--why ~a: task ~a is not in the --from ~a suffix"
             name subject-task (from-task)))
-   (define exps (plan-explanations beeatlas-graph to-run benv))
-   (define thy (explanations->theory beeatlas-graph exps))
+   (define exps (plan-explanations G to-run benv))
+   (define thy (explanations->theory G exps))
    (define dec-of (for/hash ([e (in-list exps)])
                     (values (explanation-task e) (explanation-decision e))))
    (print-context-banner!)
@@ -932,7 +984,7 @@
      (printf "~a is produced by ~a — asking about that task.\n\n" name subject-task))
    (if (datalog-stale? thy subject-task)
        (print-why-tree thy subject-task (lambda (t) (hash-ref dec-of t))
-                       (make-reason->string beeatlas-graph benv stelis-state))
+                       (make-reason->string G benv stelis-state))
        (printf "~a is NOT stale — ~a\n"
                subject-task (decision->string (hash-ref dec-of subject-task))))]
 
@@ -947,17 +999,17 @@
       (printf "Explain — ~a task(s)~a, in build order:\n"
               (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
       (printf "  ≡ skips · ≈ conditional (upstream reruns) · ▶ runs\n\n")
-      (print-explanations (plan-explanations beeatlas-graph to-run benv)
-                          (make-reason->string beeatlas-graph benv stelis-state))]
+      (print-explanations (plan-explanations G to-run benv)
+                          (make-reason->string G benv stelis-state))]
      [(eq? (mode) 'commands)
       (define to-run (plan-suffix ordered))
       (printf "Dry run — ~a command(s)~a, in build order (nothing executed):\n"
               (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
       (printf "  ≡ cached · ≈ conditional (upstream reruns) · ▶ would run\n\n")
-      (print-plan-commands beeatlas-graph to-run beeatlas-runtimes #:context benv)]
+      (print-plan-commands G to-run RT #:context benv)]
      [else
       (printf "Minimal upstream — ~a task(s), in build order:\n" (length ordered))
       (for ([t (in-list ordered)] [i (in-naturals 1)])
-        (printf "  ~a. ~a  [~a]\n" i t (task-kind (hash-ref (graph-tasks beeatlas-graph) t))))])
+        (printf "  ~a. ~a  [~a]\n" i t (task-kind (hash-ref (graph-tasks G) t))))])
    (printf "\nPruned — ~a task(s) not upstream of ~a:\n  ~a\n"
            (set-count pruned) (or name "the target") (sort (set->list pruned) symbol<?))])

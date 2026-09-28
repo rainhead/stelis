@@ -96,7 +96,11 @@ entries are unchanged; what changed is that they need a pull to start.
   is the test that it landed.
 - **Streaming / CRUD ingestion** — `salishsea`'s model: small frequent
   content-addressed snapshots at the ingestion boundary; near-real-time
-  incorporation of API data into artifacts.
+  incorporation of API data into artifacts. **Pulled 2026-09-27** by salishsea
+  becoming the second graph (st-ml9): its logged-out reads built as static files
+  from an hourly Supabase snapshot, the step before salishsea leaves Supabase.
+  The first slice runs at hourly cadence; what 5-minute builds cost is measured
+  there before anyone promises that freshness.
 - **Delta-based propagation** (Z-sets / DBSP-shaped) where coarse over-rebuilding
   hurts; retraction-clean incremental maintenance. The H1 observation history
   (content + basis per output, plus per-key/per-column granularity) is the
