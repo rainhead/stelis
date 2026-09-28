@@ -39,11 +39,15 @@
 (define SALISHSEA (or (getenv "SALISHSEA_DIR") "/Users/rainhead/dev/salishsea-io"))
 (define (in-checkout . parts) (apply build-path SALISHSEA parts))
 
-;; The snapshot database. Relative in the recipes (the node runtime runs in the
-;; checkout) and absolute here, where the engine reads it to content-address it.
-;; *.duckdb is gitignored in salishsea.
-(define SNAPSHOT-DB-REL "data/read-path.duckdb")
-(define snapshot-db (in-checkout SNAPSHOT-DB-REL))
+;; The snapshot database: in the checkout by default (*.duckdb is gitignored in
+;; salishsea), or wherever SALISHSEA_SNAPSHOT_DB says — on the Fly machine, the
+;; volume, since the checkout there is the image and does not survive a restart.
+;; The recipes and the engine read the same absolute path, so the file a task
+;; writes is the file the engine content-addresses.
+(define snapshot-db
+  (let ([p (getenv "SALISHSEA_SNAPSHOT_DB")])
+    (if (and p (not (string=? p ""))) (string->path p) (in-checkout "data" "read-path.duckdb"))))
+(define SNAPSHOT-DB (path->string snapshot-db))
 
 ;; --- Runtime ----------------------------------------------------------------
 ;; salishsea pins node in .nvmrc, and nothing about `node' on PATH carries that
@@ -93,11 +97,11 @@
   (list
    (make-task 'snapshot 'boundary
               #:outputs '(occurrences-snapshot)
-              #:invoke (tsx "scripts/read-path/snapshot.ts" SNAPSHOT-DB-REL))
+              #:invoke (tsx "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(days)
-              #:invoke (tsx "scripts/read-path/occurrence-days.ts" SNAPSHOT-DB-REL))))
+              #:invoke (tsx "scripts/read-path/occurrence-days.ts" SNAPSHOT-DB))))
 
 (define salishsea-graph (build-graph tasks artifacts))
 

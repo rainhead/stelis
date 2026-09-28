@@ -432,7 +432,8 @@ DuckDB file (rows serialized by Postgres's `to_jsonb`, PostgREST's own
 serializer, so the files match what the frontend parses), and a transform writes
 one file per Pacific day. The snapshot reruns every build; an unchanged database
 digests the same, and early cutoff skips the rest. Scripts live in salishsea's
-`scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout ·
+`scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and
+`SALISHSEA_SNAPSHOT_DB` the snapshot (on Fly, onto the volume) ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
 
