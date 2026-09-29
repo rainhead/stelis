@@ -11,9 +11,13 @@
 ;;   snapshot ──▶ occurrences-snapshot ──▶ occurrence-days ──▶ days/
 ;;   (boundary)   (db-relation)            (transform)         (one file per
 ;;       │                                                      Pacific day)
+;;       │                         └────────▶ calendar ───▶ calendar/
+;;       │                                   (transform)       (day counts per
+;;       │                                                      region, one file
+;;       │                                                      per Pacific month)
 ;;       └──────▶ snapshot-meta ─────────────────▶ manifest ──▶ manifest.json
-;;                (when it was taken)      (after days/)       (what the build
-;;                                                              covered)
+;;                (when it was taken)      (after days/ and    (what the build
+;;                                          calendar/)          covered)
 ;;
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
@@ -81,9 +85,16 @@
         (in-checkout "pnpm-lock.yaml")))
 
 (define (tsx script . args)
+  (tsx/code script '() args))
+
+;; tsx/code : like tsx, with extra code files the script imports — hashed into
+;; the task's address, so editing one reruns it.
+(define (tsx/code script extra-code args)
   (recipe 'node
           (append (list "node_modules/.bin/tsx" script) args)
-          (cons (in-checkout script) node-code)))
+          (append (list (in-checkout script))
+                  (map in-checkout extra-code)
+                  node-code)))
 
 ;; --- The graph --------------------------------------------------------------
 
@@ -99,6 +110,9 @@
    ;; One JSON array per Pacific day, newest first — what fetchOccurrences gets
    ;; for that day with no region selected.
    (make-artifact 'days 'dir)
+   ;; The calendar's day counts, one file per Pacific month, per region — what
+   ;; the occurrence_days RPC returns (decision 056).
+   (make-artifact 'calendar 'dir)
    ;; What the last build covered (salish-t3g.4): the frontend reads a missing
    ;; day file as empty only for a covered day, and watches it for new builds.
    ;; It changes every build by design, since the snapshot time does.
@@ -112,12 +126,22 @@
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(days)
-              #:invoke (tsx "scripts/read-path/occurrence-days.ts" SNAPSHOT-DB))
-   ;; Takes days as an input only for its ORDER: the manifest must never claim a
-   ;; build whose files are not yet in place, and a failed day export must leave
-   ;; the last manifest standing. It reads nothing from days/.
+              #:invoke (tsx/code "scripts/read-path/occurrence-days.ts"
+                                 '("scripts/read-path/replace-dir.ts")
+                                 (list SNAPSHOT-DB)))
+   ;; The region boxes are the map's own, so the files they come from are code.
+   (make-task 'calendar 'transform
+              #:inputs '(occurrences-snapshot)
+              #:outputs '(calendar)
+              #:invoke (tsx/code "scripts/read-path/calendar.ts"
+                                 '("scripts/read-path/replace-dir.ts"
+                                   "src/constants.ts" "src/extents.ts")
+                                 (list SNAPSHOT-DB)))
+   ;; Takes days and calendar as inputs only for their ORDER: the manifest must
+   ;; never claim a build whose files are not yet in place, and a failed export
+   ;; must leave the last manifest standing. It reads nothing from either.
    (make-task 'manifest 'transform
-              #:inputs '(snapshot-meta days)
+              #:inputs '(snapshot-meta days calendar)
               #:outputs '(manifest.json)
               #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -129,6 +153,7 @@
   (case artifact
     [(days) (build-path export-dir "days")]
     [(manifest.json) (build-path export-dir "manifest.json")]
+    [(calendar) (build-path export-dir "calendar")]
     [else #f]))
 
 (define (relation-tables artifact)

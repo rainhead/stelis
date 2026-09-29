@@ -433,9 +433,11 @@ serializer, so the files match what the frontend parses), and a transform writes
 one file per Pacific day. The snapshot reruns every build; an unchanged database
 digests the same, and early cutoff skips the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),
-and a `manifest` task writes `manifest.json` from that AFTER the day files —
-`days` is its input for order only — so the frontend can tell a quiet day from
-one no build has reached. Scripts live in salishsea's
+and a `manifest` task writes `manifest.json` from that AFTER the day files and the
+calendar's month files (`calendar`, per-region day counts; its code includes
+salishsea's `src/constants.ts` and `src/extents.ts`, the map's own region boxes) —
+both its inputs for order only — so the frontend can tell a quiet day from one
+no build has reached. Scripts live in salishsea's
 `scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and
 `SALISHSEA_SNAPSHOT_DB` the snapshot (on Fly, onto the volume) ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·

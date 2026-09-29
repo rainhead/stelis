@@ -6,6 +6,7 @@
 ;; that the project value carries the graph the CLI will select.
 
 (require rackunit
+         racket/list
          racket/set
          "model.rkt"
          "project.rkt"
@@ -14,11 +15,13 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 1 "only the manifest is off the path to days")
+(check-equal? (set-count pruned) 2 "the calendar and the manifest are off the path to days")
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
-(check-equal? manifest-plan '(snapshot occurrence-days manifest)
-              "the manifest comes after the day files, so it never claims a build whose files aren't in place")
+(check-equal? (car manifest-plan) 'snapshot)
+(check-equal? (last manifest-plan) 'manifest
+              "the manifest comes after every export, so it never claims a build whose files aren't in place")
+(check-equal? (sort (cdr (reverse (cdr manifest-plan))) symbol<?) '(calendar occurrence-days))
 
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'snapshot)) 'boundary
               "the snapshot asks Postgres every build — it cannot know otherwise")
