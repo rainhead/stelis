@@ -19,9 +19,14 @@
 ;;       │                                   (transform)       (day counts per
 ;;       │                                                      region, one file
 ;;       │                                                      per Pacific month)
-;;       └──────▶ snapshot-meta ─────────────────▶ manifest ──▶ manifest.json
-;;                (when it was taken)      (after days/ and    (what the build
-;;                                          calendar/)          covered)
+;;       ├──────▶ the catalogue ──────▶ individual-pages ▶ profiles/individuals/
+;;       │        (nine relations)      (transform)        (one prerendered page
+;;       │                                  ▲               per individual, and
+;;       │                                  │               its map's dots)
+;;       └──────▶ snapshot-meta ────────────┴──────▶ manifest ──▶ manifest.json
+;;                (when it was taken)      (after days/,       (what the build
+;;                                          calendar/, ids/,     covered)
+;;                                          the pages)
 ;;
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
@@ -102,8 +107,27 @@
 
 ;; --- The graph --------------------------------------------------------------
 
+;; The snapshot's catalogue tables, as snapshot.ts names them. Each is one
+;; relation, `<table>-snapshot' with hyphens, so --why names the one that moved.
+(define catalogue-tables
+  '("individuals" "designations" "nicknames" "parties" "social_groups"
+    "group_parents" "matriline_members" "animal_names" "haulouts"
+    "individual_occurrences" "group_occurrences" "ecotype_occurrences"
+    "haulout_occurrences"))
+
+(define (snapshot-relation table)
+  (string->symbol (string-append (string-replace table "_" "-") "-snapshot")))
+
+(define catalogue-relations (map snapshot-relation catalogue-tables))
+
+;; What an individual's page reads: profiles.ts's TABLES.
+(define individual-page-relations
+  (map snapshot-relation
+       '("individuals" "designations" "nicknames" "parties" "social_groups"
+         "group_parents" "matriline_members" "animal_names" "individual_occurrences")))
+
 (define artifacts
-  (list
+  (list*
    ;; What the snapshot read from Postgres. Derived: it is ours to rebuild from
    ;; the database at any time, and the build never writes back.
    (make-artifact 'occurrences-snapshot 'db-relation)
@@ -123,12 +147,21 @@
    ;; What the last build covered (salish-t3g.4): the frontend reads a missing
    ;; day file as empty only for a covered day, and watches it for new builds.
    ;; It changes every build by design, since the snapshot time does.
-   (make-artifact 'manifest.json 'file)))
+   (make-artifact 'manifest.json 'file)
+   ;; Each individual's page as HTML, and beside it the sighting links its map
+   ;; loads (decision 057). Rooted at profiles/individuals/, not profiles/, so the
+   ;; other profile kinds land as siblings rather than inside this one's extent.
+   (make-artifact 'individual-pages 'dir)
+   ;; What the profile pages show (salishsea decision 057): the catalogue, and the
+   ;; views linking a subject to its sightings. All of what the snapshot writes is
+   ;; declared, including the relations no page reads yet.
+   (for/list ([name (in-list catalogue-relations)])
+     (make-artifact name 'db-relation))))
 
 (define tasks
   (list
    (make-task 'snapshot 'boundary
-              #:outputs '(occurrences-snapshot snapshot-meta)
+              #:outputs (list* 'occurrences-snapshot 'snapshot-meta catalogue-relations)
               #:invoke (tsx "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
@@ -152,11 +185,28 @@
               #:invoke (tsx/code "scripts/read-path/occurrence-ids.ts"
                                  '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts")
                                  (list SNAPSHOT-DB)))
-   ;; Takes days, calendar and ids as inputs only for their ORDER: the manifest must
-   ;; never claim a build whose files are not yet in place, and a failed export
-   ;; must leave the last manifest standing. It reads nothing from either.
+   ;; The pages are the shared templates (src/individual-profile.ts) filled from
+   ;; the snapshot, inside the shell Vite built. The shell and Vite's manifest are
+   ;; code here, not artifacts: the site build that writes dist/ is outside the
+   ;; graph (the image's, on Fly), and the pages must rerun when either changes.
+   ;; The year the presence table ends on is the snapshot's, which is why
+   ;; snapshot-meta is an input — and why this reruns every build (its bytes
+   ;; still cut off unless something moved).
+   (make-task 'individual-pages 'transform
+              #:inputs (cons 'snapshot-meta individual-page-relations)
+              #:outputs '(individual-pages)
+              #:invoke (tsx/code "scripts/read-path/profiles.ts"
+                                 '("scripts/read-path/profile-document.ts"
+                                   "scripts/read-path/replace-dir.ts"
+                                   "src/individual-profile.ts" "src/profile-shared.ts"
+                                   "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
+                                   "dist/individual.html" "dist/.vite/manifest.json")
+                                 (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
+   ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
+   ;; manifest must never claim a build whose files are not yet in place, and a
+   ;; failed export must leave the last manifest standing. It reads none of them.
    (make-task 'manifest 'transform
-              #:inputs '(snapshot-meta days calendar ids)
+              #:inputs '(snapshot-meta days calendar ids individual-pages)
               #:outputs '(manifest.json)
               #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -170,13 +220,17 @@
     [(manifest.json) (build-path export-dir "manifest.json")]
     [(calendar) (build-path export-dir "calendar")]
     [(ids) (build-path export-dir "ids")]
+    [(individual-pages) (build-path export-dir "profiles" "individuals")]
     [else #f]))
 
 (define (relation-tables artifact)
   (case artifact
     [(occurrences-snapshot) '("snapshot.occurrences")]
     [(snapshot-meta) '("snapshot.meta")]
-    [else #f]))
+    [else
+     (for/first ([table (in-list catalogue-tables)]
+                 #:when (eq? artifact (snapshot-relation table)))
+       (list (string-append "snapshot." table)))]))
 
 (define (resolve-relation artifact)
   (define tables (relation-tables artifact))
