@@ -11,6 +11,10 @@
 ;;   snapshot ──▶ occurrences-snapshot ──▶ occurrence-days ──▶ days/
 ;;   (boundary)   (db-relation)            (transform)         (one file per
 ;;       │                                                      Pacific day)
+;;       │                         ├────────▶ occurrence-ids ▶ ids/
+;;       │                         │          (transform)       (id → day, in
+;;       │                         │                             256 shards, for
+;;       │                         │                             ?o= links)
 ;;       │                         └────────▶ calendar ───▶ calendar/
 ;;       │                                   (transform)       (day counts per
 ;;       │                                                      region, one file
@@ -113,6 +117,9 @@
    ;; The calendar's day counts, one file per Pacific month, per region — what
    ;; the occurrence_days RPC returns (decision 056).
    (make-artifact 'calendar 'dir)
+   ;; Which day each occurrence is on, sharded by a hash of its id, so a ?o=
+   ;; link opens without asking the database (decision 056).
+   (make-artifact 'ids 'dir)
    ;; What the last build covered (salish-t3g.4): the frontend reads a missing
    ;; day file as empty only for a covered day, and watches it for new builds.
    ;; It changes every build by design, since the snapshot time does.
@@ -137,11 +144,19 @@
                                  '("scripts/read-path/replace-dir.ts"
                                    "src/constants.ts" "src/extents.ts")
                                  (list SNAPSHOT-DB)))
-   ;; Takes days and calendar as inputs only for their ORDER: the manifest must
+   ;; The shard hash is shared with the browser, so it is code: change it and
+   ;; every id moves, which must rebuild the index.
+   (make-task 'occurrence-ids 'transform
+              #:inputs '(occurrences-snapshot)
+              #:outputs '(ids)
+              #:invoke (tsx/code "scripts/read-path/occurrence-ids.ts"
+                                 '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts")
+                                 (list SNAPSHOT-DB)))
+   ;; Takes days, calendar and ids as inputs only for their ORDER: the manifest must
    ;; never claim a build whose files are not yet in place, and a failed export
    ;; must leave the last manifest standing. It reads nothing from either.
    (make-task 'manifest 'transform
-              #:inputs '(snapshot-meta days calendar)
+              #:inputs '(snapshot-meta days calendar ids)
               #:outputs '(manifest.json)
               #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -154,6 +169,7 @@
     [(days) (build-path export-dir "days")]
     [(manifest.json) (build-path export-dir "manifest.json")]
     [(calendar) (build-path export-dir "calendar")]
+    [(ids) (build-path export-dir "ids")]
     [else #f]))
 
 (define (relation-tables artifact)

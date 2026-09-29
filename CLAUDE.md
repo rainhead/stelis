@@ -435,7 +435,9 @@ digests the same, and early cutoff skips the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),
 and a `manifest` task writes `manifest.json` from that AFTER the day files and the
 calendar's month files (`calendar`, per-region day counts; its code includes
-salishsea's `src/constants.ts` and `src/extents.ts`, the map's own region boxes) —
+salishsea's `src/constants.ts` and `src/extents.ts`, the map's own region boxes)
+and the id index (`ids`, id → day in 256 shards by a hash salishsea's browser code
+shares, so a `?o=` link opens without a query) —
 both its inputs for order only — so the frontend can tell a quiet day from one
 no build has reached. Scripts live in salishsea's
 `scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and
