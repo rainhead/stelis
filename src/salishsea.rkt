@@ -76,8 +76,12 @@
 ;; node runtime and for the same reasons — see its comment there: cd into the
 ;; checkout, source nvm if present, observe the resolved interpreter by probe.
 ;;
-;; tsx is invoked from node_modules directly rather than through `pnpm exec',
-;; which checks the install and may try to fix it — a build must not install.
+;; The scripts run under plain `node', which strips their TypeScript types
+;; itself (salishsea's tsconfig holds them to erasableSyntaxOnly and
+;; verbatimModuleSyntax, what that needs). Not tsx: its wrapper process and
+;; esbuild service cost ~30 MB beside every task on a 1 GB Fly machine, for a
+;; transform node already does. Nor `pnpm exec', which checks the install and
+;; may try to fix it — a build must not install.
 (define salishsea-runtimes
   (hash 'node (runtime 'node
                        (list "bash" "-c"
@@ -92,20 +96,21 @@
                        (list "node" "--version"))))
 
 ;; The pins a node task's bytes depend on beyond its own script: the interpreter
-;; range, and the lockfile that fixes @duckdb/node-api and tsx.
+;; range, and the lockfile that fixes @duckdb/node-api and the scripts' other
+;; dependencies.
 (define node-code
   (list (in-checkout ".nvmrc")
         (in-checkout "package.json")
         (in-checkout "pnpm-lock.yaml")))
 
-(define (tsx script . args)
-  (tsx/code script '() args))
+(define (node-script script . args)
+  (node-script/code script '() args))
 
-;; tsx/code : like tsx, with extra code files the script imports — hashed into
-;; the task's address, so editing one reruns it.
-(define (tsx/code script extra-code args)
+;; node-script/code : like node-script, with extra code files the script imports —
+;; hashed into the task's address, so editing one reruns it.
+(define (node-script/code script extra-code args)
   (recipe 'node
-          (append (list "node_modules/.bin/tsx" script) args)
+          (append (list "node" script) args)
           (append (list (in-checkout script))
                   (map in-checkout extra-code)
                   node-code)))
@@ -156,7 +161,7 @@
   (make-task name 'transform
              #:inputs (cons 'snapshot-meta relations)
              #:outputs (list output)
-             #:invoke (tsx/code "scripts/read-path/profiles.ts"
+             #:invoke (node-script/code "scripts/read-path/profiles.ts"
                                 (list "scripts/read-path/profile-document.ts"
                                       "scripts/read-path/replace-dir.ts"
                                       "scripts/read-path/snapshot-tables.ts"
@@ -213,18 +218,18 @@
   (list
    (make-task 'snapshot 'boundary
               #:outputs (list* 'occurrences-snapshot 'snapshot-meta catalogue-relations)
-              #:invoke (tsx "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
+              #:invoke (node-script "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(days)
-              #:invoke (tsx/code "scripts/read-path/occurrence-days.ts"
+              #:invoke (node-script/code "scripts/read-path/occurrence-days.ts"
                                  '("scripts/read-path/replace-dir.ts")
                                  (list SNAPSHOT-DB)))
    ;; The region boxes are the map's own, so the files they come from are code.
    (make-task 'calendar 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(calendar)
-              #:invoke (tsx/code "scripts/read-path/calendar.ts"
+              #:invoke (node-script/code "scripts/read-path/calendar.ts"
                                  '("scripts/read-path/replace-dir.ts"
                                    "src/constants.ts" "src/extents.ts")
                                  (list SNAPSHOT-DB)))
@@ -233,7 +238,7 @@
    (make-task 'occurrence-ids 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(ids)
-              #:invoke (tsx/code "scripts/read-path/occurrence-ids.ts"
+              #:invoke (node-script/code "scripts/read-path/occurrence-ids.ts"
                                  '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts")
                                  (list SNAPSHOT-DB)))
    ;; The profile pages: the shared templates filled from the snapshot, inside
@@ -252,7 +257,7 @@
    (make-task 'profile-index 'transform
               #:inputs profile-index-relations
               #:outputs '(redirects.json sitemap.xml)
-              #:invoke (tsx/code "scripts/read-path/profile-index.ts"
+              #:invoke (node-script/code "scripts/read-path/profile-index.ts"
                                  '("scripts/read-path/profile-document.ts"
                                    "scripts/read-path/snapshot-tables.ts"
                                    "scripts/read-path/redirect-keys.ts"
@@ -267,7 +272,7 @@
                          individual-pages matriline-pages ecotype-pages haulout-pages
                          redirects.json sitemap.xml)
               #:outputs '(manifest.json)
-              #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
+              #:invoke (node-script "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
 (define salishsea-graph (build-graph tasks artifacts))
 
