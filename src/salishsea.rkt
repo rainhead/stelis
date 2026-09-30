@@ -20,9 +20,11 @@
 ;;       │                                                      region, one file
 ;;       │                                                      per Pacific month)
 ;;       ├──────▶ the catalogue ──────▶ individual-pages ▶ profiles/individuals/
-;;       │        (nine relations)      (transform)        (one prerendered page
-;;       │                                  ▲               per individual, and
-;;       │                                  │               its map's dots)
+;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
+;;       │         table)               ecotype-pages ───▶ profiles/ecotypes/
+;;       │                              (transforms)       (one prerendered page
+;;       │                                  ▲               per subject, and its
+;;       │                                  │               map's dots)
 ;;       └──────▶ snapshot-meta ────────────┴──────▶ manifest ──▶ manifest.json
 ;;                (when it was taken)      (after days/,       (what the build
 ;;                                          calendar/, ids/,     covered)
@@ -120,11 +122,41 @@
 
 (define catalogue-relations (map snapshot-relation catalogue-tables))
 
-;; What an individual's page reads: profiles.ts's TABLES.
+;; What each kind of page reads: profiles.ts's INDIVIDUAL_TABLES and its siblings,
+;; which load only these, so each task's inputs are exactly what it reads.
 (define individual-page-relations
   (map snapshot-relation
        '("individuals" "designations" "nicknames" "parties" "social_groups"
          "group_parents" "matriline_members" "animal_names" "individual_occurrences")))
+(define matriline-page-relations
+  (map snapshot-relation
+       '("social_groups" "group_parents" "nicknames" "parties" "individuals"
+         "matriline_members" "group_occurrences")))
+(define ecotype-page-relations
+  (map snapshot-relation '("social_groups" "group_parents" "ecotype_occurrences")))
+
+;; A kind's page task. Its code is profiles.ts's import closure (esbuild's
+;; metafile, not a grep: all three kinds' templates, since one script renders
+;; them), the kind's Vite-built shell, and Vite's manifest, which names the map
+;; island's files. The shell and the manifest are code here rather than artifacts
+;; because the site build that writes dist/ is outside the graph (the image's, on
+;; Fly), and the pages must rerun when either changes.
+;;
+;; The year the presence table ends on is the snapshot's, which is why
+;; snapshot-meta is an input — and why each reruns every build (its bytes still
+;; cut off unless something moved).
+(define (profile-pages-task name kind shell relations output)
+  (make-task name 'transform
+             #:inputs (cons 'snapshot-meta relations)
+             #:outputs (list output)
+             #:invoke (tsx/code "scripts/read-path/profiles.ts"
+                                (list "scripts/read-path/profile-document.ts"
+                                      "scripts/read-path/replace-dir.ts"
+                                      "src/individual-profile.ts" "src/matriline-profile.ts"
+                                      "src/ecotype-profile.ts" "src/profile-shared.ts"
+                                      "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
+                                      (string-append "dist/" shell) "dist/.vite/manifest.json")
+                                (list kind SNAPSHOT-DB (path->string (in-checkout "dist"))))))
 
 (define artifacts
   (list*
@@ -148,10 +180,12 @@
    ;; day file as empty only for a covered day, and watches it for new builds.
    ;; It changes every build by design, since the snapshot time does.
    (make-artifact 'manifest.json 'file)
-   ;; Each individual's page as HTML, and beside it the sighting links its map
-   ;; loads (decision 057). Rooted at profiles/individuals/, not profiles/, so the
-   ;; other profile kinds land as siblings rather than inside this one's extent.
+   ;; Each subject's page as HTML, and beside it the sighting links its map loads
+   ;; (decision 057), one dir per kind: profiles/individuals/ and its siblings,
+   ;; never profiles/ itself, so no kind's extent holds another's.
    (make-artifact 'individual-pages 'dir)
+   (make-artifact 'matriline-pages 'dir)
+   (make-artifact 'ecotype-pages 'dir)
    ;; What the profile pages show (salishsea decision 057): the catalogue, and the
    ;; views linking a subject to its sightings. All of what the snapshot writes is
    ;; declared, including the relations no page reads yet.
@@ -185,28 +219,20 @@
               #:invoke (tsx/code "scripts/read-path/occurrence-ids.ts"
                                  '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts")
                                  (list SNAPSHOT-DB)))
-   ;; The pages are the shared templates (src/individual-profile.ts) filled from
-   ;; the snapshot, inside the shell Vite built. The shell and Vite's manifest are
-   ;; code here, not artifacts: the site build that writes dist/ is outside the
-   ;; graph (the image's, on Fly), and the pages must rerun when either changes.
-   ;; The year the presence table ends on is the snapshot's, which is why
-   ;; snapshot-meta is an input — and why this reruns every build (its bytes
-   ;; still cut off unless something moved).
-   (make-task 'individual-pages 'transform
-              #:inputs (cons 'snapshot-meta individual-page-relations)
-              #:outputs '(individual-pages)
-              #:invoke (tsx/code "scripts/read-path/profiles.ts"
-                                 '("scripts/read-path/profile-document.ts"
-                                   "scripts/read-path/replace-dir.ts"
-                                   "src/individual-profile.ts" "src/profile-shared.ts"
-                                   "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
-                                   "dist/individual.html" "dist/.vite/manifest.json")
-                                 (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
+   ;; The profile pages: the shared templates filled from the snapshot, inside
+   ;; the shell Vite built (salishsea decision 057).
+   (profile-pages-task 'individual-pages "individuals" "individual.html"
+                       individual-page-relations 'individual-pages)
+   (profile-pages-task 'matriline-pages "matrilines" "matriline.html"
+                       matriline-page-relations 'matriline-pages)
+   (profile-pages-task 'ecotype-pages "ecotypes" "ecotype.html"
+                       ecotype-page-relations 'ecotype-pages)
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
    (make-task 'manifest 'transform
-              #:inputs '(snapshot-meta days calendar ids individual-pages)
+              #:inputs '(snapshot-meta days calendar ids
+                         individual-pages matriline-pages ecotype-pages)
               #:outputs '(manifest.json)
               #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -221,6 +247,8 @@
     [(calendar) (build-path export-dir "calendar")]
     [(ids) (build-path export-dir "ids")]
     [(individual-pages) (build-path export-dir "profiles" "individuals")]
+    [(matriline-pages) (build-path export-dir "profiles" "matrilines")]
+    [(ecotype-pages) (build-path export-dir "profiles" "ecotypes")]
     [else #f]))
 
 (define (relation-tables artifact)

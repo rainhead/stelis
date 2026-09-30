@@ -437,10 +437,11 @@ and a `manifest` task writes `manifest.json` from that AFTER the day files and t
 calendar's month files (`calendar`, per-region day counts; its code includes
 salishsea's `src/constants.ts` and `src/extents.ts`, the map's own region boxes)
 and the id index (`ids`, id → day in 256 shards by a hash salishsea's browser code
-shares, so a `?o=` link opens without a query) and the individual profile
-pages (`individual-pages`, salishsea decision 057: prerendered HTML read from nine
-catalogue relations, with the Vite-built shell and Vite's manifest hashed as code
-because the site build that writes `dist/` is outside the graph) —
+shares, so a `?o=` link opens without a query) and the profile pages
+(`individual-pages`, `matriline-pages`, `ecotype-pages`, salishsea decision 057:
+prerendered HTML, one task per kind reading only its own catalogue relations, with
+the Vite-built shell and Vite's manifest hashed as code because the site build that
+writes `dist/` is outside the graph) —
 every export an input for order only — so the frontend can tell a quiet day from one
 no build has reached. Scripts live in salishsea's
 `scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and

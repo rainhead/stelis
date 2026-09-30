@@ -15,21 +15,25 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 4
-              "the calendar, the id index, the pages and the manifest are off the path to days")
+(check-equal? (set-count pruned) 6
+              "the calendar, the id index, the three kinds of page and the manifest are off the path to days")
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
 (check-equal? (car manifest-plan) 'snapshot)
 (check-equal? (last manifest-plan) 'manifest
               "the manifest comes after every export, so it never claims a build whose files aren't in place")
 (check-equal? (sort (cdr (reverse (cdr manifest-plan))) symbol<?)
-              '(calendar individual-pages occurrence-days occurrence-ids))
+              '(calendar ecotype-pages individual-pages matriline-pages occurrence-days occurrence-ids))
 
 (define-values (pages-plan _pp) (plan salishsea-graph 'individual-pages))
 (check-equal? pages-plan '(snapshot individual-pages)
               "the pages need only the snapshot: they read none of the other exports")
-(check-not-false (memq 'snapshot-meta (task-inputs (hash-ref (graph-tasks salishsea-graph) 'individual-pages)))
-                 "the presence table's newest year is the snapshot's, so its time is an input")
+(for ([pages (in-list '(individual-pages matriline-pages ecotype-pages))])
+  (check-not-false (memq 'snapshot-meta (task-inputs (hash-ref (graph-tasks salishsea-graph) pages)))
+                   "the presence table's newest year is the snapshot's, so its time is an input"))
+(check-equal? (sort (task-inputs (hash-ref (graph-tasks salishsea-graph) 'ecotype-pages)) symbol<?)
+              '(ecotype-occurrences-snapshot group-parents-snapshot snapshot-meta social-groups-snapshot)
+              "a kind's inputs are the tables profiles.ts loads for it, and no others")
 
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'snapshot)) 'boundary
               "the snapshot asks Postgres every build — it cannot know otherwise")
@@ -45,3 +49,5 @@
 (check-equal? ((project-path salishsea-project) 'individual-pages (string->path "/x"))
               (string->path "/x/profiles/individuals")
               "one kind of profile per dir, so the other kinds land beside it, not inside it")
+(check-equal? ((project-path salishsea-project) 'matriline-pages (string->path "/x"))
+              (string->path "/x/profiles/matrilines"))
