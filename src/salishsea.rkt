@@ -29,10 +29,15 @@
 ;;       │                              (transforms)       (one prerendered page
 ;;       │                                  ▲               per subject, and its
 ;;       │                                  │               map's dots)
-;;       └──────▶ snapshot-meta ────────────┴──────▶ manifest ──▶ manifest.json
-;;                (when it was taken)      (after days/,       (what the build
-;;                                          calendar/, ids/,     covered)
-;;                                          the pages)
+;;       ├──────▶ snapshot-meta ────────────┴──────▶ manifest ──▶ manifest.json
+;;       │        (when it was taken)      (after days/,       (what the build
+;;       │                                  calendar/, ids/,     covered)
+;;       │                                  the pages)
+;;       └──────▶ what the occurrences are derived from (decision 061):
+;;                the sources' tables and the reference tables the five
+;;                views read, typed, one relation per table. Nothing reads
+;;                them yet: the DuckDB port of those views (salish-xv35.2)
+;;                will, checked against occurrences-snapshot.
 ;;
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
@@ -131,6 +136,28 @@
 
 (define catalogue-relations (map snapshot-relation catalogue-tables))
 
+;; What the occurrences are derived from (salishsea decision 061, salish-xv35.1):
+;; every table the five views behind derived.occurrences read, the reference tables
+;; the functions they call read, the Maplify resolvers' inputs, the stored
+;; identifier candidates to check a port against, and the enums' declared orders.
+;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
+;; so each is named for its table here too: --why names the one that moved, and the
+;; per-column observation says which column.
+(define derivation-input-tables
+  '("maplify.sightings" "maplify.collection_rule"
+    "inaturalist.observations" "inaturalist.observation_photos" "inaturalist.taxa"
+    "happywhale.encounters" "happywhale.users" "happywhale.individuals"
+    "happywhale.species" "happywhale.media"
+    "public.observations" "public.observation_photos" "public.contributors"
+    "public.acoustic_bouts" "public.acoustic_bout_entities"
+    "public.providers" "public.collections" "public.organizations"
+    "register.entities" "register.names" "register.mappings"
+    "register.ancestor" "register.deprecations"
+    "derived.occurrence_identifier_candidates"
+    "types.enums"))
+
+(define derivation-input-relations (map string->symbol derivation-input-tables))
+
 ;; What each kind of page reads: profiles.ts's INDIVIDUAL_TABLES and its siblings,
 ;; which load only these, so each task's inputs are exactly what it reads.
 (define individual-page-relations
@@ -215,13 +242,19 @@
    ;; What the profile pages show (salishsea decision 057): the catalogue, and the
    ;; views linking a subject to its sightings. All of what the snapshot writes is
    ;; declared, including the relations no page reads yet.
-   (for/list ([name (in-list catalogue-relations)])
-     (make-artifact name 'db-relation))))
+   (append
+    (for/list ([name (in-list catalogue-relations)])
+      (make-artifact name 'db-relation))
+    ;; What the occurrences are derived from (decision 061). Derived, like the rest
+    ;; of the snapshot: the database holds the originals.
+    (for/list ([name (in-list derivation-input-relations)])
+      (make-artifact name 'db-relation)))))
 
 (define tasks
   (list
    (make-task 'snapshot 'boundary
-              #:outputs (list* 'occurrences-snapshot 'snapshot-meta catalogue-relations)
+              #:outputs (list* 'occurrences-snapshot 'snapshot-meta
+                               (append catalogue-relations derivation-input-relations))
               #:invoke (node-script "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
@@ -302,9 +335,12 @@
     [(occurrences-snapshot) '("snapshot.occurrences")]
     [(snapshot-meta) '("snapshot.meta")]
     [else
-     (for/first ([table (in-list catalogue-tables)]
-                 #:when (eq? artifact (snapshot-relation table)))
-       (list (string-append "snapshot." table)))]))
+     (cond
+       [(memq artifact derivation-input-relations) (list (symbol->string artifact))]
+       [else
+        (for/first ([table (in-list catalogue-tables)]
+                    #:when (eq? artifact (snapshot-relation table)))
+          (list (string-append "snapshot." table)))])]))
 
 (define (resolve-relation artifact)
   (define tables (relation-tables artifact))
