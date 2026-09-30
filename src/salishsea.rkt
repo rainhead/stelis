@@ -23,6 +23,8 @@
 ;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
 ;;       │         table)               ecotype-pages ───▶ profiles/ecotypes/
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
+;;       │                              profile-index ───▶ redirects.json,
+;;       │                                                  sitemap.xml
 ;;       │                              (transforms)       (one prerendered page
 ;;       │                                  ▲               per subject, and its
 ;;       │                                  │               map's dots)
@@ -137,6 +139,8 @@
   (map snapshot-relation '("social_groups" "group_parents" "ecotype_occurrences")))
 (define haulout-page-relations
   (map snapshot-relation '("haulouts" "haulout_occurrences")))
+(define profile-index-relations
+  (map snapshot-relation '("individuals" "designations" "social_groups" "haulouts")))
 
 ;; A kind's page task. Its code is profiles.ts's import closure (esbuild's
 ;; metafile, not a grep: all three kinds' templates, since one script renders
@@ -155,6 +159,7 @@
              #:invoke (tsx/code "scripts/read-path/profiles.ts"
                                 (list "scripts/read-path/profile-document.ts"
                                       "scripts/read-path/replace-dir.ts"
+                                      "scripts/read-path/snapshot-tables.ts"
                                       "src/individual-profile.ts" "src/matriline-profile.ts"
                                       "src/ecotype-profile.ts" "src/haulout-profile.ts"
                                       "src/profile-shared.ts"
@@ -191,6 +196,12 @@
    (make-artifact 'matriline-pages 'dir)
    (make-artifact 'ecotype-pages 'dir)
    (make-artifact 'haulout-pages 'dir)
+   ;; Where the profiles live, for what finds them rather than renders them
+   ;; (salishsea decision 057, step 5): each designation, folded, to its page —
+   ;; the redirect server on Fly answers legacy /individuals/T65A links from it —
+   ;; and the sitemap, Vite's own entries with every published profile after them.
+   (make-artifact 'redirects.json 'file)
+   (make-artifact 'sitemap.xml 'file)
    ;; What the profile pages show (salishsea decision 057): the catalogue, and the
    ;; views linking a subject to its sightings. All of what the snapshot writes is
    ;; declared, including the relations no page reads yet.
@@ -234,12 +245,25 @@
                        ecotype-page-relations 'ecotype-pages)
    (profile-pages-task 'haulout-pages "haulouts" "haulout.html"
                        haulout-page-relations 'haulout-pages)
+   ;; No snapshot-meta: nothing here depends on when the snapshot was taken, so
+   ;; unlike the pages this cuts off whenever the catalogue holds still. Vite's
+   ;; sitemap is code, like the pages' shells, for the same reason.
+   (make-task 'profile-index 'transform
+              #:inputs profile-index-relations
+              #:outputs '(redirects.json sitemap.xml)
+              #:invoke (tsx/code "scripts/read-path/profile-index.ts"
+                                 '("scripts/read-path/profile-document.ts"
+                                   "scripts/read-path/snapshot-tables.ts"
+                                   "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
+                                   "dist/sitemap.xml")
+                                 (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
    (make-task 'manifest 'transform
               #:inputs '(snapshot-meta days calendar ids
-                         individual-pages matriline-pages ecotype-pages haulout-pages)
+                         individual-pages matriline-pages ecotype-pages haulout-pages
+                         redirects.json sitemap.xml)
               #:outputs '(manifest.json)
               #:invoke (tsx "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -257,6 +281,8 @@
     [(matriline-pages) (build-path export-dir "profiles" "matrilines")]
     [(ecotype-pages) (build-path export-dir "profiles" "ecotypes")]
     [(haulout-pages) (build-path export-dir "profiles" "haulouts")]
+    [(redirects.json) (build-path export-dir "redirects.json")]
+    [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [else #f]))
 
 (define (relation-tables artifact)

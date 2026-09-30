@@ -441,7 +441,9 @@ shares, so a `?o=` link opens without a query) and the profile pages
 (`individual-pages`, `matriline-pages`, `ecotype-pages`, `haulout-pages`, salishsea decision 057:
 prerendered HTML, one task per kind reading only its own catalogue relations, with
 the Vite-built shell and Vite's manifest hashed as code because the site build that
-writes `dist/` is outside the graph) —
+writes `dist/` is outside the graph) and `profile-index` (`redirects.json`, folded
+designation → canonical page, which a redirect server on Fly answers legacy links
+from, and `sitemap.xml`; no snapshot-meta input, so it cuts off) —
 every export an input for order only — so the frontend can tell a quiet day from one
 no build has reached. Scripts live in salishsea's
 `scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and

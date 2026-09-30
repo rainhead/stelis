@@ -15,8 +15,8 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 7
-              "the calendar, the id index, the four kinds of page and the manifest are off the path to days")
+(check-equal? (set-count pruned) 8
+              "the calendar, the id index, the pages, the profile index and the manifest are off the path to days")
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
 (check-equal? (car manifest-plan) 'snapshot)
@@ -24,7 +24,7 @@
               "the manifest comes after every export, so it never claims a build whose files aren't in place")
 (check-equal? (sort (cdr (reverse (cdr manifest-plan))) symbol<?)
               '(calendar ecotype-pages haulout-pages individual-pages matriline-pages
-                occurrence-days occurrence-ids))
+                occurrence-days occurrence-ids profile-index))
 
 (define-values (pages-plan _pp) (plan salishsea-graph 'individual-pages))
 (check-equal? pages-plan '(snapshot individual-pages)
@@ -38,6 +38,8 @@
 (check-equal? (sort (task-inputs (hash-ref (graph-tasks salishsea-graph) 'haulout-pages)) symbol<?)
               '(haulout-occurrences-snapshot haulouts-snapshot snapshot-meta)
               "a haul-out page reads the sites and their reports: the register holds no places")
+(check-false (memq 'snapshot-meta (task-inputs (hash-ref (graph-tasks salishsea-graph) 'profile-index)))
+             "the redirects and the sitemap don't depend on when the snapshot was taken, so they cut off")
 
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'snapshot)) 'boundary
               "the snapshot asks Postgres every build — it cannot know otherwise")
