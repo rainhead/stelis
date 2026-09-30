@@ -438,7 +438,7 @@ calendar's month files (`calendar`, per-region day counts; its code includes
 salishsea's `src/constants.ts` and `src/extents.ts`, the map's own region boxes)
 and the id index (`ids`, id → day in 256 shards by a hash salishsea's browser code
 shares, so a `?o=` link opens without a query) and the profile pages
-(`individual-pages`, `matriline-pages`, `ecotype-pages`, salishsea decision 057:
+(`individual-pages`, `matriline-pages`, `ecotype-pages`, `haulout-pages`, salishsea decision 057:
 prerendered HTML, one task per kind reading only its own catalogue relations, with
 the Vite-built shell and Vite's manifest hashed as code because the site build that
 writes `dist/` is outside the graph) —
