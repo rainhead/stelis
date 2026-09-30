@@ -24,7 +24,8 @@
 ;;       │         table)               ecotype-pages ───▶ profiles/ecotypes/
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
 ;;       │                              profile-index ───▶ redirects.json,
-;;       │                                                  sitemap.xml
+;;       │                                                  sitemap.xml,
+;;       │                                                  catalog-codes.json
 ;;       │                              (transforms)       (one prerendered page
 ;;       │                                  ▲               per subject, and its
 ;;       │                                  │               map's dots)
@@ -208,6 +209,9 @@
    ;; and the sitemap, Vite's own entries with every published profile after them.
    (make-artifact 'redirects.json 'file)
    (make-artifact 'sitemap.xml 'file)
+   ;; The rows the map's sighting cards link designations from (T065A to her
+   ;; page), so those links survive the database being unreachable.
+   (make-artifact 'catalog-codes.json 'file)
    ;; What the profile pages show (salishsea decision 057): the catalogue, and the
    ;; views linking a subject to its sightings. All of what the snapshot writes is
    ;; declared, including the relations no page reads yet.
@@ -256,7 +260,7 @@
    ;; sitemap is code, like the pages' shells, for the same reason.
    (make-task 'profile-index 'transform
               #:inputs profile-index-relations
-              #:outputs '(redirects.json sitemap.xml)
+              #:outputs '(redirects.json sitemap.xml catalog-codes.json)
               #:invoke (node-script/code "scripts/read-path/profile-index.ts"
                                  '("scripts/read-path/profile-document.ts"
                                    "scripts/read-path/snapshot-tables.ts"
@@ -270,7 +274,7 @@
    (make-task 'manifest 'transform
               #:inputs '(snapshot-meta days calendar ids
                          individual-pages matriline-pages ecotype-pages haulout-pages
-                         redirects.json sitemap.xml)
+                         redirects.json sitemap.xml catalog-codes.json)
               #:outputs '(manifest.json)
               #:invoke (node-script "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -290,6 +294,7 @@
     [(haulout-pages) (build-path export-dir "profiles" "haulouts")]
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
+    [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [else #f]))
 
 (define (relation-tables artifact)
