@@ -161,6 +161,7 @@
                                       "scripts/read-path/replace-dir.ts"
                                       "scripts/read-path/snapshot-tables.ts"
                                       "src/individual-profile.ts" "src/matriline-profile.ts"
+                                      "src/date-format.ts"
                                       "src/ecotype-profile.ts" "src/haulout-profile.ts"
                                       "src/profile-shared.ts"
                                       "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
@@ -254,6 +255,7 @@
               #:invoke (tsx/code "scripts/read-path/profile-index.ts"
                                  '("scripts/read-path/profile-document.ts"
                                    "scripts/read-path/snapshot-tables.ts"
+                                   "scripts/read-path/redirect-keys.ts"
                                    "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
                                    "dist/sitemap.xml")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
