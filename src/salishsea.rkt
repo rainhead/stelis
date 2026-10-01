@@ -327,13 +327,19 @@
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
    ;; The five per-source Postgres views behind derived.occurrences, as DuckDB SQL
    ;; (salishsea decision 061). Its two regex extractions run in node first, since
-   ;; RE2 can't express Postgres's word boundaries; the SQL is read, not imported,
-   ;; so it is listed as code by hand.
+   ;; RE2 can't express Postgres's word boundaries, and so does Maplify's entity
+   ;; resolution, which is the ingest's own resolveEntity over the register's name
+   ;; index (salish-xv35.11). The code list is the script's esbuild import closure;
+   ;; the SQL is read, not imported, so it is listed by hand.
    (make-task 'derive-occurrences 'transform
               #:inputs occurrence-derivation-inputs
               #:outputs '(build.occurrences)
               #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
                                  '("scripts/read-path/derive/extract.ts"
+                                   "scripts/read-path/derive/maplify-entities.ts"
+                                   "scripts/ingest/maplify.ts"
+                                   "scripts/register/name-index.ts"
+                                   "src/fold.ts" "src/extents.ts"
                                    "scripts/read-path/derive/occurrences.sql")
                                  (list SNAPSHOT-DB)))
    ;; The port's check: every occurrence Postgres stores, the build derived the same,
