@@ -34,11 +34,15 @@
 ;;       │                                  calendar/, ids/,     covered)
 ;;       │                                  the pages)
 ;;       └──────▶ what the occurrences ──▶ derive-occurrences ──▶ build.occurrences
-;;                are derived from          (DuckDB twins of the       │
-;;                (decision 061): the       five Postgres views)       ▼
-;;                sources' and reference                    occurrences-agreement ──▶ occurrences-agree
-;;                tables, typed, one        (gate: build.occurrences must equal      (token)
-;;                relation per table         occurrences-snapshot, Postgres's own)
+;;                are derived from          (DuckDB twins of the       │       │
+;;                (decision 061): the       five Postgres views)       │       ▼
+;;                sources' and reference                               │  derive-identifier-candidates
+;;                tables, typed, one                                   │       ▼
+;;                relation per table              build.occurrence_identifier_candidates
+;;                                                                     ▼       ▼
+;;                         occurrences-agreement, identifier-candidates-agreement
+;;                         (gates: each port must equal Postgres's stored answer,
+;;                          read in the same snapshot) ──▶ tokens
 ;;
 ;; Until salishsea's step-3 cutover (salish-xv35.9) the pages still read
 ;; occurrences-snapshot; the port runs beside it, and the gate fails the build
@@ -163,7 +167,7 @@
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
 ;; What derive-occurrences reads: all of the above but the stored candidates, which
-;; are there to check a later port against (salish-xv35.3), not to derive from.
+;; are there to check the candidates' port against, not to derive from.
 (define occurrence-derivation-inputs
   (remq 'derived.occurrence_identifier_candidates derivation-input-relations))
 
@@ -264,7 +268,11 @@
      ;; snapshot file, under build., beside what it was derived from.
      (make-artifact 'build.occurrences 'db-relation)
      ;; That the build's occurrences and Postgres's agree, row for row.
-     (make-artifact 'occurrences-agree 'token)))))
+     (make-artifact 'occurrences-agree 'token)
+     ;; Which individual or matriline each designation an occurrence names means
+     ;; (salish-xv35.3), as the build derives it, and that it agrees with Postgres's.
+     (make-artifact 'build.occurrence_identifier_candidates 'db-relation)
+     (make-artifact 'identifier-candidates-agree 'token)))))
 
 (define tasks
   (list
@@ -335,6 +343,20 @@
               #:inputs '(build.occurrences occurrences-snapshot)
               #:outputs '(occurrences-agree)
               #:invoke (node-script "scripts/read-path/compare-occurrences.ts" SNAPSHOT-DB))
+   ;; Postgres's derived.identifier_candidates as DuckDB SQL: each designation an
+   ;; occurrence names, paired with the catalogue's individual or matriline. Reads the
+   ;; occurrences the build derived, not Postgres's, so it is a port of the whole
+   ;; chain; register.fold's twin is in the SQL, read rather than imported.
+   (make-task 'derive-identifier-candidates 'transform
+              #:inputs '(build.occurrences social-groups-snapshot designations-snapshot)
+              #:outputs '(build.occurrence_identifier_candidates)
+              #:invoke (node-script/code "scripts/read-path/derive-identifier-candidates.ts"
+                                 '("scripts/read-path/derive/identifier-candidates.sql")
+                                 (list SNAPSHOT-DB)))
+   (make-task 'identifier-candidates-agreement 'gate
+              #:inputs '(build.occurrence_identifier_candidates derived.occurrence_identifier_candidates)
+              #:outputs '(identifier-candidates-agree)
+              #:invoke (node-script "scripts/read-path/compare-identifier-candidates.ts" SNAPSHOT-DB))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
@@ -370,7 +392,8 @@
     [(snapshot-meta) '("snapshot.meta")]
     [else
      (cond
-       [(or (memq artifact derivation-input-relations) (eq? artifact 'build.occurrences))
+       [(or (memq artifact derivation-input-relations)
+            (memq artifact '(build.occurrences build.occurrence_identifier_candidates)))
         (list (symbol->string artifact))]
        [else
         (for/first ([table (in-list catalogue-tables)]

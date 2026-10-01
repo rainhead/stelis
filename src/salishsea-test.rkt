@@ -15,9 +15,9 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 10
+(check-equal? (set-count pruned) 12
               (string-append "the calendar, the id index, the pages, the profile index, the manifest, "
-                             "and the occurrence port and its gate are off the path to days"))
+                             "and the two ports and their gates are off the path to days"))
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
 
@@ -31,6 +31,12 @@
              "the stored candidates are there to check a later port against, not to derive from")
 (check-not-false (memq 'types.enums (task-inputs (hash-ref (graph-tasks salishsea-graph) 'derive-occurrences)))
                  "two of the views compare enums by their declared order")
+(define-values (candidates-plan _cp) (plan salishsea-graph 'identifier-candidates-agree))
+(check-equal? candidates-plan '(snapshot derive-occurrences derive-identifier-candidates
+                                identifier-candidates-agreement)
+              "the candidates are derived from the build's own occurrences, then checked")
+(check-false (memq 'identifier-candidates-agreement manifest-plan)
+             "nor anything published on the candidates' gate")
 (check-false (memq 'occurrences-agreement manifest-plan)
              "until the cutover nothing published reads the port, so a disagreement can't hold the site back")
 
