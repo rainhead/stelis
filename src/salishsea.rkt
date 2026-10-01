@@ -33,12 +33,16 @@
 ;;       │        (when it was taken)      (after days/,       (what the build
 ;;       │                                  calendar/, ids/,     covered)
 ;;       │                                  the pages)
-;;       └──────▶ what the occurrences are derived from (decision 061):
-;;                the sources' tables and the reference tables the five
-;;                views read, typed, one relation per table. Nothing reads
-;;                them yet: the DuckDB port of those views (salish-xv35.2)
-;;                will, checked against occurrences-snapshot.
+;;       └──────▶ what the occurrences ──▶ derive-occurrences ──▶ build.occurrences
+;;                are derived from          (DuckDB twins of the       │
+;;                (decision 061): the       five Postgres views)       ▼
+;;                sources' and reference                    occurrences-agreement ──▶ occurrences-agree
+;;                tables, typed, one        (gate: build.occurrences must equal      (token)
+;;                relation per table         occurrences-snapshot, Postgres's own)
 ;;
+;; Until salishsea's step-3 cutover (salish-xv35.9) the pages still read
+;; occurrences-snapshot; the port runs beside it, and the gate fails the build
+;; the moment the two disagree.
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
 ;; database that did NOT change digests the same and early cutoff skips the rest.
@@ -158,6 +162,11 @@
 
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
+;; What derive-occurrences reads: all of the above but the stored candidates, which
+;; are there to check a later port against (salish-xv35.3), not to derive from.
+(define occurrence-derivation-inputs
+  (remq 'derived.occurrence_identifier_candidates derivation-input-relations))
+
 ;; What each kind of page reads: profiles.ts's INDIVIDUAL_TABLES and its siblings,
 ;; which load only these, so each task's inputs are exactly what it reads.
 (define individual-page-relations
@@ -248,7 +257,14 @@
     ;; What the occurrences are derived from (decision 061). Derived, like the rest
     ;; of the snapshot: the database holds the originals.
     (for/list ([name (in-list derivation-input-relations)])
-      (make-artifact name 'db-relation)))))
+      (make-artifact name 'db-relation))
+    (list
+     ;; The occurrences as the build derives them (salish-xv35.2): id, observed_at
+     ;; and the document, in the shape of occurrences-snapshot. Written into the
+     ;; snapshot file, under build., beside what it was derived from.
+     (make-artifact 'build.occurrences 'db-relation)
+     ;; That the build's occurrences and Postgres's agree, row for row.
+     (make-artifact 'occurrences-agree 'token)))))
 
 (define tasks
   (list
@@ -301,6 +317,24 @@
                                    "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
                                    "dist/sitemap.xml")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
+   ;; The five per-source Postgres views behind derived.occurrences, as DuckDB SQL
+   ;; (salishsea decision 061). Its two regex extractions run in node first, since
+   ;; RE2 can't express Postgres's word boundaries; the SQL is read, not imported,
+   ;; so it is listed as code by hand.
+   (make-task 'derive-occurrences 'transform
+              #:inputs occurrence-derivation-inputs
+              #:outputs '(build.occurrences)
+              #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
+                                 '("scripts/read-path/derive/extract.ts"
+                                   "scripts/read-path/derive/occurrences.sql")
+                                 (list SNAPSHOT-DB)))
+   ;; The port's check: every occurrence Postgres stores, the build derived the same,
+   ;; compared as the day files would write them. Fails the build on any difference,
+   ;; naming the rows, until the cutover retires it.
+   (make-task 'occurrences-agreement 'gate
+              #:inputs '(build.occurrences occurrences-snapshot)
+              #:outputs '(occurrences-agree)
+              #:invoke (node-script "scripts/read-path/compare-occurrences.ts" SNAPSHOT-DB))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
@@ -336,7 +370,8 @@
     [(snapshot-meta) '("snapshot.meta")]
     [else
      (cond
-       [(memq artifact derivation-input-relations) (list (symbol->string artifact))]
+       [(or (memq artifact derivation-input-relations) (eq? artifact 'build.occurrences))
+        (list (symbol->string artifact))]
        [else
         (for/first ([table (in-list catalogue-tables)]
                     #:when (eq? artifact (snapshot-relation table)))
