@@ -279,19 +279,21 @@
    (make-task 'snapshot 'boundary
               #:outputs (list* 'occurrences-snapshot 'snapshot-meta
                                (append catalogue-relations derivation-input-relations))
-              #:invoke (node-script "scripts/read-path/snapshot.ts" SNAPSHOT-DB))
+              #:invoke (node-script/code "scripts/read-path/snapshot.ts"
+                                 '("scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
    (make-task 'occurrence-days 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(days)
               #:invoke (node-script/code "scripts/read-path/occurrence-days.ts"
-                                 '("scripts/read-path/replace-dir.ts")
+                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
    ;; The region boxes are the map's own, so the files they come from are code.
    (make-task 'calendar 'transform
               #:inputs '(occurrences-snapshot)
               #:outputs '(calendar)
               #:invoke (node-script/code "scripts/read-path/calendar.ts"
-                                 '("scripts/read-path/replace-dir.ts"
+                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
                                    "src/constants.ts" "src/extents.ts")
                                  (list SNAPSHOT-DB)))
    ;; The shard hash is shared with the browser, so it is code: change it and
@@ -340,6 +342,7 @@
                                    "scripts/ingest/maplify.ts"
                                    "scripts/register/name-index.ts"
                                    "src/fold.ts" "src/extents.ts"
+                                   "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/occurrences.sql")
                                  (list SNAPSHOT-DB)))
    ;; The port's check: every occurrence Postgres stores, the build derived the same,
@@ -348,7 +351,9 @@
    (make-task 'occurrences-agreement 'gate
               #:inputs '(build.occurrences occurrences-snapshot)
               #:outputs '(occurrences-agree)
-              #:invoke (node-script "scripts/read-path/compare-occurrences.ts" SNAPSHOT-DB))
+              #:invoke (node-script/code "scripts/read-path/compare-occurrences.ts"
+                                 '("scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
    ;; Postgres's derived.identifier_candidates as DuckDB SQL: each designation an
    ;; occurrence names, paired with the catalogue's individual or matriline. Reads the
    ;; occurrences the build derived, not Postgres's, so it is a port of the whole
@@ -357,12 +362,15 @@
               #:inputs '(build.occurrences social-groups-snapshot designations-snapshot)
               #:outputs '(build.occurrence_identifier_candidates)
               #:invoke (node-script/code "scripts/read-path/derive-identifier-candidates.ts"
-                                 '("scripts/read-path/derive/identifier-candidates.sql")
+                                 '("scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/derive/identifier-candidates.sql")
                                  (list SNAPSHOT-DB)))
    (make-task 'identifier-candidates-agreement 'gate
               #:inputs '(build.occurrence_identifier_candidates derived.occurrence_identifier_candidates)
               #:outputs '(identifier-candidates-agree)
-              #:invoke (node-script "scripts/read-path/compare-identifier-candidates.ts" SNAPSHOT-DB))
+              #:invoke (node-script/code "scripts/read-path/compare-identifier-candidates.ts"
+                                 '("scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
