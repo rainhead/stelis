@@ -15,9 +15,9 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 14
+(check-equal? (set-count pruned) 16
               (string-append "the calendar, the id index, the pages, the profile index, the manifest, "
-                             "the two ports and their gates, and Orcasound's mirror and its report "
+                             "the three ports and their gates, and Orcasound's mirror and its report "
                              "are off the path to days"))
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
@@ -38,6 +38,26 @@
               "the candidates are derived from the build's own occurrences, then checked")
 (check-false (memq 'identifier-candidates-agreement manifest-plan)
              "nor anything published on the candidates' gate")
+;; The profile pages' link views (salish-xv35.13): derived from the build's own
+;; occurrences and candidates, then checked against the snapshot's copies of the views.
+(define-values (links-plan _lp) (plan salishsea-graph 'profile-links-agree))
+(check-equal? links-plan '(snapshot derive-occurrences derive-identifier-candidates
+                           derive-profile-links profile-links-agreement)
+              "the links are a port of the whole chain, not of the last view alone")
+(check-not-false (memq 'public.identifications
+                       (task-inputs (hash-ref (graph-tasks salishsea-graph) 'derive-profile-links)))
+                 "what people assert overrides what a sighting's text suggests")
+(check-false (memq 'public.identifications
+                   (task-inputs (hash-ref (graph-tasks salishsea-graph) 'derive-occurrences)))
+             "the occurrences don't read the identifications; only the links do")
+(check-false (memq 'profile-links-agreement manifest-plan)
+             "until the cutover the pages read the snapshot's views, so the gate holds nothing back")
+(check-equal? (sort (task-inputs (hash-ref (graph-tasks salishsea-graph) 'profile-links-agreement)) symbol<?)
+              '(build.ecotype_occurrences build.group_occurrences build.haulout_occurrences
+                build.individual_occurrences
+                ecotype-occurrences-snapshot group-occurrences-snapshot haulout-occurrences-snapshot
+                individual-occurrences-snapshot)
+              "each twin against the snapshot's copy of the view it twins")
 ;; Orcasound's own ingest (salishsea decision 061, step B): a boundary of its own, beside
 ;; the snapshot, compared with Postgres's copy by a report nothing published waits on.
 (check-equal? (task-inputs (hash-ref (graph-tasks salishsea-graph) 'ingest-orcasound)) '()

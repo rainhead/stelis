@@ -43,10 +43,15 @@
 ;;                         occurrences-agreement, identifier-candidates-agreement
 ;;                         (gates: each port must equal Postgres's stored answer,
 ;;                          read in the same snapshot) ──▶ tokens
+;;                                                             │       │
+;;                                                             ▼       ▼
+;;                               derive-profile-links ──▶ build.individual_occurrences
+;;                               (twins of the four views     and its three siblings
+;;                                the pages' maps read)  ──▶ profile-links-agreement
 ;;
 ;; Until salishsea's step-3 cutover (salish-xv35.9) the pages still read
-;; occurrences-snapshot; the port runs beside it, and the gate fails the build
-;; the moment the two disagree.
+;; occurrences-snapshot and the snapshot's link views; the ports run beside them,
+;; and each gate fails the build the moment the two disagree.
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
 ;; database that did NOT change digests the same and early cutoff skips the rest.
@@ -57,7 +62,8 @@
 ;; TypeScript under scripts/read-path/, run at its pinned node. This file only
 ;; says what reads what.
 
-(require racket/port
+(require racket/list
+         racket/port
          racket/string
          racket/system
          "model.rkt"
@@ -157,7 +163,9 @@
 ;; What the occurrences are derived from (salishsea decision 061, salish-xv35.1):
 ;; every table the five views behind derived.occurrences read, the reference tables
 ;; the functions they call read, the Maplify resolvers' inputs, the stored
-;; identifier candidates to check a port against, and the enums' declared orders.
+;; identifier candidates to check a port against, and the enums' declared orders;
+;; and the identifications people assert, which the profile pages' link views start
+;; from (salish-xv35.13).
 ;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
@@ -167,7 +175,7 @@
     "happywhale.encounters" "happywhale.users" "happywhale.individuals"
     "happywhale.species" "happywhale.media"
     "public.observations" "public.observation_photos" "public.contributors"
-    "public.acoustic_bouts" "public.acoustic_bout_entities"
+    "public.acoustic_bouts" "public.acoustic_bout_entities" "public.identifications"
     "public.providers" "public.collections" "public.organizations"
     "register.entities" "register.names" "register.mappings"
     "register.ancestor" "register.deprecations"
@@ -177,9 +185,19 @@
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
 ;; What derive-occurrences reads: all of the above but the stored candidates, which
-;; are there to check the candidates' port against, not to derive from.
+;; are there to check the candidates' port against, not to derive from, and the
+;; identifications, which only the profile links read.
 (define occurrence-derivation-inputs
-  (remq 'derived.occurrence_identifier_candidates derivation-input-relations))
+  (remq* '(derived.occurrence_identifier_candidates public.identifications)
+         derivation-input-relations))
+
+;; The profile pages' link views, each twinned under build. by derive-profile-links
+;; (salish-xv35.13) and compared with the snapshot's copy of the view.
+(define profile-link-tables
+  '("individual_occurrences" "group_occurrences" "ecotype_occurrences" "haulout_occurrences"))
+(define profile-link-relations
+  (for/list ([table (in-list profile-link-tables)])
+    (string->symbol (string-append "build." table))))
 
 ;; What each kind of page reads: profiles.ts's INDIVIDUAL_TABLES and its siblings,
 ;; which load only these, so each task's inputs are exactly what it reads.
@@ -288,7 +306,14 @@
      ;; Which individual or matriline each designation an occurrence names means
      ;; (salish-xv35.3), as the build derives it, and that it agrees with Postgres's.
      (make-artifact 'build.occurrence_identifier_candidates 'db-relation)
-     (make-artifact 'identifier-candidates-agree 'token)))))
+     (make-artifact 'identifier-candidates-agree 'token)
+     ;; That the profile links the build derives agree with Postgres's views.
+     (make-artifact 'profile-links-agree 'token))
+    ;; Which sightings each individual, matriline, ecotype and haul-out site was seen
+    ;; in (salish-xv35.13), as the build derives them: one relation per view twinned,
+    ;; each holding documents in the shape of the snapshot's copy of that view.
+    (for/list ([name (in-list profile-link-relations)])
+      (make-artifact name 'db-relation)))))
 
 (define tasks
   (list
@@ -359,6 +384,7 @@
                                    "scripts/register/name-index.ts"
                                    "src/fold.ts" "src/extents.ts"
                                    "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/derive/shared.sql"
                                    "scripts/read-path/derive/occurrences.sql")
                                  (list SNAPSHOT-DB)))
    ;; The port's check: every occurrence Postgres stores, the build derived the same,
@@ -385,6 +411,34 @@
               #:inputs '(build.occurrence_identifier_candidates derived.occurrence_identifier_candidates)
               #:outputs '(identifier-candidates-agree)
               #:invoke (node-script/code "scripts/read-path/compare-identifier-candidates.ts"
+                                 '("scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
+   ;; The four views a profile page's map reads (salish-xv35.13), as DuckDB SQL over the
+   ;; occurrences and candidates the build derived, the identifications people assert,
+   ;; Orcasound's bout entities and the catalogue. A haul-out report's distance is
+   ;; PostGIS's spheroidal one, measured in node with GeographicLib, which PostGIS
+   ;; calls, rather than with DuckDB's spatial extension on a 1 GB machine.
+   (make-task 'derive-profile-links 'transform
+              #:inputs '(build.occurrences build.occurrence_identifier_candidates
+                         public.identifications public.acoustic_bout_entities
+                         register.entities register.deprecations register.ancestor
+                         inaturalist.taxa
+                         individuals-snapshot social-groups-snapshot matriline-members-snapshot
+                         haulouts-snapshot)
+              #:outputs profile-link-relations
+              #:invoke (node-script/code "scripts/read-path/derive-profile-links.ts"
+                                 '("scripts/read-path/derive/haulout-distance.ts"
+                                   "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/derive/shared.sql"
+                                   "scripts/read-path/derive/haulout-nearby.sql"
+                                   "scripts/read-path/derive/profile-links.sql")
+                                 (list SNAPSHOT-DB)))
+   ;; Each twin against the snapshot's copy of its view, as multisets of documents.
+   (make-task 'profile-links-agreement 'gate
+              #:inputs (append profile-link-relations
+                               (map snapshot-relation profile-link-tables))
+              #:outputs '(profile-links-agree)
+              #:invoke (node-script/code "scripts/read-path/compare-profile-links.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
    ;; Orcasound's whole corpus, fetched by the build (salishsea decision 061, step B):
@@ -445,7 +499,8 @@
      (cond
        [(or (memq artifact derivation-input-relations)
             (memq artifact orcasound-relations)
-            (memq artifact '(build.occurrences build.occurrence_identifier_candidates)))
+            (memq artifact '(build.occurrences build.occurrence_identifier_candidates))
+            (memq artifact profile-link-relations))
         (list (symbol->string artifact))]
        [else
         (for/first ([table (in-list catalogue-tables)]
