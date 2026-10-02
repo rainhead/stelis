@@ -190,7 +190,14 @@ observation blocks publish — an OPERATOR alarm, distinct from editorial flags)
 content-addresses db-relation inputs via a DuckDB order-independent digest (row-
 coherent = the skip signal), plus per-column digests + non-null counts and a
 per-table row `count(*)` as the attribute-level observation (`relation-columns`,
-`relation-row-count`, st-7vz/st-0vz) ·
+`relation-row-count`, st-7vz/st-0vz); `make-relation-observer` (st-ml9.6) answers
+both for every relation of one database in two DuckDB launches instead of ~four per
+relation, byte-identical, holding each answer until a task writes a relation that
+shares a table with it — salishsea's resolvers use it (beeatlas's don't yet) ·
+[`written.rkt`](src/written.rkt) which artifacts a task has written in this
+process: `run-task` (and a derivation) notes its declared outputs when it finishes,
+so a cached observation is keyed by the artifact's write generation — the same
+trust in declared outputs the skip decision already places ·
 [`notes-digest.rkt`](src/notes-digest.rkt) content-addresses the authoritative
 notes STORE (a SQLite `'file` leaf) PER `canonical_name` over approved notes —
 the ingestion-boundary read that turns a CRUD on one note into a keyed delta

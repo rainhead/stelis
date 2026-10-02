@@ -10,7 +10,8 @@
          racket/file
          "model.rkt"
          "cache.rkt"
-         "exec.rkt")
+         "exec.rkt"
+         "written.rkt")
 
 ;; a synthetic exporter: writes one file per key into $EXPORT_DIR/maps, with
 ;; content "<key>:<TAG>". Honors STELIS_REBUILD_KEYS (only those keys); absent it,
@@ -39,7 +40,10 @@ SH
 (define (files) (sort (map path->string (directory-list maps)) string<?))
 
 ;; 1. full build (no rebuild-keys): the whole set at v1
+(define maps-written (write-generation 'maps))
 (check-eqv? 0 (run-task g 'export runtimes #:env (env "v1")))
+(check-equal? (write-generation 'maps) (add1 maps-written)
+              "a task that ran has written its outputs, so a held observation of them is stale")
 (check-equal? (files) '("a" "b" "c") "full build writes every key")
 (check-equal? (content "b") "b:v1")
 

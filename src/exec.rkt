@@ -20,7 +20,8 @@
          json
          "model.rkt"
          "cache.rkt"
-         "trace.rkt")
+         "trace.rkt"
+         "written.rkt")
 
 (provide runtime runtime? runtime-name runtime-launch ; re-provided from model.rkt
          runtime-label runtime-identity
@@ -190,13 +191,19 @@
         (cons (cons "STELIS_REBUILD_KEYS" (string-join rebuild-keys "\n")) extra-env)
         extra-env))
   (flush-output) ; our buffered banner must land before the child's direct fd writes
-  (parameterize ([current-environment-variables
-                  (environment-variables-copy (current-environment-variables))])
-    (for ([kv (in-list env*)])
-      (putenv (car kv) (cdr kv)))
-    (if label
-        (run/streaming exe (cdr argv) label)
-        (apply system*/exit-code exe (cdr argv)))))
+  ;; Whatever the outcome, the task may have written its outputs, so a cached
+  ;; observation of any of them is stale from here (written.rkt, st-ml9.6).
+  (dynamic-wind
+   void
+   (lambda ()
+     (parameterize ([current-environment-variables
+                     (environment-variables-copy (current-environment-variables))])
+       (for ([kv (in-list env*)])
+         (putenv (car kv) (cdr kv)))
+       (if label
+           (run/streaming exe (cdr argv) label)
+           (apply system*/exit-code exe (cdr argv)))))
+   (lambda () (note-written! (task-outputs (hash-ref (graph-tasks g) name))))))
 
 ;; run/streaming : path (listof string) symbol -> exact-integer
 ;; Run the command, prefixing each captured output line with `label'. stdout and
@@ -424,7 +431,10 @@
          (define d (task-invoke t))
          (printf "\n▶ ~a  [derivation: ~a]\n" name (derivation-label d))
          (define-values (ok? note)
-           ((derivation-run d) (check-context g name env state-dir)))
+           (dynamic-wind
+            void
+            (lambda () ((derivation-run d) (check-context g name env state-dir)))
+            (lambda () (note-written! (task-outputs t)))))
          (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
          (when (and ok? env) (observe-outputs!))
          (if ok? 'ok 'failed)]

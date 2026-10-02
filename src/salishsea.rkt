@@ -514,16 +514,6 @@
                     #:when (eq? artifact (snapshot-relation table)))
           (list (string-append "snapshot." table)))])]))
 
-(define (resolve-relation artifact)
-  (define tables (relation-tables artifact))
-  (define db (relation-db artifact))
-  (and tables db (relation-digest db tables)))
-
-(define (resolve-relation-columns artifact)
-  (define tables (relation-tables artifact))
-  (define db (relation-db artifact))
-  (and tables db (relation-columns db tables)))
-
 ;; The database a relation lives in: a mirror's SQLite file, attached under its source's
 ;; name (relation-digest's sqlite-db), or the snapshot. #f when the file isn't there yet.
 (define (relation-db artifact)
@@ -531,6 +521,17 @@
     [(memq artifact orcasound-relations) (sqlite-db orcasound-mirror "orcasound")]
     [(file-exists? snapshot-db) snapshot-db]
     [else #f]))
+;; A relation's digest and its per-column parts, for every relation of a database in
+;; one batch, held until a task writes the relation (st-ml9.6): the snapshot's ~45
+;; relations cost two DuckDB launches, where asking one relation at a time cost about
+;; four launches each, every one opening the 330 MB file.
+(define-values (resolve-relation resolve-relation-columns)
+  (make-relation-observer
+   (for/list ([(name a) (in-hash (graph-artifacts salishsea-graph))]
+              #:when (eq? (artifact-kind a) 'db-relation))
+     name)
+   relation-db
+   relation-tables))
 
 ;; --- Build clock (ADR 0004) -------------------------------------------------
 ;; The committer date of the checkout's HEAD, as for beeatlas; an already-set

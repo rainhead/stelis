@@ -33,9 +33,11 @@
 (require racket/string
          racket/list
          file/sha1
-         "duckdb.rkt")
+         "duckdb.rkt"
+         "written.rkt")
 
 (provide relation-digest relation-columns relation-row-count
+         make-relation-observer
          (struct-out sqlite-db))
 
 ;; A relation's database: a DuckDB file (a path, as always), or a SQLite file (sqlite-db),
@@ -218,3 +220,184 @@
              #:when (non-empty-string? (string-trim line)))
     (define i (for/first ([ch (in-string line)] [k (in-naturals)] #:when (char=? ch #\=)) k))
     (cons (substring line 0 i) (substring line (add1 i)))))
+
+;; --- Batched observation (st-ml9.6) -------------------------------------------
+;; relation-digest and relation-columns cost a CLI launch per query, several per
+;; table (the digest, the column list, the row count, the column digests), and each
+;; launch opens the database file: on salishsea's Fly machine that was ~35 s of a
+;; 68 s build that changed nothing, ~40 tables in a 330 MB snapshot. The observer
+;; below answers the same two questions for every relation of one database in TWO
+;; launches — the column lists, then every digest at once — and remembers the
+;; answers until a task writes the relation (written.rkt).
+;;
+;; The values are the same strings the one-relation functions compute, assembled
+;; from per-table pieces in the order those functions' SQL sorts them, so a
+;; recorded history stays comparable across the change (pinned in
+;; relation-digest-test). Anything the batch can't answer — a launch that fails, a
+;; database not there yet — falls back to the one-relation functions, so the
+;; observer never knows less than they did.
+
+;; One table's observation: its digest "<rows>:<sum>", its row count, and its
+;; per-column parts ("<table>.<column>" . "<digest>:<count>"), or 'absent.
+(struct table-obs (digest rows columns))
+
+;; batch-columns-query : db (listof string) -> string
+;; "<table>|<column>" for every column of every table, in table-columns' order.
+(define (batch-columns-query db tables)
+  (define qualified
+    (if (sqlite-db? db)
+        "table_catalog || '.' || table_name"
+        "table_schema || '.' || table_name"))
+  (string-append
+   "SELECT " qualified ", column_name FROM information_schema.columns WHERE "
+   (if (sqlite-db? db) "table_schema = 'main' AND " "")
+   qualified " IN ("
+   (string-join (for/list ([t (in-list tables)]) (string-append "'" t "'")) ", ")
+   ") ORDER BY 1, column_name;"))
+
+;; batch-values-query : (listof (cons string (listof string))) -> string
+;; "D|<table>|<rows>:<sum>" per table, "N|<table>|<count>" per table, and
+;; "C|<table>.<column>|<digest>:<count>" per column: the expressions of
+;; table-digest-subquery, table-rowcount and columns-query, unchanged.
+;;
+;; Capped, as salishsea's scripts are, for a 1 GB machine with Racket resident
+;; beside it: uncapped, DuckDB scans the whole database with every core and keeps
+;; what it read, 417 MB at peak over salishsea's 330 MB snapshot; at 128 MB and one
+;; thread, 206 MB and 2.5 s. The aggregates are sums and counts, so the cap only
+;; bounds the cache. Neither setting changes a value.
+(define (batch-values-query table-cols)
+  (string-append
+   "SET memory_limit = '128MB'; SET threads = 1;\n"
+   (string-join
+    (append*
+     (for/list ([tc (in-list table-cols)])
+       (define t (car tc))
+       (append
+        (list (string-append "SELECT 'D|" t "|' || " (table-digest-subquery t))
+              (string-append "SELECT 'N|" t "|' || count(*)::VARCHAR FROM " t))
+        (for/list ([col (in-list (cdr tc))])
+          (string-append
+           "SELECT 'C|" t "." col "|' || "
+           "coalesce(sum(md5_number_lower(to_json(" col ")::VARCHAR))::VARCHAR, '0') || ':' || "
+           "count(" col ")::VARCHAR FROM " t)))))
+    "\nUNION ALL\n")
+   ";"))
+
+;; observe-tables : db (listof string) -> (or/c (hash string -> (or/c table-obs 'absent)) #f)
+;; Every table's observation in two launches, or #f when either launch fails.
+(define (observe-tables db tables)
+  (define col-out (query-db db (batch-columns-query db tables)))
+  (and col-out
+       (let* ([cols-of
+               (for/fold ([h (hash)]) ([line (in-list (string-split col-out "\n"))]
+                                       #:when (non-empty-string? (string-trim line)))
+                 (define parts (string-split line "|"))
+                 (hash-update h (car parts) (lambda (cs) (cons (cadr parts) cs)) '()))]
+              ;; table-columns' filter, over its order (the CLI's ORDER BY column_name)
+              [present
+               (for/list ([t (in-list tables)] #:when (hash-has-key? cols-of t))
+                 (cons t (filter (lambda (c) (and (not (string-prefix? c "_dlt_"))
+                                                  (regexp-match? sql-identifier? c)))
+                                 (reverse (hash-ref cols-of t)))))]
+              [val-out (if (null? present) "" (query-db db (batch-values-query present)))])
+         (and val-out
+              (let ([values-of
+                     (for/hash ([line (in-list (string-split val-out "\n"))]
+                                #:when (non-empty-string? (string-trim line)))
+                       (define l (string-split line "|"))
+                       (values (cons (car l) (cadr l)) (caddr l)))])
+                (define (value kind key) (hash-ref values-of (cons kind key) #f))
+                (define result
+                  (for/hash ([t (in-list tables)])
+                    (define cols (assoc t present))
+                    (values
+                     t
+                     (if cols
+                         (table-obs (value "D" t)
+                                    (value "N" t)
+                                    (for/list ([c (in-list (cdr cols))])
+                                      (define part (string-append t "." c))
+                                      (cons part (value "C" part))))
+                         'absent))))
+                ;; every value the query should have printed, or no answer at all
+                (and (for/and ([o (in-hash-values result)])
+                       (or (eq? o 'absent)
+                           (and (table-obs-digest o) (table-obs-rows o)
+                                (andmap cdr (table-obs-columns o)))))
+                     result))))))
+
+;; obs->digest : (listof string) (listof table-obs) -> string
+;; relation-digest's value: the sha1 of relation-query's CLI output, one
+;; "<table>=<digest>" line per table, sorted by table.
+(define (obs->digest tables obs)
+  (sha1 (open-input-string
+         (apply string-append
+                (for/list ([to (in-list (sort (map cons tables obs) string<? #:key car))])
+                  (string-append (car to) "=" (table-obs-digest (cdr to)) "\n"))))))
+
+;; obs->columns : (listof string) (listof table-obs) -> (listof (cons string string))
+;; relation-columns' value: each table's row-count part and column parts, sorted.
+(define (obs->columns tables obs)
+  (sort (append*
+         (for/list ([t (in-list tables)] [o (in-list obs)])
+           (cons (cons (string-append t ".*") (table-obs-rows o)) (table-obs-columns o))))
+        string<? #:key car))
+
+;; make-relation-observer :
+;;   (listof symbol) (symbol -> (or/c db #f)) (symbol -> (or/c (listof string) #f))
+;;   -> (values (symbol -> (or/c string #f))
+;;              (symbol -> (or/c (listof (cons string string)) #f)))
+;; A project's two relation resolvers (resolve-relation, resolve-relation-columns)
+;; over the db-relation artifacts `relations', which `db-of' places in a database
+;; and `tables-of' maps to tables. Asked about one relation, it observes every
+;; relation of that database whose answer it doesn't hold, in one batch, and holds
+;; each answer until a task writes that relation, or any relation sharing a table
+;; with it: a write is to tables, and the task declares only its own artifact.
+(define (make-relation-observer relations db-of tables-of)
+  ;; artifact -> (vector generation digest columns)
+  (define memo (make-hasheq))
+  ;; artifact -> the relations sharing a table with it, itself included
+  (define overlaps (make-hasheq))
+  (define (overlapping a)
+    (hash-ref! overlaps a
+               (lambda ()
+                 (define mine (or (tables-of a) '()))
+                 (cons a (for/list ([r (in-list relations)]
+                                    #:when (and (not (eq? r a))
+                                                (for/or ([t (in-list (or (tables-of r) '()))])
+                                                  (member t mine))))
+                           r)))))
+  (define (generation a)
+    (for/sum ([r (in-list (overlapping a))]) (write-generation r)))
+  (define (current? a)
+    (define m (hash-ref memo a #f))
+    (and m (= (vector-ref m 0) (generation a))))
+  (define (fill! a)
+    (define db (db-of a))
+    (when db
+      (define wanted
+        (for/list ([r (in-list relations)]
+                   #:when (and (not (current? r)) (equal? (db-of r) db) (tables-of r)))
+          r))
+      (define gens (for/list ([r (in-list wanted)]) (generation r)))
+      (define all-tables (remove-duplicates (append* (map tables-of wanted))))
+      (define ok-tables (filter (lambda (t) (regexp-match? qualified-name? t)) all-tables))
+      (define batch (and (pair? ok-tables) (observe-tables db ok-tables)))
+      (for ([r (in-list wanted)] [g (in-list gens)])
+        (define tables (tables-of r))
+        (define obs (and batch (pair? tables)
+                         (for/list ([t (in-list tables)]) (hash-ref batch t #f))))
+        (cond
+          [(and obs (andmap table-obs? obs))
+           (hash-set! memo r (vector g (obs->digest tables obs) (obs->columns tables obs)))]
+          [(and obs (andmap values obs))
+           ;; a table isn't there: what the one-relation functions answer then
+           (hash-set! memo r (vector g #f #f))]
+          [else
+           (hash-set! memo r (vector g (relation-digest db tables) (relation-columns db tables)))]))))
+  (define (lookup a i)
+    (unless (current? a) (fill! a))
+    (define m (hash-ref memo a #f))
+    (and m (current? a) (vector-ref m i)))
+  (values (lambda (a) (lookup a 1))
+          (lambda (a) (lookup a 2))))

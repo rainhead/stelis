@@ -13,7 +13,8 @@
          racket/string
          "model.rkt"
          "cache.rkt"
-         "relation-digest.rkt")
+         "relation-digest.rkt"
+         "written.rkt")
 
 (define duckdb (find-executable-path "duckdb"))
 
@@ -160,5 +161,47 @@
                 '("orcasound.bouts.*" "orcasound.bouts.id" "orcasound.bouts.lon" "orcasound.bouts.title"))
    (test-false "no file: unresolvable, as a missing DuckDB file is"
                (relation-digest (sqlite-db (build-path tmp "absent.sqlite") "orcasound") '("orcasound.bouts")))
+
+   ;; --- The batched observer (st-ml9.6) ----------------------------------------
+   ;; The same answers the one-relation functions give — byte for byte, so recorded
+   ;; history stays comparable — for every relation of a database at once, held until
+   ;; a task writes the relation.
+   (ddl! db (string-append
+             "CREATE TABLE s.only_dlt (_dlt_id VARCHAR);"
+             "INSERT INTO s.only_dlt VALUES ('a');"))
+   (define rels
+     (hash 'r '("s.r") 'c '("s.c") 'both '("s.r" "s.c") 'gone '("s.c" "s.nope")
+           'dlt '("s.only_dlt") 'bad '("not a table")))
+   (define-values (obs-digest obs-columns)
+     (make-relation-observer (hash-keys rels) (lambda (_) db) (lambda (a) (hash-ref rels a))))
+   (for ([(a tables) (in-hash rels)])
+     (test-equal? (format "~a: the observer's digest is relation-digest's" a)
+                  (obs-digest a) (relation-digest db tables))
+     (test-equal? (format "~a: the observer's columns are relation-columns'" a)
+                  (obs-columns a) (relation-columns db tables)))
+   (define held (obs-digest 'r))
+   (ddl! db "UPDATE s.r SET v = 'unseen' WHERE k = 1;")
+   (test-equal? "a write no task made isn't seen: the answer is held"
+                (obs-digest 'r) held)
+   (note-written! '(c))
+   (test-equal? "nor does writing another relation release it"
+                (obs-digest 'r) held)
+   (note-written! '(r))
+   (test-equal? "once a task has written the relation, it is observed afresh"
+                (obs-digest 'r) (relation-digest db '("s.r")))
+   (test-false "and the answer moved" (equal? (obs-digest 'r) held))
+   (test-equal? "a multi-table relation over it moves too"
+                (obs-digest 'both) (relation-digest db '("s.r" "s.c")))
+
+   (define-values (sq-digest sq-columns)
+     (make-relation-observer '(bouts) (lambda (_) (sqlite-db sq "orcasound"))
+                             (lambda (_) '("orcasound.bouts"))))
+   (test-equal? "a SQLite relation, batched: relation-digest's digest"
+                (sq-digest 'bouts) (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")))
+   (test-equal? "and relation-columns' columns"
+                (sq-columns 'bouts) (relation-columns (sqlite-db sq "orcasound") '("orcasound.bouts")))
+   (define-values (none-digest _nc)
+     (make-relation-observer '(r) (lambda (_) #f) (lambda (_) '("s.r"))))
+   (test-false "no database yet: no answer" (none-digest 'r))
 
    (delete-directory/files tmp)])
