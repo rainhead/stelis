@@ -36,6 +36,10 @@
 ;;                        sake (st-7f4: moving it would start a silent empty
 ;;                        timeline); a NEW project defaults into its own checkout,
 ;;                        since it has no timeline to strand.
+;;   history-retention  : (or/c exact-positive-integer #f) — seconds of build history
+;;                        to keep (history-prune!, st-ml9.7), or #f to keep it all.
+;;                        salishsea builds every few minutes and keeps 30 days;
+;;                        beeatlas builds nightly and keeps its whole timeline.
 (provide (struct-out project)
          make-project)
 
@@ -44,7 +48,8 @@
                  partial-tasks edge-verify-tasks
                  source-date-epoch
                  checkout checkout-env
-                 default-state-dir))
+                 default-state-dir
+                 history-retention))
 
 (define (make-project name
                       #:graph graph
@@ -58,10 +63,12 @@
                       #:source-date-epoch source-date-epoch
                       #:checkout checkout
                       #:checkout-env checkout-env
-                      #:default-state-dir default-state-dir)
+                      #:default-state-dir default-state-dir
+                      #:history-retention [history-retention #f])
   (project name graph runtimes path
            resolve-relation resolve-relation-columns resolve-store-keys
            partial-tasks edge-verify-tasks
            source-date-epoch
            checkout checkout-env
-           default-state-dir))
+           default-state-dir
+           history-retention))

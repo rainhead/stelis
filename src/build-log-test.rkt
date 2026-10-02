@@ -27,7 +27,7 @@
                #:okh (list (cons 'notes '(("Agapostemon <texanus>.json" . "h1")
                                           ("Bombus mixtus.json" . "h2")))))
           (rec 'gate 'failed #:decision (decision 'run 'input-changed '(db)))
-          (rec 'publish 'skipped #:blockers '(gate)))))
+          (rec 'publish 'skipped #:blockers '(gate))) 1))
 
 (define b2
   (build-record 'all "graphhash111" "1754100000"
@@ -39,7 +39,7 @@
                                           ("Ceratina acantha.json" . "h3")))))
           (rec 'gate 'ok
                #:decision (decision 'run 'input-changed '(db))
-               #:delta (output-delta 'identical '(gate-token))))))
+               #:delta (output-delta 'identical '(gate-token)))) 2))
 
 (define builds (list b1 b2))
 (define html
@@ -89,12 +89,12 @@
    (list (build-record 'all "g" "1754000000"
                        (list (rec 'fan 'ok
                                   #:decision (decision 'run 'no-cache-entry '())
-                                  #:okh (list (cons 'pages many)))))
+                                  #:okh (list (cons 'pages many)))) 1)
          (build-record 'all "g" "1754000001"
                        (list (rec 'fan 'ok
                                   #:decision (decision 'run 'input-changed '(db))
                                   #:delta (output-delta 'changed '(pages))
-                                  #:okh (list (cons 'pages many2))))))))
+                                  #:okh (list (cons 'pages many2)))) 2))))
 (check-true (regexp-match? #rx"…\\(\\+4 more\\)" wide)
             "12 moved keys: 8 named, the surplus counted aloud")
 
@@ -136,3 +136,12 @@
               (build-log-html builds
                               #:rewrites (list (cons "/Users/me/dev/beeatlas/" "beeatlas/")
                                                (cons "/Users/me/" "~/"))))
+
+;; After retention (st-ml9.7) the first kept build isn't #1: the page numbers builds
+;; as history does and says the earlier ones expired.
+(let ([page (build-log-html (list (struct-copy build-record b1 [number 41])
+                                  (struct-copy build-record b2 [number 42])))])
+  (check-true (regexp-match? #rx"2 builds recorded \\(#41 on; earlier ones expired\\) · latest #42" page)
+              "the header counts what is kept and names where it starts")
+  (check-equal? (regexp-match* #rx"<h2>Build #[0-9]+" page) '("<h2>Build #42" "<h2>Build #41")
+                "each section under its number, not its position"))

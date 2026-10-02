@@ -604,4 +604,7 @@
                 #:source-date-epoch salishsea-source-date-epoch
                 #:checkout (string->path SALISHSEA)
                 #:checkout-env "SALISHSEA_DIR"
-                #:default-state-dir (in-checkout ".stelis")))
+                #:default-state-dir (in-checkout ".stelis")
+                ;; Thirty days (Peter, 2026-10-02): at a build every few minutes the
+                ;; whole timeline would fill the Fly volume within months (st-ml9.7).
+                #:history-retention (* 30 24 60 60)))

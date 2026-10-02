@@ -112,12 +112,12 @@
     (trace-record 'derive (decision 'run 'input-changed '(raw))
                   (snapshot "recipe" (hash 'raw in-h))
                   'ok '() #f (list (cons 'mid out-h)) '() '()))
-  (define b1 (build-record 'mid "g" "1000" (list (rec "r0" "m0"))))
+  (define b1 (build-record 'mid "g" "1000" (list (rec "r0" "m0")) 1))
   ;; a cached build re-observes nothing (empty output-hashes) — no timeline point
   (define b2 (build-record 'mid "g" "2000"
                            (list (trace-record 'derive (decision 'skip 'cached '())
-                                               #f 'cached '() #f '() '() '()))))
-  (define b3 (build-record 'mid "g" "3000" (list (rec "r1" "m1"))))
+                                               #f 'cached '() #f '() '() '())) 2))
+  (define b3 (build-record 'mid "g" "3000" (list (rec "r1" "m1")) 3))
   (define thy (history->theory (list b1 b2 b3)))
   (check-equal? (sort (datalog-observations thy 'mid) < #:key car)
                 '((1 . "m0") (3 . "m1"))
@@ -135,7 +135,7 @@
                                       (snapshot "r" (hash 'taxa "t")) 'ok '() #f
                                       '((species-maps . "d"))
                                       (list (cons 'species-maps keys))
-                                      '()))))
+                                      '())) b))
   (define thy (history->theory
                (list (rec-maps 1 '(("genus/Bombus.svg" . "b0")))
                      (rec-maps 2 '(("genus/Bombus.svg" . "b1"))))))

@@ -224,6 +224,44 @@
                 "so the newest build's delta is the full load's")
   (delete-directory/files kt))
 
+;; --- Retention (st-ml9.7): aged builds go, survivors keep their numbers ----------
+(let ([rt (make-temporary-file "stelis-history-retention-~a" 'directory)])
+  (define day 86400)
+  (define t0 1790000000)
+  ;; a build from before retention existed: its line carries no recorded-at
+  (history-append! rt 'species-maps kg "0" (list (rec-maps "t" '(("a" . "legacy")))) #:project 'salishsea)
+  (let* ([f (build-path rt "history.rktd")]
+         [e (read (open-input-string (car (file->lines f))))])
+    (call-with-output-file f #:exists 'truncate
+      (lambda (o) (write (hash-remove e 'recorded-at) o) (newline o))))
+  (for ([at (list t0 (+ t0 day) (+ t0 (* 40 day)) (+ t0 (* 41 day)))]
+        [v (in-naturals 1)])
+    (history-append! rt 'species-maps kg (number->string v)
+                     (list (rec-maps "t" (list (cons "a" (format "v~a" v)))))
+                     #:project 'salishsea #:recorded-at at))
+  (define blocks-before (length (directory-list (build-path rt "blocks"))))
+  (define-values (gone collected) (history-prune! rt (* 30 day) #:now (+ t0 (* 45 day))))
+  (check-equal? gone 3 "the undated build and the two older than thirty days")
+  (check-equal? collected 3 "and the three maps only they named; the graph snapshot stays")
+  (check-equal? (length (directory-list (build-path rt "blocks"))) (- blocks-before 3))
+  (define kept (history-load rt))
+  (check-equal? (map build-record-number kept) '(4 5) "survivors keep the numbers they had")
+  (check-equal? (map build-record-epoch kept) '("3" "4"))
+  (check-equal? (history-pruned-count rt) 3)
+  (check-equal? (map key-observation-build (history-key-observations rt 'species-maps)) '(4 5)
+                "every map a survivor names still reads")
+  (check-eq? (build-key-delta 'species-maps (history-key-observations rt 'species-maps) 4)
+             'no-basis
+             "the first production after the horizon has nothing to diff against, and says so")
+  (check-equal? (history-foreign-projects rt 'salishsea) '()
+                "the header line is not a build, so it is no other project's either")
+  (define-values (none _c) (history-prune! rt (* 30 day) #:now (+ t0 (* 45 day))))
+  (check-equal? none 0 "pruning again drops nothing")
+  (history-append! rt 'species-maps kg "5" (list (rec-maps "t" '(("a" . "v5"))))
+                   #:project 'salishsea #:recorded-at (+ t0 (* 46 day)))
+  (check-equal? (map build-record-number (history-load rt)) '(4 5 6) "and the next build is #6")
+  (delete-directory/files rt))
+
 ;; --- graceful degradation ----------------------------------------------------
 
 ;; a corrupt line in the middle is skipped; the builds around it still load

@@ -268,7 +268,13 @@ reader (delta, `--moved-keys`, explain) knows about blocks; reading is tolerant 
 the old inline shape, so the accumulated timeline survived without a version bump.
 A block's FILENAME is the CID of its own bytes and `block-ref` re-checks it, so
 corruption is detected rather than decoded; freshness never reads its sequence
-(ADR 0005) ·
+(ADR 0005). RETENTION (st-ml9.7): a project may keep only recent history
+(`#:history-retention`; salishsea 30 days, beeatlas all). Each line records when it
+was written — the file's one clock, housekeeping only — and `history-prune!` drops
+the aged-out PREFIX after each build, then deletes the blocks no remaining line
+names. The count dropped is a header line, so every survivor keeps its NUMBER
+(`build-record-number`; publish receipts join on number + epoch), and answers that
+reach the horizon say where the record starts ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
 [`delta.rkt`](src/delta.rkt) the H2 delta substrate entry point (st-066): the pure
 per-key delta core — folds a keyed artifact's key-observation timeline into a named

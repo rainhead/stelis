@@ -108,7 +108,7 @@
 ;; fact projection with no derivation rules: the raw material, not the verdict.
 (define (history->theory builds)
   (define thy (make-theory))
-  (for ([b (in-list builds)] [i (in-naturals 1)])
+  (for* ([b (in-list builds)] [i (in-value (build-record-number b))])
     (for ([r (in-list (build-record-records b))])
       (define task (trace-record-task r))
       (when (eq? 'ok (trace-record-outcome r))

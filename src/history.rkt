@@ -25,6 +25,8 @@
 
 (require racket/file
          racket/list
+         racket/path
+         racket/set
          racket/string
          "model.rkt"
          "cache.rkt"    ; read-versioned — the shared versioned-file reader
@@ -36,6 +38,8 @@
          (struct-out observation)
          (struct-out key-observation)
          history-append!
+         history-prune!
+         history-pruned-count
          history-load
          history-last
          history-last-source-report
@@ -60,7 +64,10 @@
 ;;   epoch      : string — the build's SOURCE_DATE_EPOCH (source snapshot clock);
 ;;                sequence metadata for BROWSING, never consulted for freshness
 ;;   records    : (listof trace-record) — per task, in build order
-(struct build-record (target graph-hash epoch records) #:transparent)
+;;   number     : exact-positive-integer — its 1-based number in the whole history,
+;;                pruned builds included (history-prune!), so a build keeps its
+;;                number when older ones are dropped
+(struct build-record (target graph-hash epoch records number) #:transparent)
 
 ;; One artifact observed at one build: the timeline point history-observations
 ;; walks. `record' is the producing task's trace-record — its snapshot is the
@@ -111,7 +118,7 @@
        (for*/list ([line (in-list (file->lines f))]
                    [e (in-value (with-handlers ([exn:fail? (lambda (_) #f)])
                                   (read (open-input-string line))))]
-                   #:when (hash? e))
+                   #:when (and (hash? e) (not (pruned-header? e))))
          (hash-ref e 'project LEGACY-PROJECT)))
      (sort (remove-duplicates (remove* (list project) seen))
            symbol<?)]))
@@ -127,7 +134,8 @@
 ;; (model.rkt's GRAPH-SNAPSHOT-VERSION) and the hash is the filename, verifiable by
 ;; re-hashing the bytes rather than by trusting a field that sits next to them.
 (define (history-append! state-dir target g epoch records
-                         #:project [project LEGACY-PROJECT])
+                         #:project [project LEGACY-PROJECT]
+                         #:recorded-at [recorded-at (current-seconds)])
   (define h (block-put! state-dir (graph->drisl g)))
   (make-directory* state-dir)
   (call-with-output-file (history-file state-dir) #:exists 'append
@@ -140,6 +148,7 @@
                    'target target
                    'graph-hash h
                    'epoch epoch
+                   'recorded-at recorded-at
                    'records (for/list ([r (in-list records)])
                               (externalize-keyed state-dir (trace-record->datum r))))
              o)
@@ -241,8 +250,10 @@
   (cond
     [(not (file-exists? f)) '()]
     [else
+     (define lines (file->lines f))
+     (define pruned (lines-pruned-count lines))
      (define entries
-       (for*/list ([line (in-list (file->lines f))]
+       (for*/list ([line (in-list lines)]
                    #:unless (string=? "" (string-trim line))
                    [e (in-value (line->entry line))]
                    #:when e)
@@ -270,7 +281,8 @@
                         e
                         (if (>= (- n 1 i) cutoff)
                             (lambda (r) (internalize-keyed state-dir r))
-                            internalize-older)))]
+                            internalize-older)
+                        (+ pruned (- n i))))]
                   #:when br)
         br))]))
 
@@ -366,17 +378,17 @@
 
 ;; observe-timeline : path-string symbol (trace-record -> alist) (nat any trace-record -> X)
 ;;                    -> (listof X)
-;; The shared walk behind both timelines: over the loaded history (1-based build
-;; index), pull `artifact's entry from each record via `field', and build a point
+;; The shared walk behind both timelines: over the loaded history (by build
+;; number), pull `artifact's entry from each record via `field', and build a point
 ;; with `make' from (build-index, that entry's value, the producing record). A
 ;; build whose producer cache-skipped carries no entry, so it contributes no
 ;; point — which is what makes consecutive points genuine re-productions.
 (define (observe-timeline state-dir artifact field make)
-  (for*/list ([(br i) (in-indexed (history-load state-dir))]
+  (for*/list ([br (in-list (history-load state-dir))]
               [rec (in-list (build-record-records br))]
               [pair (in-value (assq artifact (field rec)))]
               #:when pair)
-    (make (add1 i) (cdr pair) rec)))
+    (make (build-record-number br) (cdr pair) rec)))
 
 ;; history-observations : path-string symbol -> (listof observation)
 ;; Every point at which `artifact' was (re)produced, in build order — its
@@ -436,12 +448,119 @@
        (list? (hash-ref e 'records #f))
        e))
 
-;; entry->build-record : hash (datum -> datum) -> (or/c build-record #f)
+;; entry->build-record : hash (datum -> datum) exact-positive-integer -> (or/c build-record #f)
 ;; `internalize' turns each record datum's keyed entries back into maps (or marks).
-(define (entry->build-record e internalize)
+(define (entry->build-record e internalize number)
   (with-handlers ([exn:fail? (lambda (_) #f)])
     (build-record (hash-ref e 'target)
                   (hash-ref e 'graph-hash #f)
                   (hash-ref e 'epoch #f)
                   (for/list ([r (in-list (hash-ref e 'records))])
-                    (datum->trace-record (internalize r))))))
+                    (datum->trace-record (internalize r)))
+                  number)))
+
+;; --- Retention (st-ml9.7) -----------------------------------------------------
+;; A project that builds every few minutes can't keep every build: salishsea's Fly
+;; volume would fill within months. So a project may set a retention, and after each
+;; build the history drops the builds recorded longer ago than that, then deletes the
+;; blocks no remaining build names.
+;;
+;; What is dropped is always a PREFIX, and the count of builds dropped is kept in a
+;; header line at the top of the log, so every remaining build keeps its NUMBER: a
+;; publish receipt joins on number and epoch (st-8x1), and renumbering the survivors
+;; would silently detach every receipt from its build. Readers past the horizon get
+;; the existing honest answers: the first remaining production of an artifact has
+;; no prior, so a delta there is 'no-basis, which refuses rather than claims nothing
+;; moved.
+;;
+;; The age of a build is the wall-clock time its line was recorded ('recorded-at).
+;; That is the one clock in this file, and it is housekeeping only: freshness never
+;; reads it, any more than it reads the sequence. A line written before retention
+;; existed carries no time; it counts as older than every dated line, so it goes
+;; once the first dated build has aged out.
+
+;; The header line: a hash with 'pruned, never a build (it has no 'records).
+(define (pruned-header? e) (and (hash? e) (hash-has-key? e 'pruned)))
+
+;; lines-pruned-count : (listof string) -> exact-nonnegative-integer
+(define (lines-pruned-count lines)
+  (or (for*/first ([line (in-list lines)]
+                   [e (in-value (with-handlers ([exn:fail? (lambda (_) #f)])
+                                  (read (open-input-string line))))]
+                   #:when (pruned-header? e))
+        (let ([n (hash-ref e 'pruned 0)]) (and (exact-nonnegative-integer? n) n)))
+      0))
+
+;; history-pruned-count : path-string -> exact-nonnegative-integer
+;; How many builds retention has dropped from the front of the history: the build
+;; numbers below the first remaining one.
+(define (history-pruned-count state-dir)
+  (define f (history-file state-dir))
+  (if (file-exists? f) (lines-pruned-count (file->lines f)) 0))
+
+;; history-prune! : path-string exact-nonnegative-integer [#:now exact-integer]
+;;                  -> (values exact-nonnegative-integer exact-nonnegative-integer)
+;; Drop every build recorded more than `keep-seconds' before `now' (and the undated
+;; ones before them), then delete the blocks no remaining line names. Returns how
+;; many builds and how many blocks went. The log is rewritten whole, beside itself,
+;; and renamed over, so a reader sees the old history or the new one.
+(define (history-prune! state-dir keep-seconds #:now [now (current-seconds)])
+  (define f (history-file state-dir))
+  (cond
+    [(not (file-exists? f)) (values 0 0)]
+    [else
+     (define lines (file->lines f))
+     (define pruned (lines-pruned-count lines))
+     (define body
+       (for/list ([line (in-list lines)]
+                  #:unless (string=? "" (string-trim line))
+                  #:unless (pruned-header? (with-handlers ([exn:fail? (lambda (_) #f)])
+                                             (read (open-input-string line)))))
+         line))
+     (define (recorded-at line)
+       (define e (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line))))
+       (and (hash? e) (let ([t (hash-ref e 'recorded-at #f)]) (and (exact-integer? t) t))))
+     (define horizon (- now keep-seconds))
+     ;; the last line recorded before the horizon; everything up to it goes
+     (define last-old
+       (for/last ([line (in-list body)] [i (in-naturals)]
+                  #:when (let ([t (recorded-at line)]) (and t (< t horizon))))
+         i))
+     (cond
+       [(not last-old) (values 0 0)]
+       [else
+        (define-values (gone kept) (split-at body (add1 last-old)))
+        ;; numbers count the builds history-load reads, so only those
+        (define dropped (for/sum ([line (in-list gone)]) (if (line->entry line) 1 0)))
+        (define tmp (path-add-extension f #".pruning"))
+        (call-with-output-file tmp #:exists 'truncate
+          (lambda (o)
+            (write (hash 'version HISTORY-VERSION 'pruned (+ pruned dropped)) o)
+            (newline o)
+            (for ([line (in-list kept)]) (write-string line o) (newline o))))
+        (rename-file-or-directory tmp f #t)
+        (values dropped (collect-blocks! state-dir kept))])]))
+
+;; collect-blocks! : path-string (listof string) -> exact-nonnegative-integer
+;; Delete every block that none of `lines' names, as its topology snapshot or as a
+;; keyed map; return how many. Only history writes blocks (blockstore.rkt), so a
+;; block no build names is one nothing can reach.
+(define (collect-blocks! state-dir lines)
+  (define named
+    (for*/fold ([named (set)]) ([line (in-list lines)]
+                                [e (in-value (line->entry line))]
+                                #:when e)
+      (for*/fold ([named (let ([g (hash-ref e 'graph-hash #f)]) (if (string? g) (set-add named g) named))])
+                 ([r (in-list (hash-ref e 'records))]
+                  [pos (in-list KEYED-DATUM-POSITIONS)]
+                  #:when (and (list? r) (< pos (length r)) (list? (list-ref r pos)))
+                  [entry (in-list (list-ref r pos))]
+                  #:when (and (pair? entry) (string? (cdr entry))))
+        (set-add named (cdr entry)))))
+  (define dir (build-path state-dir "blocks"))
+  (if (directory-exists? dir)
+      (for/sum ([b (in-list (directory-list dir))]
+                #:unless (set-member? named (path->string b)))
+        (delete-file (build-path dir b))
+        1)
+      0))

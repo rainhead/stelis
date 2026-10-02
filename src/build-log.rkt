@@ -110,12 +110,12 @@
 ;; builds that genuinely re-produced it carry a map (a cached run records none),
 ;; which is exactly the timeline shape build-key-delta expects.
 (define (kobs-for builds artifact)
-  (for*/list ([(br i) (in-indexed (in-list builds))]
+  (for*/list ([br (in-list builds)]
               [r (in-list (build-record-records br))]
               [keys (in-value (let ([p (assq artifact (trace-record-output-key-hashes r))])
                                 (and p (cdr p))))]
               #:when keys)
-    (key-observation (add1 i) keys r)))
+    (key-observation (build-record-number br) keys r)))
 
 ;; keyed-lines : builds build-index rewrites -> (listof string)
 ;; One line per keyed artifact this build re-produced: which keys moved, named
@@ -128,7 +128,7 @@
   (for*/list ([r (in-list (build-record-records br))]
               [pair (in-list (trace-record-output-key-hashes r))])
     (define a (car pair))
-    (define d (build-key-delta a (kobs-for builds a) i))
+    (define d (build-key-delta a (kobs-for builds a) (build-record-number br)))
     (define story
       (cond
         [(eq? d 'no-basis)
@@ -206,8 +206,8 @@
                    (trace-record-task r)))
   (string-append
    (format "<section><h2>Build #~a~a <span class=\"meta\">source @ ~a · target: ~a · graph ~a</span></h2>\n"
-           i
-           (publish-badge (receipt-for receipts i (build-record-epoch br)))
+           (build-record-number br)
+           (publish-badge (receipt-for receipts (build-record-number br) (build-record-epoch br)))
            (html-escape (epoch->utc (build-record-epoch br)))
            (html-escape (build-record-target br))
            (html-escape (let ([h (~a (build-record-graph-hash br))])
@@ -266,22 +266,24 @@ END
   ;; line that answers "is what I'm reading live?" at a glance. Omitted when no
   ;; receipt says so (pre-feature histories): absence over accusation.
   (define last-published
-    (for/last ([(br i) (in-indexed (in-list builds))]
-               #:when (let ([r (receipt-for receipts (add1 i) (build-record-epoch br))])
+    (for/last ([br (in-list builds)]
+               #:when (let ([r (receipt-for receipts (build-record-number br) (build-record-epoch br))])
                         (and r (eq? 'published (hash-ref r 'outcome #f)))))
-      (add1 i)))
+      br))
   (define header
     (if (zero? n)
         "<p class=\"sum\">no builds recorded yet</p>"
-        (format "<p class=\"sum\">~a build~a recorded · latest #~a, source @ ~a~a~a</p>"
-                n (if (= n 1) "" "s") n
+        (format "<p class=\"sum\">~a build~a recorded~a · latest #~a, source @ ~a~a~a</p>"
+                n (if (= n 1) "" "s")
+                ;; retention (history-prune!) dropped the ones numbered below these
+                (let ([first-kept (build-record-number (first builds))])
+                  (if (> first-kept 1) (format " (#~a on; earlier ones expired)" first-kept) ""))
+                (build-record-number (last builds))
                 (html-escape (epoch->utc (build-record-epoch (last builds))))
                 (if last-published
                     (format " · site last published from build #~a, source @ ~a"
-                            last-published
-                            (html-escape
-                             (epoch->utc (build-record-epoch
-                                          (list-ref builds (sub1 last-published))))))
+                            (build-record-number last-published)
+                            (html-escape (epoch->utc (build-record-epoch last-published))))
                     "")
                 (if (> n limit) (format " · showing the last ~a" limit) ""))))
   (string-append

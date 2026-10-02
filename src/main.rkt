@@ -433,6 +433,15 @@
 ;; The page shows the last BUILD-LOG-SHOWN builds, so only theirs (and each
 ;; artifact's map just before them, a delta's basis) are read from their blocks:
 ;; a full load held every build's maps at once (history-load's #:keyed-tail).
+;; What a history-reading answer must add once retention has dropped builds: the
+;; history starts later than build #1, so "first recorded" means "first since then".
+(define (horizon-note)
+  (define pruned (history-pruned-count stelis-state))
+  (if (positive? pruned)
+      (format " (Builds #1–#~a expired under this project's retention; the record starts at #~a.)"
+              pruned (add1 pruned))
+      ""))
+
 (define BUILD-LOG-SHOWN 30)
 (define (write-build-log!)
   (define out-file (build-path stelis-state "build-log.html"))
@@ -532,7 +541,7 @@
    (when (null? builds)
      (eprintf "no builds recorded under ~a\n" (path->string stelis-state))
      (exit 1))
-   (printf "~a ~a\n" (length builds) (build-record-epoch (last builds)))]
+   (printf "~a ~a\n" (build-record-number (last builds)) (build-record-epoch (last builds)))]
 
   ;; --- record a publish receipt (st-8x1) ---------------------------------
   ;; The publish path reporting back. Refusals are LOUD (exit 1): the caller
@@ -553,10 +562,14 @@
    (unless (memq path '(nightly note))
      (error 'stelis "--mark-publish PATH must be nightly|note, given: ~a" (fifth args)))
    (define builds (history-load stelis-state))
-   (unless (and (exact-positive-integer? b) (<= b (length builds)))
-     (error 'stelis "--mark-publish: no build #~a (history has ~a)" (first args)
-            (length builds)))
-   (define actual-epoch (build-record-epoch (list-ref builds (sub1 b))))
+   (define marked (and (exact-positive-integer? b)
+                       (findf (lambda (br) (= b (build-record-number br))) builds)))
+   (unless marked
+     (error 'stelis "--mark-publish: no build #~a (history has ~a~a)" (first args)
+            (if (null? builds) "none"
+                (format "#~a–#~a" (build-record-number (first builds)) (build-record-number (last builds))))
+            (if (positive? (history-pruned-count stelis-state)) "; earlier ones expired" "")))
+   (define actual-epoch (build-record-epoch marked))
    (unless (equal? epoch actual-epoch)
      (error 'stelis
             "--mark-publish: build #~a's epoch is ~a, not ~a — refusing to mark a build this receipt does not name"
@@ -615,8 +628,8 @@
            (printf "  (`--history ~a` lists the keys it has carried.)\n" art)
            (exit 1)]
           [(never-moved)
-           (printf "~a:~a has never moved — present since ~a's first recorded observation, unchanged since.\n"
-                   art key art)]
+           (printf "~a:~a has never moved — present since ~a's first recorded observation, unchanged since.~a\n"
+                   art key art (horizon-note))]
           [else
            (printf "~a:~a — why this key last moved, from the observation history.\n" art key)
            (printf "  (`--why ~a` asks the other tense: what would rebuild it now.)\n\n" art)
@@ -633,8 +646,13 @@
               (path->string stelis-state) (state-dir-note))
       (exit 1)]
      [(not name)
-      (printf "Build history — ~a build(s), in append order:\n\n" (length builds))
-      (for ([b (in-list builds)] [i (in-naturals 1)] [prev (in-list (cons #f builds))])
+      (printf "Build history — ~a build(s), in append order~a:\n\n" (length builds)
+              (let ([pruned (history-pruned-count stelis-state)])
+                (if (positive? pruned)
+                    (format " (#1–#~a expired under the project's retention)" pruned)
+                    "")))
+      (for* ([(b prev) (in-parallel (in-list builds) (in-list (cons #f builds)))]
+             [i (in-value (build-record-number b))])
         (define h (build-record-graph-hash b))
         ;; topology drift: flag a build whose graph differs from the one before
         (define drift (and prev (not (equal? h (build-record-graph-hash prev)))))
@@ -732,17 +750,18 @@
      (eprintf "~a — no artifact by that name in the graph.\n" name)
      (exit 1))
    (define kobs (history-key-observations stelis-state name))
-   (define d (build-key-delta name kobs (length builds)))
+   (define last-number (build-record-number (last builds)))
+   (define d (build-key-delta name kobs last-number))
    (cond
      [(eq? d 'not-produced)
       ;; Silence on stdout is the answer. Say why on stderr so an operator running
       ;; this by hand isn't left wondering whether it worked.
       (eprintf "~a — not re-produced by the last build (~a); no keys moved.\n"
-               name (length builds))
+               name last-number)
       (exit 0)]
      [(eq? d 'no-basis)
-      (eprintf "~a — first recorded production (build ~a): every key is new, which is not a delta. Rebuild in full.\n"
-               name (length builds))
+      (eprintf "~a — first recorded production (build ~a): every key is new, which is not a delta. Rebuild in full.~a\n"
+               name last-number (horizon-note))
       (exit 1)]
      [else
       (for ([k (in-list (key-delta-moved d))]) (displayln k))
@@ -841,6 +860,15 @@
    (history-append! stelis-state (or name 'all) G
                     (source-date-epoch) records
                     #:project (project-name P))
+   ;; st-ml9.7: a project that keeps only recent history drops what has aged out,
+   ;; and the blocks only those builds named, before the log is rendered from it.
+   (let ([keep (project-history-retention P)])
+     (when keep
+       (define-values (builds blocks) (history-prune! stelis-state keep))
+       (when (positive? builds)
+         (printf "history: ~a build~a older than ~a days expired, ~a block~a removed\n"
+                 builds (if (= 1 builds) "" "s") (quotient keep 86400)
+                 blocks (if (= 1 blocks) "" "s")))))
    ;; st-9rf: refresh the operator build log AFTER the append, so the page
    ;; describes the build that just finished — records and all, failures
    ;; included (partial success is exactly what an operator page is for).
