@@ -442,6 +442,10 @@
               pruned (add1 pruned))
       ""))
 
+;; A mode that reads build numbers, epochs or records but no build's keyed maps loads
+;; with #:keyed-tail 0: every map is then decoded at most once per artifact rather
+;; than once per build, which on salishsea's Fly state is the difference between a
+;; few MB and an OOM kill (--last-build, 2026-10-02).
 (define BUILD-LOG-SHOWN 30)
 (define (write-build-log!)
   (define out-file (build-path stelis-state "build-log.html"))
@@ -537,7 +541,7 @@
   ;; exported for the run — a match proves the tail is this run's build, a
   ;; mismatch means the run died before appending and nothing should be marked.
   [(eq? (mode) 'last-build)
-   (define builds (history-load stelis-state))
+   (define builds (history-load stelis-state #:keyed-tail 0))
    (when (null? builds)
      (eprintf "no builds recorded under ~a\n" (path->string stelis-state))
      (exit 1))
@@ -561,7 +565,7 @@
             (third args)))
    (unless (memq path '(nightly note))
      (error 'stelis "--mark-publish PATH must be nightly|note, given: ~a" (fifth args)))
-   (define builds (history-load stelis-state))
+   (define builds (history-load stelis-state #:keyed-tail 0))
    (define marked (and (exact-positive-integer? b)
                        (findf (lambda (br) (= b (build-record-number br))) builds)))
    (unless marked
@@ -608,7 +612,7 @@
         (unless (hash-ref (graph-artifacts G) art #f)
           (eprintf "~a — no artifact by that name in the graph.\n" art)
           (exit 1))
-        (when (null? (history-load stelis-state))
+        (when (null? (history-load stelis-state #:keyed-tail 0))
           (eprintf "~a — no build history under ~a/; nothing to explain.\n~a"
                    art (path->string stelis-state) (state-dir-note))
           (exit 1))
@@ -639,7 +643,7 @@
   ;; No name: the list of builds (append order — for BROWSING, not freshness).
   ;; A name: that artifact's content-hash timeline, marking where it changed.
   [(eq? (mode) 'history)
-   (define builds (history-load stelis-state))
+   (define builds (history-load stelis-state #:keyed-tail 0))
    (cond
      [(null? builds)
       (printf "No build history under ~a/ — run --build first.\n~a"
@@ -738,7 +742,7 @@
   ;;   1 + reason — no basis for an answer. The caller must fall back to a FULL
   ;;                rebuild, never to the empty set.
   [(eq? (mode) 'moved-keys)
-   (define builds (history-load stelis-state))
+   (define builds (history-load stelis-state #:keyed-tail 0))
    (when (null? builds)
      (eprintf "~a — no build history under ~a/; cannot say what moved.\n~a"
               name (path->string stelis-state) (state-dir-note))
