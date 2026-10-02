@@ -409,7 +409,9 @@ An ENGINE surface, not site content — Model Y untouched, beeatlas's 11ty never
 learns of it — and NOT a graph node: written AFTER the build from the completed
 records (the way the history log line is), so build N's page describes build N
 and the apparent "page about the build, produced by the build" recursion never
-arises. Pure function of the loaded build-records — same history, same bytes;
+arises. It loads history with `#:keyed-tail` (only the shown builds' maps, plus
+each artifact's map just before them, a delta's basis): a full load decoded every
+build's maps, 528 MB on salishsea's Fly machine at 370 builds. Pure function of the loaded build-records — same history, same bytes;
 its own stamp is the last build's SOURCE epoch, never wall clock — with absolute
 local paths relativized through caller-supplied rewrites before the page sits at
 a public URL (beeatlas.net/build-log.html: nightly.sh's EXIT trap copies it even

@@ -221,20 +221,58 @@
   (and (hash? v)
        (sort (hash->list v) string<? #:key car)))
 
-;; history-load : path-string -> (listof build-record)
+;; history-load : path-string [#:keyed-tail (or/c #f exact-nonnegative-integer)]
+;;                -> (listof build-record)
 ;; Every readable build, in append (build) order. Missing history ⇒ '(). A line
 ;; that fails to parse or carries a wrong version is dropped; the surrounding
 ;; builds still load.
-(define (history-load state-dir)
+;;
+;; #:keyed-tail k reads keyed maps from their blocks for the last k builds only,
+;; and before them, for each artifact in each keyed position, only its LATEST map:
+;; the basis a delta at the oldest of the k is taken against (delta.rkt diffs a
+;; production with the previous one, however long ago that was). Every older map
+;; is marked unresolved — observed, not read — so nothing can mistake it for an
+;; answer. For a reader that shows only recent builds, the operator build log: a
+;; full load decodes every build's maps, and on salishsea's Fly machine, 370
+;; builds of a 4,400-key days/ map took the engine from 136 MB to 528 MB after
+;; every build.
+(define (history-load state-dir #:keyed-tail [keyed-tail #f])
   (define f (history-file state-dir))
   (cond
     [(not (file-exists? f)) '()]
     [else
-     (for*/list ([line (in-list (file->lines f))]
-                 #:unless (string=? "" (string-trim line))
-                 [br (in-value (line->build-record state-dir line))]
-                 #:when br)
-       br)]))
+     (define entries
+       (for*/list ([line (in-list (file->lines f))]
+                   #:unless (string=? "" (string-trim line))
+                   [e (in-value (line->entry line))]
+                   #:when e)
+         e))
+     (define cutoff (if keyed-tail (max 0 (- (length entries) keyed-tail)) 0))
+     ;; newest first, so the first map met for an (artifact, position) before the
+     ;; tail is its latest one
+     (define seen (make-hash))
+     (define (internalize-older r)
+       (for/fold ([r r]) ([pos (in-list KEYED-DATUM-POSITIONS)])
+         (update-positions
+          r (list pos)
+          (lambda (keyed)
+            (for/list ([e (in-list keyed)])
+              (define key (cons pos (car e)))
+              (cond
+                [(hash-ref seen key #f) (cons (car e) unresolved-keys)]
+                [else (hash-set! seen key #t)
+                      (cons (car e) (or (resolve-keyed state-dir (cdr e)) unresolved-keys))]))))))
+     (define n (length entries))
+     (reverse
+      (for*/list ([(e i) (in-indexed (in-list (reverse entries)))]
+                  [br (in-value
+                       (entry->build-record
+                        e
+                        (if (>= (- n 1 i) cutoff)
+                            (lambda (r) (internalize-keyed state-dir r))
+                            internalize-older)))]
+                  #:when br)
+        br))]))
 
 ;; history-last : path-string -> (or/c build-record #f)
 ;; The most recent readable build — "what did the last build do?". #f when the
@@ -388,15 +426,22 @@
 
 ;; --- Parsing (a bad line is a miss, never an error) ---------------------------
 
-(define (line->build-record state-dir line)
+;; line->entry : string -> (or/c hash #f)
+;; A history line as its datum, or #f when it doesn't parse or is another version.
+(define (line->entry line)
   (define e (with-handlers ([exn:fail? (lambda (_) #f)])
               (read (open-input-string line))))
   (and (hash? e)
        (equal? (hash-ref e 'version #f) HISTORY-VERSION)
        (list? (hash-ref e 'records #f))
-       (with-handlers ([exn:fail? (lambda (_) #f)])
-         (build-record (hash-ref e 'target)
-                       (hash-ref e 'graph-hash #f)
-                       (hash-ref e 'epoch #f)
-                       (for/list ([r (in-list (hash-ref e 'records))])
-                         (datum->trace-record (internalize-keyed state-dir r)))))))
+       e))
+
+;; entry->build-record : hash (datum -> datum) -> (or/c build-record #f)
+;; `internalize' turns each record datum's keyed entries back into maps (or marks).
+(define (entry->build-record e internalize)
+  (with-handlers ([exn:fail? (lambda (_) #f)])
+    (build-record (hash-ref e 'target)
+                  (hash-ref e 'graph-hash #f)
+                  (hash-ref e 'epoch #f)
+                  (for/list ([r (in-list (hash-ref e 'records))])
+                    (datum->trace-record (internalize r))))))

@@ -191,6 +191,39 @@
 
 (delete-directory/files kd)
 
+;; --- #:keyed-tail: the maps a recent-builds reader needs, and no others ---------
+;; The build log shows the last k builds and diffs each production with the one
+;; before it, however old. So: the last k builds' maps, and before them each
+;; artifact's latest map; everything older is marked, never read as an answer.
+(let ([kt (make-temporary-file "stelis-history-tail-~a" 'directory)])
+  (define cache-skip
+    (trace-record 'maps (decision 'skip 'inputs-unchanged '()) #f 'cached '() #f '() '() '()))
+  (history-append! kt 'species-maps kg "1" (list (rec-maps "t0" '(("a" . "0")))))
+  (history-append! kt 'species-maps kg "2" (list (rec-maps "t1" '(("a" . "1")))))
+  (history-append! kt 'species-maps kg "3" (list cache-skip))
+  (history-append! kt 'species-maps kg "4" (list (rec-maps "t2" '(("a" . "2")))))
+  (define (keys-at builds n)
+    (let ([p (assq 'species-maps
+                   (trace-record-output-key-hashes (first (build-record-records (list-ref builds (sub1 n))))))])
+      (and p (cdr p))))
+  (define full (history-load kt))
+  (define tail (history-load kt #:keyed-tail 1))
+  (check-equal? (keys-at tail 4) '(("a" . "2")) "the tail's own map is read")
+  (check-equal? (keys-at tail 2) '(("a" . "1"))
+                "and the latest map before it — build 3 didn't produce, so build 2's — the delta's basis")
+  (check-eq? (keys-at tail 1) 'unresolved "an older map is marked, not read")
+  (check-equal? (map build-record-epoch tail) (map build-record-epoch full) "every build still loads")
+  (define (kobs-of builds)
+    (for*/list ([(br i) (in-indexed (in-list builds))]
+                [r (in-list (build-record-records br))]
+                [p (in-value (assq 'species-maps (trace-record-output-key-hashes r)))]
+                #:when p)
+      (key-observation (add1 i) (cdr p) r)))
+  (check-equal? (build-key-delta 'species-maps (kobs-of tail) 4)
+                (build-key-delta 'species-maps (kobs-of full) 4)
+                "so the newest build's delta is the full load's")
+  (delete-directory/files kt))
+
 ;; --- graceful degradation ----------------------------------------------------
 
 ;; a corrupt line in the middle is skipped; the builds around it still load

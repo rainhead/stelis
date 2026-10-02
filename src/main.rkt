@@ -430,12 +430,17 @@
   (list (cons (dir-prefix (project-checkout P)) (format "~a/" (project-name P)))
         (cons (dir-prefix (simplify-path engine-src-dir)) "stelis/src/")
         (cons (dir-prefix (find-system-path 'home-dir)) "~/")))
+;; The page shows the last BUILD-LOG-SHOWN builds, so only theirs (and each
+;; artifact's map just before them, a delta's basis) are read from their blocks:
+;; a full load held every build's maps at once (history-load's #:keyed-tail).
+(define BUILD-LOG-SHOWN 30)
 (define (write-build-log!)
   (define out-file (build-path stelis-state "build-log.html"))
-  (define builds (history-load stelis-state))
+  (define builds (history-load stelis-state #:keyed-tail BUILD-LOG-SHOWN))
   (make-directory* stelis-state)
   (call-with-output-file out-file #:exists 'replace
     (lambda (o) (write-string (build-log-html builds
+                                              #:limit BUILD-LOG-SHOWN
                                               #:rewrites (build-log-rewrites)
                                               #:receipts (publish-receipts-load stelis-state))
                               o)))
