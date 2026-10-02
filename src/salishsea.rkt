@@ -97,6 +97,7 @@
 ;; Derived: a lost mirror costs one fetch.
 (define mirror-dir (build-path (let-values ([(dir _n _d) (split-path snapshot-db)]) dir) "mirrors"))
 (define orcasound-mirror (build-path mirror-dir "orcasound.sqlite"))
+(define maplify-mirror (build-path mirror-dir "maplify.sqlite"))
 
 ;; --- Runtime ----------------------------------------------------------------
 ;; salishsea pins node in .nvmrc, and nothing about `node' on PATH carries that
@@ -156,6 +157,9 @@
 ;; The relations a mirror holds, each named "<source>.<table>", as the mirror is attached
 ;; under the source's name.
 (define orcasound-relations '(orcasound.bouts orcasound.bout_entities))
+;; Maplify's mirror is attached as maplify_mirror, not maplify: the snapshot already
+;; names Postgres's copy maplify.sightings, and both are read until the cutover.
+(define maplify-relations '(maplify_mirror.sightings maplify_mirror.covered_days))
 
 (define (snapshot-relation table)
   (string->symbol (string-append (string-replace table "_" "-") "-snapshot")))
@@ -309,6 +313,11 @@
      (make-artifact 'orcasound.bouts 'db-relation)
      (make-artifact 'orcasound.bout_entities 'db-relation)
      (make-artifact 'orcasound-overlap.json 'file)
+     ;; Maplify's sightings as the build fetches them (salish-xv35.7): every one Maplify
+     ;; returned for each window, in the map's scope or not, and the days fetched.
+     (make-artifact 'maplify_mirror.sightings 'db-relation)
+     (make-artifact 'maplify_mirror.covered_days 'db-relation)
+     (make-artifact 'maplify-overlap.json 'file)
      ;; Which individual or matriline each designation an occurrence names means
      ;; (salish-xv35.3), as the build derives it, and that it agrees with Postgres's.
      (make-artifact 'build.occurrence_identifier_candidates 'db-relation)
@@ -457,6 +466,30 @@
                                  '("scripts/ingest/fetch-orcasound.ts" "scripts/ingest/orcasound.ts"
                                    "scripts/ingest/retry.ts")
                                  (list (path->string orcasound-mirror))))
+   ;; Maplify's window, fetched by the build (salishsea decision 061, salish-xv35.7): the
+   ;; ten days ending today, reconciled into a SQLite mirror in one transaction, nothing
+   ;; written unless the response parses whole. Everything Maplify returned is kept;
+   ;; which sightings are in the map's scope is the derivation's call (Peter, 2026-10-02).
+   ;; A backfill is the same script with a start and end, run by hand.
+   (make-task 'ingest-maplify 'boundary
+              #:outputs maplify-relations
+              #:invoke (node-script/code "scripts/read-path/ingest-maplify.ts"
+                                 '("scripts/ingest/fetch-maplify.ts" "scripts/ingest/maplify.ts"
+                                   "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
+                                   "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
+                                 (list (path->string maplify-mirror))))
+   ;; While Postgres still ingests Maplify too, what differs, over the days the mirror has
+   ;; fetched: its in-scope sightings, by the snapshot's register, against Postgres's.
+   (make-task 'maplify-overlap 'transform
+              #:inputs (append maplify-relations
+                               '(maplify.sightings register.entities register.names
+                                 register.ancestor register.deprecations))
+              #:outputs '(maplify-overlap.json)
+              #:invoke (node-script/code "scripts/read-path/compare-maplify-mirror.ts"
+                                 '("scripts/ingest/maplify.ts" "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
+                                 (list SNAPSHOT-DB (path->string maplify-mirror)
+                                       (path->string (build-path mirror-dir "maplify-overlap.json")))))
    ;; While Postgres still ingests Orcasound too, what differs between the two copies.
    ;; A difference never fails it, since the fetches race and CI proves the two store a
    ;; corpus alike; only being unable to compare does.
@@ -495,6 +528,7 @@
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(orcasound-overlap.json) (build-path mirror-dir "orcasound-overlap.json")]
+    [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
     [else #f]))
 
 (define (relation-tables artifact)
@@ -506,6 +540,7 @@
      (cond
        [(or (memq artifact derivation-input-relations)
             (memq artifact orcasound-relations)
+            (memq artifact maplify-relations)
             (memq artifact '(build.occurrences build.occurrence_identifier_candidates))
             (memq artifact profile-link-relations))
         (list (symbol->string artifact))]
@@ -519,6 +554,7 @@
 (define (relation-db artifact)
   (cond
     [(memq artifact orcasound-relations) (sqlite-db orcasound-mirror "orcasound")]
+    [(memq artifact maplify-relations) (sqlite-db maplify-mirror "maplify_mirror")]
     [(file-exists? snapshot-db) snapshot-db]
     [else #f]))
 ;; A relation's digest and its per-column parts, for every relation of a database in

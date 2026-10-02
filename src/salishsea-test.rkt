@@ -15,10 +15,10 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 16
+(check-equal? (set-count pruned) 18
               (string-append "the calendar, the id index, the pages, the profile index, the manifest, "
-                             "the three ports and their gates, and Orcasound's mirror and its report "
-                             "are off the path to days"))
+                             "the three ports and their gates, and Orcasound's and Maplify's mirrors "
+                             "and their reports are off the path to days"))
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
 
@@ -68,6 +68,15 @@
               "the report compares the mirror with Postgres's copy, table for table")
 (check-false (memq 'orcasound-overlap manifest-plan)
              "the overlap report holds nothing published back")
+;; Maplify's (salish-xv35.7): a windowed boundary of its own, compared with Postgres's copy
+;; through the register, since the mirror keeps what is out of the map's scope too.
+(check-equal? (task-inputs (hash-ref (graph-tasks salishsea-graph) 'ingest-maplify)) '()
+              "the build's ingest reads only Maplify: scope is decided downstream")
+(check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-maplify)) 'boundary)
+(check-not-false (memq 'register.names (task-inputs (hash-ref (graph-tasks salishsea-graph) 'maplify-overlap)))
+                 "the report filters the mirror by scope, which needs the register's names")
+(check-false (memq 'maplify-overlap manifest-plan)
+             "nor does Maplify's")
 (check-false (memq 'occurrences-agreement manifest-plan)
              "until the cutover nothing published reads the port, so a disagreement can't hold the site back")
 
