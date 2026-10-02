@@ -29,7 +29,9 @@
 ;;       │                              (transforms)       (one prerendered page
 ;;       │                                  ▲               per subject, and its
 ;;       │                                  │               map's dots)
-;;       ├──────▶ snapshot-meta ────────────┴──────▶ manifest ──▶ manifest.json
+;;       ├──────▶ snapshot-year ────────────┘
+;;       │        (the Pacific year it was taken in)
+;;       ├──────▶ snapshot-meta ───────────────────▶ manifest ──▶ manifest.json
 ;;       │        (when it was taken)      (after days/,       (what the build
 ;;       │                                  calendar/, ids/,     covered)
 ;;       │                                  the pages)
@@ -224,11 +226,12 @@
 ;; Fly), and the pages must rerun when either changes.
 ;;
 ;; The year the presence table ends on is the snapshot's, which is why
-;; snapshot-meta is an input — and why each reruns every build (its bytes still
-;; cut off unless something moved).
+;; snapshot-year is an input: the Pacific year alone, not snapshot-meta's moment,
+;; so a build in the same year that changed none of a kind's tables skips it
+;; (salish-xv35.12) rather than rerunning it to identical bytes.
 (define (profile-pages-task name kind shell relations output)
   (make-task name 'transform
-             #:inputs (cons 'snapshot-meta relations)
+             #:inputs (cons 'snapshot-year relations)
              #:outputs (list output)
              #:invoke (node-script/code "scripts/read-path/profiles.ts"
                                 (list "scripts/read-path/profile-document.ts"
@@ -251,6 +254,9 @@
    ;; so that it moving on every build does not move the occurrences' digest:
    ;; the day files still cut off when the data hasn't changed.
    (make-artifact 'snapshot-meta 'db-relation)
+   ;; The Pacific year it was taken in, all the profile pages read of when: moves
+   ;; once a year where snapshot-meta moves every build (salish-xv35.12).
+   (make-artifact 'snapshot-year 'db-relation)
    ;; One JSON array per Pacific day, newest first — what fetchOccurrences gets
    ;; for that day with no region selected.
    (make-artifact 'days 'dir)
@@ -318,7 +324,7 @@
 (define tasks
   (list
    (make-task 'snapshot 'boundary
-              #:outputs (list* 'occurrences-snapshot 'snapshot-meta
+              #:outputs (list* 'occurrences-snapshot 'snapshot-meta 'snapshot-year
                                (append catalogue-relations derivation-input-relations))
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
@@ -495,6 +501,7 @@
   (case artifact
     [(occurrences-snapshot) '("snapshot.occurrences")]
     [(snapshot-meta) '("snapshot.meta")]
+    [(snapshot-year) '("snapshot.year")]
     [else
      (cond
        [(or (memq artifact derivation-input-relations)
