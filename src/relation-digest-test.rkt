@@ -133,4 +133,32 @@
    (test-equal? "rerun reason names the changed relation"
                 (decision-reason dec2) 'input-changed)
 
+   ;; --- A SQLite file (sqlite-db), as a task-written mirror is (salishsea decision 061) ---
+   ;; Addressed by its rows, not its bytes: the same rows written into a fresh file, in
+   ;; another order, digest the same; one changed row digests differently; no file is #f.
+   (define (sqlite! file rows)
+     (when (file-exists? file) (delete-file file))
+     (define mem (build-path tmp "scratch.duckdb"))
+     (when (file-exists? mem) (delete-file mem))
+     (ddl! mem (string-append
+                "ATTACH '" (path->string file) "' AS m (TYPE sqlite);"
+                "CREATE TABLE m.bouts (id TEXT PRIMARY KEY, title TEXT, lon REAL);"
+                "INSERT INTO m.bouts VALUES " rows ";")))
+   (define sq (build-path tmp "mirror.sqlite"))
+   (sqlite! sq "('b1', 'J pod', -122.5), ('b2', NULL, -123.25)")
+   (define first-digest (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")))
+   (test-true "a SQLite relation digests" (string? first-digest))
+   (sqlite! sq "('b2', NULL, -123.25), ('b1', 'J pod', -122.5)")
+   (test-equal? "the same rows in a fresh file, another order: the same digest"
+                (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")) first-digest)
+   (sqlite! sq "('b2', NULL, -123.25), ('b1', 'K pod', -122.5)")
+   (test-false "one changed row: a different digest"
+               (equal? (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")) first-digest))
+   (test-equal? "its row count" (relation-row-count (sqlite-db sq "orcasound") '("orcasound.bouts")) 2)
+   (test-equal? "its columns, each with a digest, and the row-count part"
+                (map car (relation-columns (sqlite-db sq "orcasound") '("orcasound.bouts")))
+                '("orcasound.bouts.*" "orcasound.bouts.id" "orcasound.bouts.lon" "orcasound.bouts.title"))
+   (test-false "no file: unresolvable, as a missing DuckDB file is"
+               (relation-digest (sqlite-db (build-path tmp "absent.sqlite") "orcasound") '("orcasound.bouts")))
+
    (delete-directory/files tmp)])

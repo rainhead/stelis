@@ -35,7 +35,30 @@
          file/sha1
          "duckdb.rkt")
 
-(provide relation-digest relation-columns relation-row-count)
+(provide relation-digest relation-columns relation-row-count
+         (struct-out sqlite-db))
+
+;; A relation's database: a DuckDB file (a path, as always), or a SQLite file (sqlite-db),
+;; attached read-only under `alias' so its tables are named "<alias>.<table>" exactly as a
+;; DuckDB file's "<schema>.<table>" are. A SQLite file's bytes move when its rows don't
+;; (page layout, free lists), so a mirror written by a task is addressed by its rows, the
+;; same row-coherent digest as any relation, never by the file (salishsea decision 061:
+;; each upstream source's mirror is a SQLite file a boundary task writes, st-ml9.3).
+(struct sqlite-db (path alias) #:transparent)
+
+;; query-db : (or/c path-string sqlite-db) string -> (or/c string #f)
+;; duckdb-query over either kind of database: a SQLite file is attached into a transient
+;; in-memory DuckDB first. A missing file is #f, as a missing DuckDB file already is.
+(define (query-db db sql)
+  (cond
+    [(sqlite-db? db)
+     (define file (sqlite-db-path db))
+     (and (file-exists? file)
+          (regexp-match? sql-identifier? (sqlite-db-alias db))
+          (duckdb-query #f (string-append
+                            "ATTACH '" (string-replace (if (path? file) (path->string file) file) "'" "''")
+                            "' AS " (sqlite-db-alias db) " (TYPE sqlite, READ_ONLY);\n" sql)))]
+    [else (duckdb-query db sql)]))
 
 ;; A qualified table name we are willing to interpolate into SQL (duckdb.rkt's
 ;; shared gate): the mapping in beeatlas.rkt is trusted, but a strict shape makes a
@@ -73,7 +96,7 @@
 (define (relation-digest db tables)
   (and (pair? tables)
        (andmap (lambda (t) (regexp-match? qualified-name? t)) tables)
-       (let ([out (duckdb-query db (relation-query tables))])
+       (let ([out (query-db db (relation-query tables))])
          (and out (sha1 (open-input-string out))))))
 
 ;; --- Per-column digests (st-7vz) ----------------------------------------------
@@ -112,7 +135,7 @@
               [(not cols) #f]   ; a table we couldn't read -> whole relation #f
               [(not rows) #f]   ; count(*) failed -> treat as unreadable
               [else
-               (define col-out (and (pair? cols) (duckdb-query db (columns-query qualified cols))))
+               (define col-out (and (pair? cols) (query-db db (columns-query qualified cols))))
                (cond
                  [(and (pair? cols) (not col-out)) #f]  ; columns unreadable
                  [else
@@ -124,7 +147,7 @@
 ;; A table's count(*) as a decimal string, or #f if unreadable — the integrity
 ;; gate's baseline metric, recorded per build alongside the per-column digests.
 (define (table-rowcount db qualified)
-  (define out (duckdb-query db (string-append "SELECT count(*) FROM " qualified ";")))
+  (define out (query-db db (string-append "SELECT count(*) FROM " qualified ";")))
   (and out (let ([s (string-trim out)])
              (and (regexp-match? #px"^[0-9]+$" s) s))))
 
@@ -152,12 +175,17 @@
   (define parts (string-split qualified "."))
   (define schema (car parts))
   (define table (cadr parts))
+  ;; An attached SQLite file is a catalog whose tables sit in its `main' schema.
+  (define where
+    (if (sqlite-db? db)
+        (string-append "table_catalog = '" schema "' AND table_schema = 'main'")
+        (string-append "table_schema = '" schema "'")))
   (define sql
     (string-append
      "SELECT column_name FROM information_schema.columns "
-     "WHERE table_schema = '" schema "' AND table_name = '" table "' "
+     "WHERE " where " AND table_name = '" table "' "
      "ORDER BY column_name;"))
-  (define out (duckdb-query db sql))
+  (define out (query-db db sql))
   (and out
        (let ([all (map string-trim
                        (filter non-empty-string? (string-split out "\n")))])

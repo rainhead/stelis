@@ -15,9 +15,10 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 12
+(check-equal? (set-count pruned) 14
               (string-append "the calendar, the id index, the pages, the profile index, the manifest, "
-                             "and the two ports and their gates are off the path to days"))
+                             "the two ports and their gates, and Orcasound's mirror and its report "
+                             "are off the path to days"))
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
 
@@ -37,6 +38,16 @@
               "the candidates are derived from the build's own occurrences, then checked")
 (check-false (memq 'identifier-candidates-agreement manifest-plan)
              "nor anything published on the candidates' gate")
+;; Orcasound's own ingest (salishsea decision 061, step B): a boundary of its own, beside
+;; the snapshot, compared with Postgres's copy by a report nothing published waits on.
+(check-equal? (task-inputs (hash-ref (graph-tasks salishsea-graph) 'ingest-orcasound)) '()
+              "the build's ingest reads only orcasite")
+(check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-orcasound)) 'boundary)
+(check-equal? (sort (task-inputs (hash-ref (graph-tasks salishsea-graph) 'orcasound-overlap)) symbol<?)
+              '(orcasound.bout_entities orcasound.bouts public.acoustic_bout_entities public.acoustic_bouts)
+              "the report compares the mirror with Postgres's copy, table for table")
+(check-false (memq 'orcasound-overlap manifest-plan)
+             "the overlap report holds nothing published back")
 (check-false (memq 'occurrences-agreement manifest-plan)
              "until the cutover nothing published reads the port, so a disagreement can't hold the site back")
 

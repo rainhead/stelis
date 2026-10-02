@@ -84,6 +84,12 @@
     (if (and p (not (string=? p ""))) (string->path p) (in-checkout "data" "read-path.duckdb"))))
 (define SNAPSHOT-DB (path->string snapshot-db))
 
+;; Each upstream source's mirror, once the build ingests it itself (salishsea decision
+;; 061): a SQLite file beside the snapshot, never in the export, so nothing serves it.
+;; Derived: a lost mirror costs one fetch.
+(define mirror-dir (build-path (let-values ([(dir _n _d) (split-path snapshot-db)]) dir) "mirrors"))
+(define orcasound-mirror (build-path mirror-dir "orcasound.sqlite"))
+
 ;; --- Runtime ----------------------------------------------------------------
 ;; salishsea pins node in .nvmrc, and nothing about `node' on PATH carries that
 ;; pin (this machine's default is 26; salishsea wants 24). Same shape as beeatlas's
@@ -138,6 +144,10 @@
     "group_parents" "matriline_members" "animal_names" "haulouts"
     "individual_occurrences" "group_occurrences" "ecotype_occurrences"
     "haulout_occurrences"))
+
+;; The relations a mirror holds, each named "<source>.<table>", as the mirror is attached
+;; under the source's name.
+(define orcasound-relations '(orcasound.bouts orcasound.bout_entities))
 
 (define (snapshot-relation table)
   (string->symbol (string-append (string-replace table "_" "-") "-snapshot")))
@@ -269,6 +279,12 @@
      (make-artifact 'build.occurrences 'db-relation)
      ;; That the build's occurrences and Postgres's agree, row for row.
      (make-artifact 'occurrences-agree 'token)
+     ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6), and how
+     ;; they compare with Postgres's copy while both are ingested: a report for a person,
+     ;; not a gate, since the two fetches are minutes apart.
+     (make-artifact 'orcasound.bouts 'db-relation)
+     (make-artifact 'orcasound.bout_entities 'db-relation)
+     (make-artifact 'orcasound-overlap.json 'file)
      ;; Which individual or matriline each designation an occurrence names means
      ;; (salish-xv35.3), as the build derives it, and that it agrees with Postgres's.
      (make-artifact 'build.occurrence_identifier_candidates 'db-relation)
@@ -371,6 +387,26 @@
               #:invoke (node-script/code "scripts/read-path/compare-identifier-candidates.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
+   ;; Orcasound's whole corpus, fetched by the build (salishsea decision 061, step B):
+   ;; the same fetch shell and pure core as the Supabase function, written to a SQLite
+   ;; mirror whole and atomically, nothing written unless the fetch is complete. It
+   ;; reports through the boundary receipt whether the corpus changed.
+   (make-task 'ingest-orcasound 'boundary
+              #:outputs orcasound-relations
+              #:invoke (node-script/code "scripts/read-path/ingest-orcasound.ts"
+                                 '("scripts/ingest/fetch-orcasound.ts" "scripts/ingest/orcasound.ts"
+                                   "scripts/ingest/retry.ts")
+                                 (list (path->string orcasound-mirror))))
+   ;; While Postgres still ingests Orcasound too, what differs between the two copies.
+   ;; A difference never fails it, since the fetches race and CI proves the two store a
+   ;; corpus alike; only being unable to compare does.
+   (make-task 'orcasound-overlap 'transform
+              #:inputs (append orcasound-relations '(public.acoustic_bouts public.acoustic_bout_entities))
+              #:outputs '(orcasound-overlap.json)
+              #:invoke (node-script/code "scripts/read-path/compare-orcasound-mirror.ts"
+                                 '("scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB (path->string orcasound-mirror)
+                                       (path->string (build-path mirror-dir "orcasound-overlap.json")))))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
@@ -398,6 +434,7 @@
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
+    [(orcasound-overlap.json) (build-path mirror-dir "orcasound-overlap.json")]
     [else #f]))
 
 (define (relation-tables artifact)
@@ -407,6 +444,7 @@
     [else
      (cond
        [(or (memq artifact derivation-input-relations)
+            (memq artifact orcasound-relations)
             (memq artifact '(build.occurrences build.occurrence_identifier_candidates)))
         (list (symbol->string artifact))]
        [else
@@ -416,11 +454,21 @@
 
 (define (resolve-relation artifact)
   (define tables (relation-tables artifact))
-  (and tables (file-exists? snapshot-db) (relation-digest snapshot-db tables)))
+  (define db (relation-db artifact))
+  (and tables db (relation-digest db tables)))
 
 (define (resolve-relation-columns artifact)
   (define tables (relation-tables artifact))
-  (and tables (file-exists? snapshot-db) (relation-columns snapshot-db tables)))
+  (define db (relation-db artifact))
+  (and tables db (relation-columns db tables)))
+
+;; The database a relation lives in: a mirror's SQLite file, attached under its source's
+;; name (relation-digest's sqlite-db), or the snapshot. #f when the file isn't there yet.
+(define (relation-db artifact)
+  (cond
+    [(memq artifact orcasound-relations) (sqlite-db orcasound-mirror "orcasound")]
+    [(file-exists? snapshot-db) snapshot-db]
+    [else #f]))
 
 ;; --- Build clock (ADR 0004) -------------------------------------------------
 ;; The committer date of the checkout's HEAD, as for beeatlas; an already-set
