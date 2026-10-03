@@ -404,14 +404,16 @@
    ;; Postgres's ingest refuses that, so while it ingests Maplify its stored answer is
    ;; the last one accepted: this fails when the build's own rule can no longer name
    ;; a pair Postgres named, before the derivation, so the last good files stand.
+   ;; Only pairs the mirror still holds count: a sighting Maplify no longer returns isn't
+   ;; on the map to lose.
    (make-task 'maplify-names 'gate
-              #:inputs '(maplify.sightings register.entities register.names
+              #:inputs '(maplify.sightings maplify_mirror.sightings register.entities register.names
                          register.ancestor register.deprecations)
               #:outputs '(maplify-names-hold)
               #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
                                  '("scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
                                    "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
-                                 (list SNAPSHOT-DB)))
+                                 (list SNAPSHOT-DB (path->string maplify-mirror))))
    ;; The five per-source Postgres views behind derived.occurrences, as DuckDB SQL
    ;; (salishsea decision 061), reading Maplify, iNaturalist and Orcasound from the
    ;; build's mirrors (salish-xv35.9) through derive/sources.sql. Its two regex

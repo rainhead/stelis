@@ -52,8 +52,8 @@
 (check-not-false (memq 'maplify-names-hold (inputs-of 'derive-occurrences))
                  "the derivation waits on the guard")
 (define-values (guard-plan _gp) (plan salishsea-graph 'maplify-names-hold))
-(check-equal? guard-plan '(snapshot maplify-names)
-              "the guard reads only the snapshot: Postgres's stored answer and the register")
+(check-equal? guard-plan '(ingest-maplify snapshot maplify-names)
+              "the guard reads Postgres's stored answer and the register, for the pairs the mirror holds")
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'maplify-names)) 'gate)
 
 ;; Nothing compares the build's derivation with Postgres's any more.
