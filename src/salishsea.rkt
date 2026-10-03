@@ -473,12 +473,15 @@
                                  (list* SNAPSHOT-DB MIRRORS)))
    ;; Orcasound's whole corpus, fetched by the build (salishsea decision 061, step B):
    ;; the same fetch shell and pure core as the Supabase function, written to a SQLite
-   ;; mirror whole and atomically, nothing written unless the fetch is complete. It
+   ;; mirror whole and atomically, nothing written unless the fetch is complete. A fetch that
+   ;; fails leaves the mirror as it was and exits 0, recording the failure in the run log
+   ;; beside the mirrors (ingest-runs.ts), so a source being down never stops the build
+   ;; publishing everything else; the same holds for Maplify and iNaturalist below. It
    ;; reports through the boundary receipt whether the corpus changed.
    (make-task 'ingest-orcasound 'boundary
               #:outputs orcasound-relations
               #:invoke (node-script/code "scripts/read-path/ingest-orcasound.ts"
-                                 '("scripts/ingest/fetch-orcasound.ts" "scripts/ingest/orcasound.ts"
+                                 '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-orcasound.ts" "scripts/ingest/orcasound.ts"
                                    "scripts/ingest/retry.ts")
                                  (list (path->string orcasound-mirror))))
    ;; Maplify's windows, fetched by the build (salishsea decision 061, salish-xv35.7): the
@@ -490,7 +493,7 @@
    (make-task 'ingest-maplify 'boundary
               #:outputs maplify-relations
               #:invoke (node-script/code "scripts/read-path/ingest-maplify.ts"
-                                 '("scripts/ingest/fetch-maplify.ts" "scripts/ingest/maplify.ts"
+                                 '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-maplify.ts" "scripts/ingest/maplify.ts"
                                    "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
                                    "scripts/read-path/windows.ts"
                                    "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
@@ -516,7 +519,7 @@
    (make-task 'ingest-inaturalist 'boundary
               #:outputs inaturalist-relations
               #:invoke (node-script/code "scripts/read-path/ingest-inaturalist.ts"
-                                 '("scripts/ingest/fetch-inaturalist.ts" "scripts/ingest/inaturalist.ts"
+                                 '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-inaturalist.ts" "scripts/ingest/inaturalist.ts"
                                    "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
                                    "scripts/read-path/windows.ts" "src/extents.ts")
                                  (list (path->string inaturalist-mirror))))
