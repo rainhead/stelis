@@ -15,10 +15,10 @@
 (define-values (ordered pruned) (plan salishsea-graph 'days))
 (check-equal? ordered '(snapshot occurrence-days)
               "the day files need exactly the snapshot, then the export")
-(check-equal? (set-count pruned) 18
+(check-equal? (set-count pruned) 20
               (string-append "the calendar, the id index, the pages, the profile index, the manifest, "
-                             "the three ports and their gates, and Orcasound's and Maplify's mirrors "
-                             "and their reports are off the path to days"))
+                             "the three ports and their gates, and the Orcasound, Maplify and iNaturalist "
+                             "mirrors and their reports are off the path to days"))
 
 (define-values (manifest-plan _p) (plan salishsea-graph 'manifest.json))
 
@@ -77,6 +77,11 @@
                  "the report filters the mirror by scope, which needs the register's names")
 (check-false (memq 'maplify-overlap manifest-plan)
              "nor does Maplify's")
+;; iNaturalist's (salish-xv35.8): a boundary of its own; its report needs no register, since
+;; whether an observation is a killer whale comes with it from iNaturalist.
+(check-equal? (task-inputs (hash-ref (graph-tasks salishsea-graph) 'ingest-inaturalist)) '())
+(check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-inaturalist)) 'boundary)
+(check-false (memq 'inaturalist-overlap manifest-plan) "nor does iNaturalist's")
 (check-false (memq 'occurrences-agreement manifest-plan)
              "until the cutover nothing published reads the port, so a disagreement can't hold the site back")
 

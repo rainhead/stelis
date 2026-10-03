@@ -98,6 +98,7 @@
 (define mirror-dir (build-path (let-values ([(dir _n _d) (split-path snapshot-db)]) dir) "mirrors"))
 (define orcasound-mirror (build-path mirror-dir "orcasound.sqlite"))
 (define maplify-mirror (build-path mirror-dir "maplify.sqlite"))
+(define inaturalist-mirror (build-path mirror-dir "inaturalist.sqlite"))
 
 ;; --- Runtime ----------------------------------------------------------------
 ;; salishsea pins node in .nvmrc, and nothing about `node' on PATH carries that
@@ -160,6 +161,10 @@
 ;; Maplify's mirror is attached as maplify_mirror, not maplify: the snapshot already
 ;; names Postgres's copy maplify.sightings, and both are read until the cutover.
 (define maplify-relations '(maplify_mirror.sightings maplify_mirror.covered_days))
+;; iNaturalist's, attached as inaturalist_mirror for the same reason.
+(define inaturalist-relations
+  '(inaturalist_mirror.observations inaturalist_mirror.observation_photos inaturalist_mirror.taxa
+    inaturalist_mirror.covered_days inaturalist_mirror.sync))
 
 (define (snapshot-relation table)
   (string->symbol (string-append (string-replace table "_" "-") "-snapshot")))
@@ -318,6 +323,15 @@
      (make-artifact 'maplify_mirror.sightings 'db-relation)
      (make-artifact 'maplify_mirror.covered_days 'db-relation)
      (make-artifact 'maplify-overlap.json 'file)
+     ;; iNaturalist's observations as the build fetches them (salish-xv35.8): every one in
+     ;; the fetch box, their photos, the taxa they reach, the days reconciled, and how far
+     ;; the changes sweep has read (sync).
+     (make-artifact 'inaturalist_mirror.observations 'db-relation)
+     (make-artifact 'inaturalist_mirror.observation_photos 'db-relation)
+     (make-artifact 'inaturalist_mirror.taxa 'db-relation)
+     (make-artifact 'inaturalist_mirror.covered_days 'db-relation)
+     (make-artifact 'inaturalist_mirror.sync 'db-relation)
+     (make-artifact 'inaturalist-overlap.json 'file)
      ;; Which individual or matriline each designation an occurrence names means
      ;; (salish-xv35.3), as the build derives it, and that it agrees with Postgres's.
      (make-artifact 'build.occurrence_identifier_candidates 'db-relation)
@@ -395,7 +409,8 @@
               #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
                                  '("scripts/read-path/derive/extract.ts"
                                    "scripts/read-path/derive/maplify-entities.ts"
-                                   "scripts/ingest/maplify.ts"
+                                   "scripts/read-path/derive/inaturalist-scope.ts"
+                                   "scripts/ingest/maplify.ts" "scripts/ingest/inaturalist.ts"
                                    "scripts/register/name-index.ts"
                                    "src/fold.ts" "src/extents.ts"
                                    "scripts/read-path/duckdb-budget.ts"
@@ -477,6 +492,7 @@
               #:invoke (node-script/code "scripts/read-path/ingest-maplify.ts"
                                  '("scripts/ingest/fetch-maplify.ts" "scripts/ingest/maplify.ts"
                                    "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
+                                   "scripts/read-path/windows.ts"
                                    "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
                                  (list (path->string maplify-mirror))))
    ;; While Postgres still ingests Maplify too, what differs, over the days the mirror has
@@ -491,6 +507,30 @@
                                    "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
                                  (list SNAPSHOT-DB (path->string maplify-mirror)
                                        (path->string (build-path mirror-dir "maplify-overlap.json")))))
+;; iNaturalist, fetched by the build (salishsea decision 061, salish-xv35.8): what changed
+   ;; since the last run (updated_since, which is how a late upload arrives), the last ten
+   ;; days and one older month reconciled for deletions, every observation in the fetch box
+   ;; kept with its photos and the taxa it reaches. A handful of requests a run, a second
+   ;; apart, within iNaturalist's asked-for pace. A backfill is the same script with a start
+   ;; and end, run by hand.
+   (make-task 'ingest-inaturalist 'boundary
+              #:outputs inaturalist-relations
+              #:invoke (node-script/code "scripts/read-path/ingest-inaturalist.ts"
+                                 '("scripts/ingest/fetch-inaturalist.ts" "scripts/ingest/inaturalist.ts"
+                                   "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
+                                   "scripts/read-path/windows.ts" "src/extents.ts")
+                                 (list (path->string inaturalist-mirror))))
+   ;; While Postgres still ingests iNaturalist too, what differs, over the days the mirror
+   ;; has reconciled: its in-scope observations and photos against Postgres's.
+   (make-task 'inaturalist-overlap 'transform
+              #:inputs (append inaturalist-relations
+                               '(inaturalist.observations inaturalist.observation_photos))
+              #:outputs '(inaturalist-overlap.json)
+              #:invoke (node-script/code "scripts/read-path/compare-inaturalist-mirror.ts"
+                                 '("scripts/ingest/inaturalist.ts" "scripts/read-path/duckdb-budget.ts"
+                                   "src/extents.ts")
+                                 (list SNAPSHOT-DB (path->string inaturalist-mirror)
+                                       (path->string (build-path mirror-dir "inaturalist-overlap.json")))))
    ;; While Postgres still ingests Orcasound too, what differs between the two copies.
    ;; A difference never fails it, since the fetches race and CI proves the two store a
    ;; corpus alike; only being unable to compare does.
@@ -530,6 +570,7 @@
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(orcasound-overlap.json) (build-path mirror-dir "orcasound-overlap.json")]
     [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
+    [(inaturalist-overlap.json) (build-path mirror-dir "inaturalist-overlap.json")]
     [else #f]))
 
 (define (relation-tables artifact)
@@ -542,6 +583,7 @@
        [(or (memq artifact derivation-input-relations)
             (memq artifact orcasound-relations)
             (memq artifact maplify-relations)
+            (memq artifact inaturalist-relations)
             (memq artifact '(build.occurrences build.occurrence_identifier_candidates))
             (memq artifact profile-link-relations))
         (list (symbol->string artifact))]
@@ -556,6 +598,7 @@
   (cond
     [(memq artifact orcasound-relations) (sqlite-db orcasound-mirror "orcasound")]
     [(memq artifact maplify-relations) (sqlite-db maplify-mirror "maplify_mirror")]
+    [(memq artifact inaturalist-relations) (sqlite-db inaturalist-mirror "inaturalist_mirror")]
     [(file-exists? snapshot-db) snapshot-db]
     [else #f]))
 ;; A relation's digest and its per-column parts, for every relation of a database in
