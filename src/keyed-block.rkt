@@ -50,9 +50,14 @@
 ;; map of LEAF-MAX entries or fewer is exactly the flat block it always was, with the
 ;; same CID; only larger maps' addresses changed, once, when this landed.
 ;;
-;; A node is told from a leaf by its values: a leaf's are strings, a node's CIDs.
+;; A node is a two-element ARRAY, [NODE-TAG, {bucket -> CID}], and a leaf is always a
+;; map, so the two are told apart by shape alone, whatever a leaf's values come to be
+;; (they are strings today; if they became CIDs, a test by value type would break).
 ;; Buckets are by hash rather than by key prefix so the split doesn't depend on what
 ;; the keys look like: a path's year, a species name, anything spreads the same way.
+;; The layout is our own: hash-prefix sharding like IPFS's HAMT directories, in DRISL
+;; with CID links like atproto, but neither ecosystem's spec, so nothing outside
+;; Stelis reads one of these trees as a map.
 
 (require racket/contract
          racket/list
@@ -62,13 +67,17 @@
 (provide (contract-out
           [keyed-block        (-> (listof (cons/c string? string?)) hash?)]
           [keyed-block-digest (-> (listof (cons/c string? string?)) string?)]
-          [keyed-tree-blocks  (-> (listof (cons/c string? string?)) (listof hash?))]
-          [keyed-node-links   (-> hash? (listof string?))]
-          [keyed-node?        (-> hash? boolean?)])
-         LEAF-MAX)
+          [keyed-tree-blocks  (-> (listof (cons/c string? string?)) (listof (or/c hash? list?)))]
+          [keyed-node-links   (-> any/c (listof string?))]
+          [keyed-node?        (-> any/c boolean?)])
+         LEAF-MAX
+         NODE-TAG)
 
 ;; The most entries a leaf block holds; a larger map is split into buckets.
 (define LEAF-MAX 256)
+
+;; A node's first element: what it is, and which layout.
+(define NODE-TAG "stelis/keyed-node/1")
 
 ;; keyed-block : (listof (cons string string)) -> hash
 ;; The pairs as a DRISL map value. Duplicate keys are an ERROR rather than a
@@ -98,8 +107,9 @@
        (define children
          (for/list ([b (in-list buckets)])
            (cons (bucket (car (first b)) depth) (build b (add1 depth)))))
-       (cons (for/hash ([c (in-list children)])
-               (values (car c) (drisl-cid (cadr c))))
+       (cons (list NODE-TAG
+                   (for/hash ([c (in-list children)])
+                     (values (car c) (drisl-cid (cadr c)))))
              (append* (map cdr children)))])))
 
 ;; The two hex digits of byte `depth' of the key's sha256.
@@ -107,17 +117,23 @@
   (define b (bytes-ref (sha256-bytes (string->bytes/utf-8 key)) depth))
   (string-append (if (< b 16) "0" "") (number->string b 16)))
 
-;; keyed-node? : hash -> boolean
-;; Whether a stored block is a node of a chunked map (its values are links) rather
-;; than a leaf (its values are strings). The empty map is a leaf.
+;; keyed-node? : any -> boolean
+;; Whether a stored block is a node of a chunked map rather than a leaf.
+;;
+;; Also true of the LEGACY node, the bare {bucket -> CID} map written before nodes
+;; carried their tag (3a84ea4, deployed 2026-10-03 03:12Z to 03:30Z). Only salishsea's
+;; Fly history holds any, and its 30-day retention removes them; this clause can go
+;; after 2026-11-03.
 (define (keyed-node? v)
-  (and (positive? (hash-count v))
-       (for/and ([x (in-hash-values v)]) (cid? x))))
+  (or (and (list? v) (= 2 (length v)) (equal? (car v) NODE-TAG) (hash? (cadr v)))
+      (and (hash? v) (positive? (hash-count v))
+           (for/and ([x (in-hash-values v)]) (cid? x)))))
 
-;; keyed-node-links : hash -> (listof string)
+;; keyed-node-links : any -> (listof string)
 ;; A node's children, as CID strings.
 (define (keyed-node-links v)
-  (for/list ([x (in-hash-values v)] #:when (cid? x)) (cid->string x)))
+  (define links (if (list? v) (cadr v) v))
+  (for/list ([x (in-hash-values links)] #:when (cid? x)) (cid->string x)))
 
 ;; keyed-block-digest : (listof (cons string string)) -> string
 ;; The map's CID, in the `b` base32 string form — the artifact's content address: its

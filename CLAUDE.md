@@ -237,7 +237,10 @@ itself. CHUNKED (st-ml9.7): a map of more than 256 entries is a TREE of blocks �
 node maps the next byte of each key's sha256 to its bucket's CID — and the digest is
 the root's CID, so one changed key rewrites a root and one bucket, not the whole map
 (salishsea's 4,398-key days/ map: 45 MB of history over 178 changes became 2.4 MB). A
-map of 256 or fewer is the flat block it always was, same CID. Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
+map of 256 or fewer is the flat block it always was, same CID. A node is the array
+`["stelis/keyed-node/1", {bucket → CID}]` and a leaf always a map, so the two are
+told apart by shape, not by what a leaf's values are. The layout is our own (IPFS
+HAMT-style hash sharding, atproto-style DRISL + CID links, neither's spec). Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
 NOT a caller** — its identity is the row-coherent digest, because per-column
 multiset digests false-skip on a cross-row value swap (st-d5d) ·
 [`dasl.rkt`](src/dasl.rkt) + [`drisl.rkt`](src/drisl.rkt) the CID and the

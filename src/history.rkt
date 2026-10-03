@@ -236,14 +236,15 @@
 (define (tree-pairs state-dir cid)
   (define v (decode state-dir cid))
   (cond
-    [(not (hash? v)) #f]
+    [(not v) #f]
     [(keyed-node? v)
      (let loop ([children (keyed-node-links v)] [acc '()])
        (cond
          [(null? children) acc]
          [else (define sub (tree-pairs state-dir (car children)))
                (and sub (loop (cdr children) (append sub acc)))]))]
-    [else (for/list ([(k x) (in-hash v)]) (cons (intern k) (intern x)))]))
+    [(hash? v) (for/list ([(k x) (in-hash v)]) (cons (intern k) (intern x)))]
+    [else #f]))
 
 ;; Within one load, each block is decoded once and each key or value string is held
 ;; once. A keyed artifact's map barely changes from build to build, so a history of
@@ -612,7 +613,7 @@
         [else
          (define v (block-ref state-dir (car todo)))
          (define children
-           (if (and (hash? v) (keyed-node? v))
+           (if (keyed-node? v)
                (filter (lambda (c) (not (set-member? named c))) (keyed-node-links v))
                '()))
          (walk (append children (cdr todo)) (for/fold ([n named]) ([c children]) (set-add n c)))])))

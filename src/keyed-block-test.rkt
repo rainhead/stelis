@@ -102,3 +102,14 @@
               "one key changed: a new root and one new bucket, every other block shared")
 (check-exn #rx"duplicate key" (lambda () (keyed-tree-blocks (cons (car big) big)))
            "a duplicate key is refused at any size")
+
+;; A node says what it is: a two-element array under NODE-TAG, where a leaf is always
+;; a map, so the two never depend on what a leaf's values happen to be.
+(check-equal? (car (car big-blocks)) NODE-TAG)
+(check-pred hash? (cadr (car big-blocks)))
+(check-false (keyed-node? (keyed-block (many 3))) "a leaf is a map, never a node")
+(check-false (keyed-node? (keyed-block '())) "nor is the empty map")
+(check-true (keyed-node? (cadr (car big-blocks)))
+            "the untagged {bucket -> CID} node 3a84ea4 wrote still reads as one, until retention clears it")
+(check-equal? (sort (keyed-node-links (cadr (car big-blocks))) string<?)
+              (sort (keyed-node-links (car big-blocks)) string<?))
