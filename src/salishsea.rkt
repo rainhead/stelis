@@ -466,9 +466,10 @@
                                  '("scripts/ingest/fetch-orcasound.ts" "scripts/ingest/orcasound.ts"
                                    "scripts/ingest/retry.ts")
                                  (list (path->string orcasound-mirror))))
-   ;; Maplify's window, fetched by the build (salishsea decision 061, salish-xv35.7): the
-   ;; ten days ending today, reconciled into a SQLite mirror in one transaction, nothing
-   ;; written unless the response parses whole. Everything Maplify returned is kept;
+   ;; Maplify's windows, fetched by the build (salishsea decision 061, salish-xv35.7): the
+   ;; thirty days ending today and one older month for anti-entropy (salish-xv35.15),
+   ;; each reconciled into a SQLite mirror in one transaction, nothing written unless the
+   ;; response parses whole. Everything Maplify returned is kept;
    ;; which sightings are in the map's scope is the derivation's call (Peter, 2026-10-02).
    ;; A backfill is the same script with a start and end, run by hand.
    (make-task 'ingest-maplify 'boundary
