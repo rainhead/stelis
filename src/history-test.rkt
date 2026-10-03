@@ -14,8 +14,8 @@
          "dasl.rkt"
          "drisl.rkt"
          "blockstore.rkt"
-         (only-in "keyed-block.rkt" keyed-block-digest)
-         (only-in "delta.rkt" build-key-delta)
+         (only-in "keyed-block.rkt" keyed-block-digest keyed-node?)
+         (only-in "delta.rkt" build-key-delta key-delta-changed)
          "history.rkt")
 
 (define tmp (make-temporary-file "stelis-history-test-~a" 'directory))
@@ -261,6 +261,35 @@
                    #:project 'salishsea #:recorded-at (+ t0 (* 46 day)))
   (check-equal? (map build-record-number (history-load rt)) '(4 5 6) "and the next build is #6")
   (delete-directory/files rt))
+
+;; --- Chunked maps (st-ml9.7): stored as a tree, read back whole ---------------
+(let ([ct (make-temporary-file "stelis-history-chunked-~a" 'directory)])
+  (define big (for/list ([i (in-range 1000)]) (cons (format "days/~a.json" i) (format "h~a" i))))
+  (define day 86400)
+  (history-append! ct 'species-maps kg "1" (list (rec-maps "t0" big)) #:project 'salishsea #:recorded-at 0)
+  (history-append! ct 'species-maps kg "2"
+                   (list (rec-maps "t1" (cons '("days/0.json" . "moved") (cdr big))))
+                   #:project 'salishsea #:recorded-at (* 40 day))
+  (define (keys-at n)
+    (key-observation-keys (list-ref (history-key-observations ct 'species-maps) (sub1 n))))
+  (check-equal? (keys-at 1) (sort big string<? #:key car) "a chunked map reads back whole")
+  (check-equal? (key-delta-changed (build-key-delta 'species-maps (history-key-observations ct 'species-maps) 2))
+                '("days/0.json")
+                "and the delta between two of them names the one key that moved")
+  ;; the first build expires; its root goes, the second's buckets (shared or not) stay
+  (define-values (gone _collected) (history-prune! ct (* 30 day) #:now (* 41 day)))
+  (check-equal? gone 1)
+  (check-equal? (keys-at 1) (sort (cons '("days/0.json" . "moved") (cdr big)) string<? #:key car)
+                "pruning keeps every bucket a surviving root reaches")
+  ;; a lost bucket makes the map unreadable, never smaller
+  (define blocks (build-path ct "blocks"))
+  (for ([b (in-list (directory-list blocks))]
+        #:when (let ([v (block-ref ct (path->string b))])
+                 (and (hash? v) (not (keyed-node? v)) (hash-has-key? v "days/0.json"))))
+    (delete-file (build-path blocks b)))
+  (check-equal? (history-key-observations ct 'species-maps) '()
+                "a chunked map missing a bucket is unresolved, which poisons the timeline as one missing block does")
+  (delete-directory/files ct))
 
 ;; --- graceful degradation ----------------------------------------------------
 

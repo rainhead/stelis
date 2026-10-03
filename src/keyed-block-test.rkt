@@ -9,6 +9,7 @@
 ;; parts are one object and cannot drift.
 
 (require rackunit
+         racket/list
          "dasl.rkt"
          "drisl.rkt"
          "keyed-block.rkt")
@@ -67,3 +68,37 @@
 (check-pred string? (keyed-block-digest '()) "the empty block still has an address")
 (check-not-equal? (keyed-block-digest '()) (keyed-block-digest pairs)
                   "and it is not any non-empty one")
+
+;; --- Chunked (st-ml9.7) -------------------------------------------------------
+;; A small map is the flat block it always was, CID and all; a large one is a tree
+;; whose root is the address, and changing one key rewrites the root and one bucket.
+(define (many n [suffix ""])
+  (for/list ([i (in-range n)]) (cons (format "days/2026/~a.json" i) (format "h~a~a" i suffix))))
+
+(check-equal? (keyed-tree-blocks (many LEAF-MAX)) (list (keyed-block (many LEAF-MAX)))
+              "up to LEAF-MAX entries: one flat block, so a small map's digest never moved")
+(check-equal? (keyed-block-digest (many LEAF-MAX))
+              (cid->string (drisl-cid (keyed-block (many LEAF-MAX)))))
+
+(define big (many 4400))
+(define big-blocks (keyed-tree-blocks big))
+(check-true (keyed-node? (car big-blocks)) "a large map's root is a node")
+(check-true (for/and ([b (in-list (cdr big-blocks))])
+              (or (keyed-node? b) (<= (hash-count b) LEAF-MAX)))
+            "and every leaf holds at most LEAF-MAX entries")
+(check-equal? (sort (append* (for/list ([b (in-list big-blocks)] #:unless (keyed-node? b)) (hash->list b)))
+                    string<? #:key car)
+              (sort big string<? #:key car)
+              "the leaves together are the map")
+(check-equal? (keyed-block-digest big) (cid->string (drisl-cid (car big-blocks))) "the address is the root's")
+(check-equal? (keyed-block-digest (reverse big)) (keyed-block-digest big) "order still doesn't matter")
+(check-equal? (sort (keyed-node-links (car big-blocks)) string<?)
+              (sort (for/list ([b (in-list (cdr big-blocks))]) (cid->string (drisl-cid b))) string<?)
+              "the root links exactly its buckets")
+
+(define one-changed (cons (cons "days/2026/7.json" "changed") (remove (assoc "days/2026/7.json" big) big)))
+(define after (keyed-tree-blocks one-changed))
+(check-equal? (length (remove* big-blocks after)) 2
+              "one key changed: a new root and one new bucket, every other block shared")
+(check-exn #rx"duplicate key" (lambda () (keyed-tree-blocks (cons (car big) big)))
+           "a duplicate key is refused at any size")

@@ -233,7 +233,11 @@ the roll-up and the parts are ONE object and cache.rkt's old assertion that "the
 granularities can never disagree" holds by construction. Retires `digest-of-pairs`,
 whose `key=value` line join was genuinely ambiguous (`{"a=b"→"c"}` and `{"a"→"b=c"}`
 collided) and whose order-independence lived in its callers' sorting rather than in
-itself. Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
+itself. CHUNKED (st-ml9.7): a map of more than 256 entries is a TREE of blocks — a
+node maps the next byte of each key's sha256 to its bucket's CID — and the digest is
+the root's CID, so one changed key rewrites a root and one bucket, not the whole map
+(salishsea's 4,398-key days/ map: 45 MB of history over 178 changes became 2.4 MB). A
+map of 256 or fewer is the flat block it always was, same CID. Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
 NOT a caller** — its identity is the row-coherent digest, because per-column
 multiset digests false-skip on a cross-row value swap (st-d5d) ·
 [`dasl.rkt`](src/dasl.rkt) + [`drisl.rkt`](src/drisl.rkt) the CID and the

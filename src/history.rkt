@@ -31,7 +31,7 @@
          "model.rkt"
          "cache.rkt"    ; read-versioned — the shared versioned-file reader
          "blockstore.rkt"
-         (only-in "keyed-block.rkt" keyed-block)
+         (only-in "keyed-block.rkt" keyed-tree-blocks keyed-node? keyed-node-links)
          "trace.rkt")
 
 (provide (struct-out build-record)
@@ -191,7 +191,9 @@
                       (for/list ([e (in-list entries)])
                         (cons (car e)
                               (with-handlers ([exn:fail? (lambda (_) (cdr e))])
-                                (block-put! state-dir (keyed-block (cdr e)))))))))
+                                ;; every block of the map's tree; the root's CID names it
+                                (car (for/list ([b (in-list (keyed-tree-blocks (cdr e)))])
+                                       (block-put! state-dir b)))))))))
 
 ;; The inverse. Tolerant of BOTH shapes on purpose: a pre-st-1e5 line carries its
 ;; pairs inline and is read as-is, so the accumulated history survives the change
@@ -220,8 +222,22 @@
 (define (resolve-keyed state-dir v)
   (cond
     [(list? v) v]                                   ; pre-st-1e5: inline pairs
-    [(string? v) (block->pairs (block-ref state-dir v))]
+    [(string? v) (block->pairs (tree-ref state-dir v))]
     [else #f]))
+
+;; tree-ref : path-string string -> (or/c hash #f)
+;; A keyed map stored as a tree (keyed-block.rkt, st-ml9.7), gathered back into one
+;; map; #f when any block of it is missing or unreadable — a map with a bucket gone
+;; is not a smaller map, and must not read as one.
+(define (tree-ref state-dir cid)
+  (define v (block-ref state-dir cid))
+  (cond
+    [(not (hash? v)) #f]
+    [(keyed-node? v)
+     (for/fold ([acc (hash)]) ([child (in-list (keyed-node-links v))])
+       (define sub (and acc (tree-ref state-dir child)))
+       (and sub (for/fold ([acc acc]) ([(k x) (in-hash sub)]) (hash-set acc k x))))]
+    [else v]))
 
 ;; A keyed block is a DRISL map; the timeline wants sorted pairs, and sorting here
 ;; (rather than trusting the decoder) keeps the shape identical to what the inline
@@ -542,11 +558,12 @@
         (values dropped (collect-blocks! state-dir kept))])]))
 
 ;; collect-blocks! : path-string (listof string) -> exact-nonnegative-integer
-;; Delete every block that none of `lines' names, as its topology snapshot or as a
-;; keyed map; return how many. Only history writes blocks (blockstore.rkt), so a
-;; block no build names is one nothing can reach.
+;; Delete every block that none of `lines' reaches, as its topology snapshot or as a
+;; keyed map (with the blocks below a chunked map's root); return how many. Only
+;; history writes blocks (blockstore.rkt), so a block no build reaches is one nothing
+;; can.
 (define (collect-blocks! state-dir lines)
-  (define named
+  (define roots
     (for*/fold ([named (set)]) ([line (in-list lines)]
                                 [e (in-value (line->entry line))]
                                 #:when e)
@@ -557,6 +574,18 @@
                   [entry (in-list (list-ref r pos))]
                   #:when (and (pair? entry) (string? (cdr entry))))
         (set-add named (cdr entry)))))
+  ;; a chunked map's root names its buckets, and they theirs
+  (define named
+    (let walk ([todo (set->list roots)] [named roots])
+      (cond
+        [(null? todo) named]
+        [else
+         (define v (block-ref state-dir (car todo)))
+         (define children
+           (if (and (hash? v) (keyed-node? v))
+               (filter (lambda (c) (not (set-member? named c))) (keyed-node-links v))
+               '()))
+         (walk (append children (cdr todo)) (for/fold ([n named]) ([c children]) (set-add n c)))])))
   (define dir (build-path state-dir "blocks"))
   (if (directory-exists? dir)
       (for/sum ([b (in-list (directory-list dir))]
