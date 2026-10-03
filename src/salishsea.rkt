@@ -5,55 +5,42 @@
 ;; database — the first step of taking the query API off the site's read path
 ;; (salishsea's salish-t3g; the frontend half is salish-t3g.1).
 ;;
-;; Stelis's second project, and deliberately a small one. Slice 1 (st-ml9.2) is
-;; the smallest path that exercises the whole shape:
+;; Stelis's second project. The shape, since salishsea's step 3 moved the
+;; derivation and the upstream ingests into the build (decision 061, salish-xv35):
 ;;
-;;   snapshot ──▶ occurrences-snapshot ──▶ occurrence-days ──▶ days/
-;;   (boundary)   (db-relation)            (transform)         (one file per
-;;       │                                                      Pacific day)
-;;       │                         ├────────▶ occurrence-ids ▶ ids/
-;;       │                         │          (transform)       (id → day, in
-;;       │                         │                             256 shards, for
-;;       │                         │                             ?o= links)
-;;       │                         └────────▶ calendar ───▶ calendar/
-;;       │                                   (transform)       (day counts per
-;;       │                                                      region, one file
-;;       │                                                      per Pacific month)
+;;   ingest-maplify ─────▶ maplify_mirror.*  ──┐   (boundaries: each source's own
+;;   ingest-inaturalist ─▶ inaturalist_mirror.*┤    fetch, into a SQLite mirror
+;;   ingest-orcasound ───▶ orcasound.*  ───────┤    holding only what it said)
+;;                                             │
+;;   snapshot ──▶ what Postgres still holds ───┤   (native sightings, Happywhale,
+;;   (boundary)   (the register, the catalogue,│    the reference tables, and its
+;;       │         reference tables, native)   │    own copies of the three sources,
+;;       │              │                      │    for the overlap reports)
+;;       │              ▼                      ▼
+;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
+;;       │        (gate: every Maplify      (DuckDB twins of            │
+;;       │         name Postgres named,      Postgres's five views)    │
+;;       │         the register still names)                           │
+;;       │      ┌──────────────────┬──────────────────┬────────────────┤
+;;       │      ▼                  ▼                  ▼                ▼
+;;       │  occurrence-days    calendar     occurrence-ids   derive-identifier-candidates
+;;       │   ▶ days/          ▶ calendar/      ▶ ids/              ▼
+;;       │                                              derive-profile-links
+;;       │                                              ▶ build.individual_occurrences
+;;       │                                                and its three siblings
 ;;       ├──────▶ the catalogue ──────▶ individual-pages ▶ profiles/individuals/
 ;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
-;;       │         table)               ecotype-pages ───▶ profiles/ecotypes/
+;;       │         table) + the links   ecotype-pages ───▶ profiles/ecotypes/
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
 ;;       │                              profile-index ───▶ redirects.json,
 ;;       │                                                  sitemap.xml,
 ;;       │                                                  catalog-codes.json
-;;       │                              (transforms)       (one prerendered page
-;;       │                                  ▲               per subject, and its
-;;       │                                  │               map's dots)
-;;       ├──────▶ snapshot-year ────────────┘
-;;       │        (the Pacific year it was taken in)
-;;       ├──────▶ snapshot-meta ───────────────────▶ manifest ──▶ manifest.json
-;;       │        (when it was taken)      (after days/,       (what the build
-;;       │                                  calendar/, ids/,     covered)
-;;       │                                  the pages)
-;;       └──────▶ what the occurrences ──▶ derive-occurrences ──▶ build.occurrences
-;;                are derived from          (DuckDB twins of the       │       │
-;;                (decision 061): the       five Postgres views)       │       ▼
-;;                sources' and reference                               │  derive-identifier-candidates
-;;                tables, typed, one                                   │       ▼
-;;                relation per table              build.occurrence_identifier_candidates
-;;                                                                     ▼       ▼
-;;                         occurrences-agreement, identifier-candidates-agreement
-;;                         (gates: each port must equal Postgres's stored answer,
-;;                          read in the same snapshot) ──▶ tokens
-;;                                                             │       │
-;;                                                             ▼       ▼
-;;                               derive-profile-links ──▶ build.individual_occurrences
-;;                               (twins of the four views     and its three siblings
-;;                                the pages' maps read)  ──▶ profile-links-agreement
+;;       ├──────▶ snapshot-year ──────▶ (the pages)
+;;       └──────▶ snapshot-meta ──────▶ manifest ──▶ manifest.json
+;;                (when it was taken)   (after every published file)
 ;;
-;; Until salishsea's step-3 cutover (salish-xv35.9) the pages still read
-;; occurrences-snapshot and the snapshot's link views; the ports run beside them,
-;; and each gate fails the build the moment the two disagree.
+;; Until salishsea.io itself reads these files, Postgres keeps ingesting the three
+;; sources too, and the overlap reports compare its copies with the mirrors.
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
 ;; database that did NOT change digests the same and early cutoff skips the rest.
@@ -151,15 +138,14 @@
 ;; relation, `<table>-snapshot' with hyphens, so --why names the one that moved.
 (define catalogue-tables
   '("individuals" "designations" "nicknames" "parties" "social_groups"
-    "group_parents" "matriline_members" "animal_names" "haulouts"
-    "individual_occurrences" "group_occurrences" "ecotype_occurrences"
-    "haulout_occurrences"))
+    "group_parents" "matriline_members" "animal_names" "haulouts"))
 
 ;; The relations a mirror holds, each named "<source>.<table>", as the mirror is attached
 ;; under the source's name.
 (define orcasound-relations '(orcasound.bouts orcasound.bout_entities))
 ;; Maplify's mirror is attached as maplify_mirror, not maplify: the snapshot already
-;; names Postgres's copy maplify.sightings, and both are read until the cutover.
+;; names Postgres's copy maplify.sightings, which the overlap report and the name guard
+;; read while Postgres ingests Maplify too.
 (define maplify-relations '(maplify_mirror.sightings maplify_mirror.covered_days))
 ;; iNaturalist's, attached as inaturalist_mirror for the same reason.
 (define inaturalist-relations
@@ -171,12 +157,13 @@
 
 (define catalogue-relations (map snapshot-relation catalogue-tables))
 
-;; What the occurrences are derived from (salishsea decision 061, salish-xv35.1):
-;; every table the five views behind derived.occurrences read, the reference tables
-;; the functions they call read, the Maplify resolvers' inputs, the stored
-;; identifier candidates to check a port against, and the enums' declared orders;
-;; and the identifications people assert, which the profile pages' link views start
-;; from (salish-xv35.13).
+;; What the occurrences were derived from in Postgres (salishsea decision 061,
+;; salish-xv35.1): every table the five views behind derived.occurrences read, the
+;; reference tables the functions they call read, the Maplify resolvers' inputs, and
+;; the enums' declared orders; and the identifications people assert, which the
+;; profile pages' link views start from (salish-xv35.13). Maplify's, iNaturalist's and
+;; Orcasound's tables are still snapshotted for the overlap reports and the name
+;; guard, while Postgres ingests them too; the derivation reads the mirrors instead.
 ;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
@@ -190,20 +177,36 @@
     "public.providers" "public.collections" "public.organizations"
     "register.entities" "register.names" "register.mappings"
     "register.ancestor" "register.deprecations"
-    "derived.occurrence_identifier_candidates"
     "types.enums"))
 
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
-;; What derive-occurrences reads: all of the above but the stored candidates, which
-;; are there to check the candidates' port against, not to derive from, and the
-;; identifications, which only the profile links read.
+;; The upstream sources as the build's own mirrors hold them (salish-xv35.9), which the
+;; derivation reads in place of Postgres's copies (salishsea's derive/sources.sql).
+;; iNaturalist's taxa are read from both: the mirror holds those its observations reach,
+;; Postgres every taxon an ingest ever did, which the register may name for another
+;; source's sighting.
+(define mirror-source-relations
+  '(maplify_mirror.sightings
+    inaturalist_mirror.observations inaturalist_mirror.observation_photos inaturalist_mirror.taxa
+    orcasound.bouts orcasound.bout_entities))
+
+;; What derive-occurrences reads: the mirrors for the three sources, the snapshot for the
+;; rest, but not the identifications, which only the profile links read; and the name
+;; guard's token, so a register that un-names Maplify sightings stops the derivation.
 (define occurrence-derivation-inputs
-  (remq* '(derived.occurrence_identifier_candidates public.identifications)
-         derivation-input-relations))
+  (append (remq* '(maplify.sightings inaturalist.observations inaturalist.observation_photos
+                   public.acoustic_bouts public.acoustic_bout_entities public.identifications)
+                 derivation-input-relations)
+          mirror-source-relations
+          '(maplify-names-hold)))
+
+;; The mirrors, as the derivations take them: maplify, inaturalist, orcasound.
+(define MIRRORS
+  (map path->string (list maplify-mirror inaturalist-mirror orcasound-mirror)))
 
 ;; The profile pages' link views, each twinned under build. by derive-profile-links
-;; (salish-xv35.13) and compared with the snapshot's copy of the view.
+;; (salish-xv35.13); the pages read the twins.
 (define profile-link-tables
   '("individual_occurrences" "group_occurrences" "ecotype_occurrences" "haulout_occurrences"))
 (define profile-link-relations
@@ -213,17 +216,21 @@
 ;; What each kind of page reads: profiles.ts's INDIVIDUAL_TABLES and its siblings,
 ;; which load only these, so each task's inputs are exactly what it reads.
 (define individual-page-relations
-  (map snapshot-relation
-       '("individuals" "designations" "nicknames" "parties" "social_groups"
-         "group_parents" "matriline_members" "animal_names" "individual_occurrences")))
+  (append (map snapshot-relation
+               '("individuals" "designations" "nicknames" "parties" "social_groups"
+                 "group_parents" "matriline_members" "animal_names"))
+          '(build.individual_occurrences)))
 (define matriline-page-relations
-  (map snapshot-relation
-       '("social_groups" "group_parents" "nicknames" "parties" "individuals"
-         "matriline_members" "group_occurrences")))
+  (append (map snapshot-relation
+               '("social_groups" "group_parents" "nicknames" "parties" "individuals"
+                 "matriline_members"))
+          '(build.group_occurrences)))
 (define ecotype-page-relations
-  (map snapshot-relation '("social_groups" "group_parents" "ecotype_occurrences")))
+  (append (map snapshot-relation '("social_groups" "group_parents"))
+          '(build.ecotype_occurrences)))
 (define haulout-page-relations
-  (map snapshot-relation '("haulouts" "haulout_occurrences")))
+  (append (map snapshot-relation '("haulouts"))
+          '(build.haulout_occurrences)))
 (define profile-index-relations
   (map snapshot-relation '("individuals" "designations" "social_groups" "haulouts")))
 
@@ -256,9 +263,6 @@
 
 (define artifacts
   (list*
-   ;; What the snapshot read from Postgres. Derived: it is ours to rebuild from
-   ;; the database at any time, and the build never writes back.
-   (make-artifact 'occurrences-snapshot 'db-relation)
    ;; When the snapshot was taken, read before anything else. A separate relation
    ;; so that it moving on every build does not move the occurrences' digest:
    ;; the day files still cut off when the data hasn't changed.
@@ -295,9 +299,8 @@
    ;; The rows the map's sighting cards link designations from (T065A to her
    ;; page), so those links survive the database being unreachable.
    (make-artifact 'catalog-codes.json 'file)
-   ;; What the profile pages show (salishsea decision 057): the catalogue, and the
-   ;; views linking a subject to its sightings. All of what the snapshot writes is
-   ;; declared, including the relations no page reads yet.
+   ;; What the profile pages show of the catalogue (salishsea decision 057). All of
+   ;; what the snapshot writes is declared, including the relations no page reads yet.
    (append
     (for/list ([name (in-list catalogue-relations)])
       (make-artifact name 'db-relation))
@@ -307,11 +310,13 @@
       (make-artifact name 'db-relation))
     (list
      ;; The occurrences as the build derives them (salish-xv35.2): id, observed_at
-     ;; and the document, in the shape of occurrences-snapshot. Written into the
-     ;; snapshot file, under build., beside what it was derived from.
+     ;; and the document to_jsonb would write. Written into the snapshot file, under
+     ;; build., beside what it was derived from. What every published file reads
+     ;; (salish-xv35.9).
      (make-artifact 'build.occurrences 'db-relation)
-     ;; That the build's occurrences and Postgres's agree, row for row.
-     (make-artifact 'occurrences-agree 'token)
+     ;; That every Maplify name Postgres resolved still resolves in the register the
+     ;; build was given.
+     (make-artifact 'maplify-names-hold 'token)
      ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6), and how
      ;; they compare with Postgres's copy while both are ingested: a report for a person,
      ;; not a gate, since the two fetches are minutes apart.
@@ -333,11 +338,8 @@
      (make-artifact 'inaturalist_mirror.sync 'db-relation)
      (make-artifact 'inaturalist-overlap.json 'file)
      ;; Which individual or matriline each designation an occurrence names means
-     ;; (salish-xv35.3), as the build derives it, and that it agrees with Postgres's.
-     (make-artifact 'build.occurrence_identifier_candidates 'db-relation)
-     (make-artifact 'identifier-candidates-agree 'token)
-     ;; That the profile links the build derives agree with Postgres's views.
-     (make-artifact 'profile-links-agree 'token))
+     ;; (salish-xv35.3), as the build derives it.
+     (make-artifact 'build.occurrence_identifier_candidates 'db-relation))
     ;; Which sightings each individual, matriline, ecotype and haul-out site was seen
     ;; in (salish-xv35.13), as the build derives them: one relation per view twinned,
     ;; each holding documents in the shape of the snapshot's copy of that view.
@@ -347,20 +349,20 @@
 (define tasks
   (list
    (make-task 'snapshot 'boundary
-              #:outputs (list* 'occurrences-snapshot 'snapshot-meta 'snapshot-year
+              #:outputs (list* 'snapshot-meta 'snapshot-year
                                (append catalogue-relations derivation-input-relations))
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
    (make-task 'occurrence-days 'transform
-              #:inputs '(occurrences-snapshot)
+              #:inputs '(build.occurrences)
               #:outputs '(days)
               #:invoke (node-script/code "scripts/read-path/occurrence-days.ts"
                                  '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
    ;; The region boxes are the map's own, so the files they come from are code.
    (make-task 'calendar 'transform
-              #:inputs '(occurrences-snapshot)
+              #:inputs '(build.occurrences)
               #:outputs '(calendar)
               #:invoke (node-script/code "scripts/read-path/calendar.ts"
                                  '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
@@ -369,7 +371,7 @@
    ;; The shard hash is shared with the browser, so it is code: change it and
    ;; every id moves, which must rebuild the index.
    (make-task 'occurrence-ids 'transform
-              #:inputs '(occurrences-snapshot)
+              #:inputs '(build.occurrences)
               #:outputs '(ids)
               #:invoke (node-script/code "scripts/read-path/occurrence-ids.ts"
                                  '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts")
@@ -397,17 +399,34 @@
                                    "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
                                    "dist/sitemap.xml")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
+   ;; A register edition that loses a name would quietly drop every Maplify sighting
+   ;; that used it, since the derivation resolves names from the register it is given.
+   ;; Postgres's ingest refuses that, so while it ingests Maplify its stored answer is
+   ;; the last one accepted: this fails when the build's own rule can no longer name
+   ;; a pair Postgres named, before the derivation, so the last good files stand.
+   (make-task 'maplify-names 'gate
+              #:inputs '(maplify.sightings register.entities register.names
+                         register.ancestor register.deprecations)
+              #:outputs '(maplify-names-hold)
+              #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
+                                 '("scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
+                                   "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
    ;; The five per-source Postgres views behind derived.occurrences, as DuckDB SQL
-   ;; (salishsea decision 061). Its two regex extractions run in node first, since
-   ;; RE2 can't express Postgres's word boundaries, and so does Maplify's entity
-   ;; resolution, which is the ingest's own resolveEntity over the register's name
-   ;; index (salish-xv35.11). The code list is the script's esbuild import closure;
-   ;; the SQL is read, not imported, so it is listed by hand.
+   ;; (salishsea decision 061), reading Maplify, iNaturalist and Orcasound from the
+   ;; build's mirrors (salish-xv35.9) through derive/sources.sql. Its two regex
+   ;; extractions run in node first, since RE2 can't express Postgres's word
+   ;; boundaries, and so does Maplify's entity resolution, which is the ingest's own
+   ;; resolveEntity over the register's name index (salish-xv35.11). The code list is
+   ;; the script's esbuild import closure; the SQL is read, not imported, so it is
+   ;; listed by hand.
    (make-task 'derive-occurrences 'transform
               #:inputs occurrence-derivation-inputs
               #:outputs '(build.occurrences)
               #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
                                  '("scripts/read-path/derive/extract.ts"
+                                   "scripts/read-path/derive/sources.ts"
+                                   "scripts/read-path/derive/sources.sql"
                                    "scripts/read-path/derive/maplify-entities.ts"
                                    "scripts/read-path/derive/inaturalist-scope.ts"
                                    "scripts/ingest/maplify.ts" "scripts/ingest/inaturalist.ts"
@@ -416,20 +435,11 @@
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/shared.sql"
                                    "scripts/read-path/derive/occurrences.sql")
-                                 (list SNAPSHOT-DB)))
-   ;; The port's check: every occurrence Postgres stores, the build derived the same,
-   ;; compared as the day files would write them. Fails the build on any difference,
-   ;; naming the rows, until the cutover retires it.
-   (make-task 'occurrences-agreement 'gate
-              #:inputs '(build.occurrences occurrences-snapshot)
-              #:outputs '(occurrences-agree)
-              #:invoke (node-script/code "scripts/read-path/compare-occurrences.ts"
-                                 '("scripts/read-path/duckdb-budget.ts")
-                                 (list SNAPSHOT-DB)))
+                                 (list* SNAPSHOT-DB MIRRORS)))
    ;; Postgres's derived.identifier_candidates as DuckDB SQL: each designation an
    ;; occurrence names, paired with the catalogue's individual or matriline. Reads the
-   ;; occurrences the build derived, not Postgres's, so it is a port of the whole
-   ;; chain; register.fold's twin is in the SQL, read rather than imported.
+   ;; occurrences the build derived, so it is a port of the whole chain;
+   ;; register.fold's twin is in the SQL, read rather than imported.
    (make-task 'derive-identifier-candidates 'transform
               #:inputs '(build.occurrences social-groups-snapshot designations-snapshot)
               #:outputs '(build.occurrence_identifier_candidates)
@@ -437,40 +447,28 @@
                                  '("scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/identifier-candidates.sql")
                                  (list SNAPSHOT-DB)))
-   (make-task 'identifier-candidates-agreement 'gate
-              #:inputs '(build.occurrence_identifier_candidates derived.occurrence_identifier_candidates)
-              #:outputs '(identifier-candidates-agree)
-              #:invoke (node-script/code "scripts/read-path/compare-identifier-candidates.ts"
-                                 '("scripts/read-path/duckdb-budget.ts")
-                                 (list SNAPSHOT-DB)))
    ;; The four views a profile page's map reads (salish-xv35.13), as DuckDB SQL over the
    ;; occurrences and candidates the build derived, the identifications people assert,
-   ;; Orcasound's bout entities and the catalogue. A haul-out report's distance is
+   ;; Orcasound's bout entities (from its mirror) and the catalogue. A haul-out report's distance is
    ;; PostGIS's spheroidal one, measured in node with GeographicLib, which PostGIS
    ;; calls, rather than with DuckDB's spatial extension on a 1 GB machine.
    (make-task 'derive-profile-links 'transform
               #:inputs '(build.occurrences build.occurrence_identifier_candidates
-                         public.identifications public.acoustic_bout_entities
+                         public.identifications orcasound.bout_entities
                          register.entities register.deprecations register.ancestor
-                         inaturalist.taxa
+                         inaturalist.taxa inaturalist_mirror.taxa
                          individuals-snapshot social-groups-snapshot matriline-members-snapshot
                          haulouts-snapshot)
               #:outputs profile-link-relations
               #:invoke (node-script/code "scripts/read-path/derive-profile-links.ts"
                                  '("scripts/read-path/derive/haulout-distance.ts"
+                                   "scripts/read-path/derive/sources.ts"
+                                   "scripts/read-path/derive/sources.sql"
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/shared.sql"
                                    "scripts/read-path/derive/haulout-nearby.sql"
                                    "scripts/read-path/derive/profile-links.sql")
-                                 (list SNAPSHOT-DB)))
-   ;; Each twin against the snapshot's copy of its view, as multisets of documents.
-   (make-task 'profile-links-agreement 'gate
-              #:inputs (append profile-link-relations
-                               (map snapshot-relation profile-link-tables))
-              #:outputs '(profile-links-agree)
-              #:invoke (node-script/code "scripts/read-path/compare-profile-links.ts"
-                                 '("scripts/read-path/duckdb-budget.ts")
-                                 (list SNAPSHOT-DB)))
+                                 (list* SNAPSHOT-DB MIRRORS)))
    ;; Orcasound's whole corpus, fetched by the build (salishsea decision 061, step B):
    ;; the same fetch shell and pure core as the Supabase function, written to a SQLite
    ;; mirror whole and atomically, nothing written unless the fetch is complete. It
@@ -575,7 +573,6 @@
 
 (define (relation-tables artifact)
   (case artifact
-    [(occurrences-snapshot) '("snapshot.occurrences")]
     [(snapshot-meta) '("snapshot.meta")]
     [(snapshot-year) '("snapshot.year")]
     [else
