@@ -212,39 +212,57 @@
 (define unresolved-keys 'unresolved)
 
 (define (internalize-keyed state-dir datum)
+  (define only (current-keyed-for))
   (update-positions datum KEYED-DATUM-POSITIONS
                     (lambda (entries)
                       (for/list ([e (in-list entries)])
                         (cons (car e)
-                              (or (resolve-keyed state-dir (cdr e)) unresolved-keys))))))
+                              (if (and only (not (eq? (car e) only)))
+                                  unresolved-keys
+                                  (or (resolve-keyed state-dir (cdr e)) unresolved-keys)))))))
 
 ;; resolve-keyed : path-string any -> (or/c (listof (cons string string)) #f)
 (define (resolve-keyed state-dir v)
   (cond
     [(list? v) v]                                   ; pre-st-1e5: inline pairs
-    [(string? v) (block->pairs (tree-ref state-dir v))]
+    [(string? v) (let ([pairs (tree-pairs state-dir v)])
+                   (and pairs (sort pairs string<? #:key car)))]
     [else #f]))
 
-;; tree-ref : path-string string -> (or/c hash #f)
-;; A keyed map stored as a tree (keyed-block.rkt, st-ml9.7), gathered back into one
-;; map; #f when any block of it is missing or unreadable — a map with a bucket gone
-;; is not a smaller map, and must not read as one.
-(define (tree-ref state-dir cid)
-  (define v (block-ref state-dir cid))
+;; tree-pairs : path-string string -> (or/c (listof (cons string string)) #f)
+;; A keyed map stored as a tree (keyed-block.rkt, st-ml9.7), gathered back into its
+;; pairs, unsorted; #f when any block of it is missing or unreadable — a map with a
+;; bucket gone is not a smaller map, and must not read as one.
+(define (tree-pairs state-dir cid)
+  (define v (decode state-dir cid))
   (cond
     [(not (hash? v)) #f]
     [(keyed-node? v)
-     (for/fold ([acc (hash)]) ([child (in-list (keyed-node-links v))])
-       (define sub (and acc (tree-ref state-dir child)))
-       (and sub (for/fold ([acc acc]) ([(k x) (in-hash sub)]) (hash-set acc k x))))]
-    [else v]))
+     (let loop ([children (keyed-node-links v)] [acc '()])
+       (cond
+         [(null? children) acc]
+         [else (define sub (tree-pairs state-dir (car children)))
+               (and sub (loop (cdr children) (append sub acc)))]))]
+    [else (for/list ([(k x) (in-hash v)]) (cons (intern k) (intern x)))]))
 
-;; A keyed block is a DRISL map; the timeline wants sorted pairs, and sorting here
-;; (rather than trusting the decoder) keeps the shape identical to what the inline
-;; form produced, so delta.rkt cannot tell the two apart.
-(define (block->pairs v)
-  (and (hash? v)
-       (sort (hash->list v) string<? #:key car)))
+;; Within one load, each block is decoded once and each key or value string is held
+;; once. A keyed artifact's map barely changes from build to build, so a history of
+;; them is mostly the same strings and, once chunked, mostly the same buckets. Decoded
+;; afresh, salishsea's ~180 days/ maps of 4,398 entries took `--history days` to 788 MB
+;; and an OOM kill on Fly; interning brought it to ~540 MB while those maps are still
+;; the flat blocks written before chunking (st-ml9.7), which share nothing by CID and
+;; age out under retention. One timeline query also reads only its artifact's maps
+;; (#:keyed-for).
+(define current-decoded (make-parameter #f))
+(define current-interned (make-parameter #f))
+(define (decode state-dir cid)
+  (define memo (current-decoded))
+  (if memo
+      (hash-ref! memo cid (lambda () (block-ref state-dir cid)))
+      (block-ref state-dir cid)))
+(define (intern s)
+  (define table (current-interned))
+  (if (and table (string? s)) (hash-ref! table s s) s))
 
 ;; history-load : path-string [#:keyed-tail (or/c #f exact-nonnegative-integer)]
 ;;                -> (listof build-record)
@@ -261,7 +279,18 @@
 ;; full load decodes every build's maps, and on salishsea's Fly machine, 370
 ;; builds of a 4,400-key days/ map took the engine from 136 MB to 528 MB after
 ;; every build.
-(define (history-load state-dir #:keyed-tail [keyed-tail #f])
+;;
+;; #:keyed-for a reads keyed maps for artifact `a' only, leaving every other artifact's
+;; marked unresolved: for a reader of one artifact's timeline, which would otherwise
+;; decode every artifact's maps in every build to look at one.
+(define (history-load state-dir #:keyed-tail [keyed-tail #f] #:keyed-for [keyed-for #f])
+  (parameterize ([current-decoded (make-hash)] [current-interned (make-hash)] [current-keyed-for keyed-for])
+    (history-load* state-dir keyed-tail)))
+
+;; The one artifact whose maps a load reads, or #f for all.
+(define current-keyed-for (make-parameter #f))
+
+(define (history-load* state-dir keyed-tail)
   (define f (history-file state-dir))
   (cond
     [(not (file-exists? f)) '()]
@@ -285,8 +314,9 @@
           (lambda (keyed)
             (for/list ([e (in-list keyed)])
               (define key (cons pos (car e)))
+              (define only (current-keyed-for))
               (cond
-                [(hash-ref seen key #f) (cons (car e) unresolved-keys)]
+                [(or (hash-ref seen key #f) (and only (not (eq? (car e) only)))) (cons (car e) unresolved-keys)]
                 [else (hash-set! seen key #t)
                       (cons (car e) (or (resolve-keyed state-dir (cdr e)) unresolved-keys))]))))))
      (define n (length entries))
@@ -400,7 +430,7 @@
 ;; build whose producer cache-skipped carries no entry, so it contributes no
 ;; point — which is what makes consecutive points genuine re-productions.
 (define (observe-timeline state-dir artifact field make)
-  (for*/list ([br (in-list (history-load state-dir))]
+  (for*/list ([br (in-list (history-load state-dir #:keyed-for artifact))]
               [rec (in-list (build-record-records br))]
               [pair (in-value (assq artifact (field rec)))]
               #:when pair)
