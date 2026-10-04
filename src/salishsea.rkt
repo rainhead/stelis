@@ -165,14 +165,14 @@
 ;; profile pages' link views start from (salish-xv35.13). Maplify's table is still
 ;; snapshotted for its overlap report and the name guard, while Postgres ingests
 ;; Maplify too; Postgres stopped ingesting iNaturalist and Orcasound (salish-xv35.9),
-;; so their tables are not read at all, except the iNaturalist taxa. The derivation
-;; reads the mirrors instead.
+;; so their tables are not read at all — the iNaturalist taxa were the last, until the
+;; mirror held every taxon the register names (salish-xv35.9.3). The derivation reads
+;; the mirrors instead.
 ;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
 (define derivation-input-tables
   '("maplify.sightings" "maplify.collection_rule"
-    "inaturalist.taxa"
     "happywhale.encounters" "happywhale.users" "happywhale.individuals"
     "happywhale.species" "happywhale.media"
     "public.observations" "public.observation_photos" "public.contributors"
@@ -186,9 +186,9 @@
 
 ;; The upstream sources as the build's own mirrors hold them (salish-xv35.9), which the
 ;; derivation reads in place of Postgres's copies (salishsea's derive/sources.sql).
-;; iNaturalist's taxa are read from both: the mirror holds those its observations reach,
-;; Postgres every taxon an ingest ever did, which the register may name for another
-;; source's sighting.
+;; iNaturalist's taxa too: the mirror holds those its observations reach AND those the
+;; register names (fetched from the register's mappings, salish-xv35.9.3), and re-asks
+;; upstream about a few of the longest-unchecked each run.
 (define mirror-source-relations
   '(maplify_mirror.sightings
     inaturalist_mirror.observations inaturalist_mirror.observation_photos inaturalist_mirror.taxa
@@ -474,7 +474,7 @@
               #:inputs '(build.occurrences build.occurrence_identifier_candidates
                          public.identifications orcasound.bout_entities
                          register.entities register.deprecations register.ancestor
-                         inaturalist.taxa inaturalist_mirror.taxa
+                         inaturalist_mirror.taxa
                          individuals-snapshot social-groups-snapshot matriline-members-snapshot
                          haulouts-snapshot)
               #:outputs profile-link-relations
@@ -531,14 +531,19 @@
    ;; days and one older month reconciled for deletions, every observation in the fetch box
    ;; kept with its photos and the taxa it reaches. A handful of requests a run, a second
    ;; apart, within iNaturalist's asked-for pace. A backfill is the same script with a start
-   ;; and end, run by hand.
+   ;; and end, run by hand. It also keeps the mirror's taxa whole and current
+   ;; (salish-xv35.9.3): every taxon the register's mappings name is fetched with its
+   ;; ancestors — so the register is an input, and this boundary runs after the snapshot —
+   ;; and a handful of the longest-unchecked are re-asked of upstream each run.
    (make-task 'ingest-inaturalist 'boundary
+              #:inputs '(register.mappings)
               #:outputs inaturalist-relations
               #:invoke (node-script/code "scripts/read-path/ingest-inaturalist.ts"
                                  '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-inaturalist.ts" "scripts/ingest/inaturalist.ts"
                                    "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
-                                   "scripts/read-path/windows.ts" "src/extents.ts")
-                                 (list (path->string inaturalist-mirror))))
+                                   "scripts/read-path/windows.ts" "src/extents.ts"
+                                   "scripts/read-path/duckdb-budget.ts")
+                                 (list (path->string inaturalist-mirror) "--register" SNAPSHOT-DB)))
    ;; The Darwin Core archive (salish-xv35.9), which a nightly workflow built from
    ;; Postgres's dwc views until Postgres stopped ingesting Maplify. derive/dwc.sql's
    ;; twins of those views, over the same lookups and Maplify resolution the occurrences
@@ -550,7 +555,7 @@
    (make-task 'dwca 'transform
               #:inputs '(snapshot-day maplify-names-hold
                          maplify_mirror.sightings maplify.collection_rule
-                         inaturalist_mirror.taxa inaturalist.taxa
+                         inaturalist_mirror.taxa
                          public.observations public.observation_photos public.contributors
                          public.providers public.collections public.organizations
                          register.entities register.names register.mappings register.ancestor

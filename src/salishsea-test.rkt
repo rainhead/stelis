@@ -18,9 +18,10 @@
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
 ;; Orcasound and the snapshot of what Postgres still holds.
 (define-values (ordered pruned) (plan salishsea-graph 'days))
-(check-equal? ordered '(ingest-inaturalist ingest-maplify ingest-orcasound snapshot
+(check-equal? ordered '(ingest-maplify ingest-orcasound snapshot ingest-inaturalist
                         maplify-names derive-occurrences occurrence-days)
-              "the day files need the three sources' ingests, the snapshot, the name guard and the derivation")
+              (string-append "the day files need the three sources' ingests, the snapshot, the name guard and the "
+                             "derivation; iNaturalist's ingest follows the snapshot, whose register names the taxa it fetches"))
 (check-equal? (set-count pruned) 12
               (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
                              "index, the manifest, the Maplify overlap report and the Darwin Core archive are off the path to days"))
@@ -40,8 +41,10 @@
                            public.acoustic_bouts public.acoustic_bout_entities))])
   (check-false (memq postgres (inputs-of 'derive-occurrences))
                (format "and not Postgres's ~a" postgres)))
-(check-not-false (memq 'inaturalist.taxa (inputs-of 'derive-occurrences))
-                 "Postgres's taxa beyond the mirror's: the register names them for other sources' sightings")
+(check-false (memq 'inaturalist.taxa (inputs-of 'derive-occurrences))
+             "nor Postgres's taxa: the mirror holds every taxon the register names (salish-xv35.9.3)")
+(check-false (for/or ([t (in-list '(derive-profile-links dwca))]) (memq 'inaturalist.taxa (inputs-of t)))
+             "and neither do the links or the archive")
 (check-not-false (memq 'types.enums (inputs-of 'derive-occurrences))
                  "two of the views compare enums by their declared order")
 (check-false (memq 'public.identifications (inputs-of 'derive-occurrences))
@@ -79,12 +82,16 @@
 (check-not-false (memq 'orcasound.bout_entities (inputs-of 'derive-profile-links))
                  "a bout's animals come from the Orcasound mirror")
 
-;; The three ingests: each a boundary of its own, reading only its upstream. Maplify's is
-;; compared with Postgres's copy by a report nothing published waits on, while Postgres
-;; ingests Maplify too.
-(for ([ingest (in-list '(ingest-orcasound ingest-maplify ingest-inaturalist))])
+;; The three ingests: each a boundary of its own, reading its upstream — and, for
+;; iNaturalist, the register's mappings, which name the taxa it must hold beyond those
+;; its observations reach (salish-xv35.9.3). Maplify's is compared with Postgres's copy
+;; by a report nothing published waits on, while Postgres ingests Maplify too.
+(for ([ingest (in-list '(ingest-orcasound ingest-maplify))])
   (check-equal? (inputs-of ingest) '() (format "~a reads only its upstream" ingest))
   (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) ingest)) 'boundary))
+(check-equal? (inputs-of 'ingest-inaturalist) '(register.mappings)
+              "ingest-inaturalist reads its upstream and the register's mappings, nothing else")
+(check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-inaturalist)) 'boundary)
 (check-not-false (memq 'register.names (inputs-of 'maplify-overlap))
                  "the report filters the mirror by scope, which needs the register's names")
 (check-false (memq 'maplify-overlap manifest-plan) "the Maplify overlap report holds nothing published back")
