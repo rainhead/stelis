@@ -179,7 +179,7 @@
     "public.identifications"
     "public.providers" "public.collections" "public.organizations"
     "register.entities" "register.names" "register.mappings"
-    "register.ancestor" "register.deprecations"
+    "register.ancestor" "register.deprecations" "register.classification"
     "types.enums"))
 
 (define derivation-input-relations (map string->symbol derivation-input-tables))
@@ -195,10 +195,12 @@
     orcasound.bouts orcasound.bout_entities))
 
 ;; What derive-occurrences reads: the mirrors for the three sources, the snapshot for the
-;; rest, but not the identifications, which only the profile links read; and the name
+;; rest, but not the identifications, which only the profile links read, nor the register's
+;; classification, which only the Darwin Core archive reads; and the name
 ;; guard's token, so a register that un-names Maplify sightings stops the derivation.
 (define occurrence-derivation-inputs
-  (append (remq* '(maplify.sightings public.identifications) derivation-input-relations)
+  (append (remq* '(maplify.sightings public.identifications register.classification)
+                 derivation-input-relations)
           mirror-source-relations
           '(maplify-names-hold)))
 
