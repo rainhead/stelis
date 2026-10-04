@@ -14,8 +14,8 @@
 ;;                                             │
 ;;   snapshot ──▶ what Postgres still holds ───┤   (native sightings, Happywhale,
 ;;   (boundary)   (the register, the catalogue,│    the reference tables, and its
-;;       │         reference tables, native)   │    own copies of the three sources,
-;;       │              │                      │    for the overlap reports)
+;;       │         reference tables, native)   │    own copy of Maplify, for its
+;;       │              │                      │    overlap report and name guard)
 ;;       │              ▼                      ▼
 ;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
 ;;       │        (gate: every Maplify      (DuckDB twins of            │
@@ -39,8 +39,9 @@
 ;;       └──────▶ snapshot-meta ──────▶ manifest ──▶ manifest.json
 ;;                (when it was taken)   (after every published file)
 ;;
-;; Until salishsea.io itself reads these files, Postgres keeps ingesting the three
-;; sources too, and the overlap reports compare its copies with the mirrors.
+;; salishsea.io itself reads these files (salish-xv35.16). Postgres stopped ingesting
+;; iNaturalist and Orcasound (salish-xv35.9); it still ingests Maplify, and the Maplify
+;; overlap report compares its copy with the mirror until that stops too.
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
 ;; database that did NOT change digests the same and early cutoff skips the rest.
@@ -161,19 +162,21 @@
 ;; salish-xv35.1): every table the five views behind derived.occurrences read, the
 ;; reference tables the functions they call read, the Maplify resolvers' inputs, and
 ;; the enums' declared orders; and the identifications people assert, which the
-;; profile pages' link views start from (salish-xv35.13). Maplify's, iNaturalist's and
-;; Orcasound's tables are still snapshotted for the overlap reports and the name
-;; guard, while Postgres ingests them too; the derivation reads the mirrors instead.
+;; profile pages' link views start from (salish-xv35.13). Maplify's table is still
+;; snapshotted for its overlap report and the name guard, while Postgres ingests
+;; Maplify too; Postgres stopped ingesting iNaturalist and Orcasound (salish-xv35.9),
+;; so their tables are not read at all, except the iNaturalist taxa. The derivation
+;; reads the mirrors instead.
 ;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
 (define derivation-input-tables
   '("maplify.sightings" "maplify.collection_rule"
-    "inaturalist.observations" "inaturalist.observation_photos" "inaturalist.taxa"
+    "inaturalist.taxa"
     "happywhale.encounters" "happywhale.users" "happywhale.individuals"
     "happywhale.species" "happywhale.media"
     "public.observations" "public.observation_photos" "public.contributors"
-    "public.acoustic_bouts" "public.acoustic_bout_entities" "public.identifications"
+    "public.identifications"
     "public.providers" "public.collections" "public.organizations"
     "register.entities" "register.names" "register.mappings"
     "register.ancestor" "register.deprecations"
@@ -195,9 +198,7 @@
 ;; rest, but not the identifications, which only the profile links read; and the name
 ;; guard's token, so a register that un-names Maplify sightings stops the derivation.
 (define occurrence-derivation-inputs
-  (append (remq* '(maplify.sightings inaturalist.observations inaturalist.observation_photos
-                   public.acoustic_bouts public.acoustic_bout_entities public.identifications)
-                 derivation-input-relations)
+  (append (remq* '(maplify.sightings public.identifications) derivation-input-relations)
           mirror-source-relations
           '(maplify-names-hold)))
 
@@ -317,12 +318,9 @@
      ;; That every Maplify name Postgres resolved still resolves in the register the
      ;; build was given.
      (make-artifact 'maplify-names-hold 'token)
-     ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6), and how
-     ;; they compare with Postgres's copy while both are ingested: a report for a person,
-     ;; not a gate, since the two fetches are minutes apart.
+     ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6).
      (make-artifact 'orcasound.bouts 'db-relation)
      (make-artifact 'orcasound.bout_entities 'db-relation)
-     (make-artifact 'orcasound-overlap.json 'file)
      ;; Maplify's sightings as the build fetches them (salish-xv35.7): every one Maplify
      ;; returned for each window, in the map's scope or not, and the days fetched.
      (make-artifact 'maplify_mirror.sightings 'db-relation)
@@ -336,7 +334,6 @@
      (make-artifact 'inaturalist_mirror.taxa 'db-relation)
      (make-artifact 'inaturalist_mirror.covered_days 'db-relation)
      (make-artifact 'inaturalist_mirror.sync 'db-relation)
-     (make-artifact 'inaturalist-overlap.json 'file)
      ;; Which individual or matriline each designation an occurrence names means
      ;; (salish-xv35.3), as the build derives it.
      (make-artifact 'build.occurrence_identifier_candidates 'db-relation))
@@ -523,27 +520,6 @@
                                    "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
                                    "scripts/read-path/windows.ts" "src/extents.ts")
                                  (list (path->string inaturalist-mirror))))
-   ;; While Postgres still ingests iNaturalist too, what differs, over the days the mirror
-   ;; has reconciled: its in-scope observations and photos against Postgres's.
-   (make-task 'inaturalist-overlap 'transform
-              #:inputs (append inaturalist-relations
-                               '(inaturalist.observations inaturalist.observation_photos))
-              #:outputs '(inaturalist-overlap.json)
-              #:invoke (node-script/code "scripts/read-path/compare-inaturalist-mirror.ts"
-                                 '("scripts/ingest/inaturalist.ts" "scripts/read-path/duckdb-budget.ts"
-                                   "src/extents.ts")
-                                 (list SNAPSHOT-DB (path->string inaturalist-mirror)
-                                       (path->string (build-path mirror-dir "inaturalist-overlap.json")))))
-   ;; While Postgres still ingests Orcasound too, what differs between the two copies.
-   ;; A difference never fails it, since the fetches race and CI proves the two store a
-   ;; corpus alike; only being unable to compare does.
-   (make-task 'orcasound-overlap 'transform
-              #:inputs (append orcasound-relations '(public.acoustic_bouts public.acoustic_bout_entities))
-              #:outputs '(orcasound-overlap.json)
-              #:invoke (node-script/code "scripts/read-path/compare-orcasound-mirror.ts"
-                                 '("scripts/read-path/duckdb-budget.ts")
-                                 (list SNAPSHOT-DB (path->string orcasound-mirror)
-                                       (path->string (build-path mirror-dir "orcasound-overlap.json")))))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
@@ -571,9 +547,7 @@
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
-    [(orcasound-overlap.json) (build-path mirror-dir "orcasound-overlap.json")]
     [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
-    [(inaturalist-overlap.json) (build-path mirror-dir "inaturalist-overlap.json")]
     [else #f]))
 
 (define (relation-tables artifact)

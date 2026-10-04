@@ -21,9 +21,9 @@
 (check-equal? ordered '(ingest-inaturalist ingest-maplify ingest-orcasound snapshot
                         maplify-names derive-occurrences occurrence-days)
               "the day files need the three sources' ingests, the snapshot, the name guard and the derivation")
-(check-equal? (set-count pruned) 13
+(check-equal? (set-count pruned) 11
               (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
-                             "index, the manifest and the three overlap reports are off the path to days"))
+                             "index, the manifest and the Maplify overlap report are off the path to days"))
 (for ([export (in-list '(occurrence-days calendar occurrence-ids))])
   (check-equal? (inputs-of export) '(build.occurrences)
                 "every occurrence export reads the build's occurrences, and nothing of Postgres's answer"))
@@ -74,19 +74,22 @@
 (check-not-false (memq 'orcasound.bout_entities (inputs-of 'derive-profile-links))
                  "a bout's animals come from the Orcasound mirror")
 
-;; The three ingests: each a boundary of its own, reading only its upstream, and each
+;; The three ingests: each a boundary of its own, reading only its upstream. Maplify's is
 ;; compared with Postgres's copy by a report nothing published waits on, while Postgres
-;; ingests them too.
+;; ingests Maplify too.
 (for ([ingest (in-list '(ingest-orcasound ingest-maplify ingest-inaturalist))])
   (check-equal? (inputs-of ingest) '() (format "~a reads only its upstream" ingest))
   (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) ingest)) 'boundary))
-(check-equal? (sort (inputs-of 'orcasound-overlap) symbol<?)
-              '(orcasound.bout_entities orcasound.bouts public.acoustic_bout_entities public.acoustic_bouts)
-              "the report compares the mirror with Postgres's copy, table for table")
 (check-not-false (memq 'register.names (inputs-of 'maplify-overlap))
                  "the report filters the mirror by scope, which needs the register's names")
-(for ([report (in-list '(orcasound-overlap maplify-overlap inaturalist-overlap))])
-  (check-false (memq report manifest-plan) (format "~a holds nothing published back" report)))
+(check-false (memq 'maplify-overlap manifest-plan) "the Maplify overlap report holds nothing published back")
+(for ([retired (in-list '(orcasound-overlap inaturalist-overlap))])
+  (check-false (hash-ref (graph-tasks salishsea-graph) retired #f)
+               (format "~a retired with Postgres's ingest of its source (salish-xv35.9)" retired)))
+(for ([unread (in-list '(inaturalist.observations inaturalist.observation_photos
+                         public.acoustic_bouts public.acoustic_bout_entities))])
+  (check-false (hash-ref (graph-artifacts salishsea-graph) unread #f)
+               (format "the snapshot no longer reads Postgres's ~a" unread)))
 
 (check-equal? (last manifest-plan) 'manifest
               "the manifest comes after every export, so it never claims a build whose files aren't in place")
