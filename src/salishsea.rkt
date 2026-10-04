@@ -448,7 +448,7 @@
               #:inputs occurrence-derivation-inputs
               #:outputs '(build.occurrences)
               #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
-                                 '("scripts/read-path/derive/extract.ts"
+                                 '("scripts/read-path/derive/extract.sql"
                                    "scripts/read-path/derive/sources.ts"
                                    "scripts/read-path/derive/sources.sql"
                                    "scripts/read-path/derive/maplify-entities.ts"
@@ -573,7 +573,7 @@
                                    "scripts/dwca/fields.ts" "scripts/dwca/guard.ts" "scripts/dwca/meta-xml.ts"
                                    "scripts/dwca/verify-artifact.ts" "scripts/dwca/zip.ts"
                                    "scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
-                                   "scripts/read-path/derive/extract.ts" "scripts/read-path/derive/maplify-entities.ts"
+                                   "scripts/read-path/derive/extract.sql" "scripts/read-path/derive/maplify-entities.ts"
                                    "scripts/read-path/derive/sources.ts" "scripts/read-path/derive/sources.sql"
                                    "scripts/read-path/derive/shared.sql" "scripts/read-path/derive/lookups.sql"
                                    "scripts/read-path/derive/dwc.sql"
