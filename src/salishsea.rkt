@@ -256,6 +256,7 @@
                                 (list "scripts/read-path/profile-document.ts"
                                       "scripts/read-path/replace-dir.ts"
                                       "scripts/read-path/snapshot-tables.ts"
+                                      "scripts/read-path/duckdb-budget.ts"
                                       "src/individual-profile.ts" "src/matriline-profile.ts"
                                       "src/date-format.ts"
                                       "src/ecotype-profile.ts" "src/haulout-profile.ts"
@@ -386,7 +387,8 @@
               #:inputs '(build.occurrences)
               #:outputs '(ids)
               #:invoke (node-script/code "scripts/read-path/occurrence-ids.ts"
-                                 '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts")
+                                 '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts"
+                                   "scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
    ;; The profile pages: the shared templates filled from the snapshot, inside
    ;; the shell Vite built (salishsea decision 057).
@@ -407,6 +409,7 @@
               #:invoke (node-script/code "scripts/read-path/profile-index.ts"
                                  '("scripts/read-path/profile-document.ts"
                                    "scripts/read-path/snapshot-tables.ts"
+                                   "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/redirect-keys.ts"
                                    "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
                                    "dist/sitemap.xml")
