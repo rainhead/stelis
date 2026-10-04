@@ -27,7 +27,8 @@
          snapshot snapshot? snapshot-recipe-hash snapshot-input-hashes
          snapshot-code-hashes
          (struct-out output-delta)
-         (struct-out source-report)
+         source-report source-report? source-report-unchanged? source-report-records
+         source-report-since source-report-error
          (struct-out build-env)
          make-build-env
          env-resolve
@@ -128,7 +129,20 @@
 ;;                (0 when unchanged), or #f when the loader didn't quantify it
 ;;   since      : (or/c string #f) — the watermark the probe compared against
 ;;                (a date or cursor, for display only), or #f
-(struct source-report (unchanged? records since) #:transparent)
+;;   error      : (or/c string #f) — the THIRD arm (st-ml9.9): the loader could not
+;;                reach its source and kept its last good copy. `unchanged?' is #f
+;;                here — the loader established nothing about the source — and
+;;                records/since are #f. Without this arm a day-long outage read as
+;;                "source unchanged" in every trace and in the operator log, the one
+;;                place salishsea's decision 061 said would answer "is the source
+;;                reachable". The task still counts as a clean run: the mirror IS
+;;                the last good copy, which is what the loader chose to publish.
+(struct source-report (unchanged? records since error)
+  #:transparent #:omit-define-syntaxes #:constructor-name make-source-report)
+;; Smart constructor: `error' defaults to #f, so the three-field call sites (and
+;; the three-element history datum) stay valid.
+(define (source-report unchanged? records since [error #f])
+  (make-source-report unchanged? records since error))
 
 ;; --- The build environment ------------------------------------------------------
 

@@ -192,7 +192,10 @@
           (html-escape (why-string r rewrites))
           (html-escape (delta-string r))
           (if sr
-              (format "<div class=\"src\">~a</div>"
+              ;; an unreachable source (st-ml9.9) is the operator's business —
+              ;; styled apart from the quiet "unchanged" line it used to hide behind
+              (format "<div class=\"src~a\">~a</div>"
+                      (if (source-report-error sr) " src-err" "")
                       (html-escape (source-report->string sr)))
               "")))
 
@@ -244,6 +247,7 @@ td.t{white-space:nowrap;font-weight:600}
 .o-failed td.g,span.o-failed{color:var(--failed);font-weight:600}
 .o-skipped td.g{color:var(--skipped)}
 .src{font-size:.85rem}
+.src-err{color:var(--failed);font-weight:600}
 .pub-ok,.pub-no{font-size:.75rem;font-weight:600;padding:.1rem .45rem;border-radius:9px;vertical-align:middle}
 .pub-ok{color:var(--ok);border:1px solid var(--ok)}
 .pub-no{color:var(--failed);border:1px solid var(--failed)}

@@ -96,9 +96,15 @@ produced: ~a" (names))]
     (string-append
      (if (source-report-records s) (format ", ~a new records" (source-report-records s)) "")
      (if (source-report-since s)   (format " since ~a" (source-report-since s)) "")))
-  (if (source-report-unchanged? s)
-      (string-append "source unchanged — ingestion skipped" suffix)
-      (string-append "source changed — re-ingested" suffix)))
+  (cond
+    ;; the third arm (st-ml9.9): say the outage, never "unchanged" — the loader
+    ;; learned nothing about the source, only that it couldn't ask.
+    [(source-report-error s)
+     (format "source unreachable — kept the last good copy: ~a" (source-report-error s))]
+    [(source-report-unchanged? s)
+     (string-append "source unchanged — ingestion skipped" suffix)]
+    [else
+     (string-append "source changed — re-ingested" suffix)]))
 
 ;; reason->string decorates the base reason prose. It now takes (task decision):
 ;; the impure delta adapter (delta-explain.rkt) needs the task to flavor a 'boundary

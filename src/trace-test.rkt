@@ -36,7 +36,19 @@
         (trace-record 'probe  (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()
                       (source-report #t 0 "2026-07-20"))
         (trace-record 'probe2 (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()
-                      (source-report #f 12 #f))))
+                      (source-report #f 12 #f))
+        ;; the unreachable arm (st-ml9.9) carries its error text as a 4th element
+        (trace-record 'probe3 (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()
+                      (source-report #f #f #f "ECONNREFUSED"))))
+
+;; the two original arms still serialize to three elements, so pre-st-ml9.9
+;; history is byte-identical; only the unreachable arm grows a fourth
+(define (report-datum-of task)
+  (list-ref (trace-record->datum
+             (findf (lambda (r) (eq? task (trace-record-task r))) some-records))
+            9))
+(check-equal? (report-datum-of 'probe)  '(#t 0 "2026-07-20"))
+(check-equal? (report-datum-of 'probe3) '(#f #f #f "ECONNREFUSED"))
 
 ;; datum->trace-record ∘ trace-record->datum = identity, across every field
 ;; shape (decisions, snapshots, deltas, source-reports, and #f alike, plus the

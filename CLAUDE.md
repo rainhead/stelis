@@ -172,7 +172,12 @@ run's receipt (`prior-complete-build?`, st-243), not merely exist. A `'boundary`
 task is handed a `STELIS_BOUNDARY_RECEIPT` path (st-8bj): a probing loader that
 short-circuits an unchanged source writes `{unchanged, records, since}` there, and
 run-plan reads it back as a `source-report` on the trace, so `--explain`/`--why`
-name WHY the boundary didn't re-ingest (the loader-side probe is beeatlas-29j) ·
+name WHY the boundary didn't re-ingest (the loader-side probe is beeatlas-29j).
+A loader that could NOT reach its source and kept its last good copy writes
+`{unreachable: true, error}` instead (st-ml9.9) — the third arm, so an outage
+reads as "source unreachable" in the trace and the operator log rather than as
+a quiet day; it is still a clean run, since the mirror is what the loader chose
+to publish ·
 [`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
 addressed by its gate's recorded input address (st-ysf), so dbt-build can skip ·

@@ -27,6 +27,7 @@
 (define silent-out (build-path tmp "silent.txt"))
 (define bad-out    (build-path tmp "bad.txt"))
 (define noflag-out (build-path tmp "noflag.txt"))
+(define down-out   (build-path tmp "down.txt"))
 
 (define runtimes (hash 'sh (runtime 'sh '("/bin/sh" "-c") "sh")))
 (define (sh fmt . args) (recipe 'sh (list (apply format fmt args))))
@@ -43,14 +44,21 @@
          ;; a receipt that omits the required `unchanged' key: valid JSON, but not a
          ;; valid report → #f (not read as a changed-source report by default)
          (make-task 'noflag 'boundary #:outputs '(noflag-a)
-                    #:invoke (sh "echo x > ~a; printf '%s' '{\"records\": 5}' > \"$STELIS_BOUNDARY_RECEIPT\"" noflag-out)))
+                    #:invoke (sh "echo x > ~a; printf '%s' '{\"records\": 5}' > \"$STELIS_BOUNDARY_RECEIPT\"" noflag-out))
+         ;; the third arm (st-ml9.9): the source could not be reached, the loader
+         ;; kept its last good copy and exited clean. `unchanged' present too, and
+         ;; `unreachable' must win — a failed fetch established nothing.
+         (make-task 'down 'boundary #:outputs '(down-a)
+                    #:invoke (sh "echo x > ~a; printf '%s' '{\"unreachable\": true, \"unchanged\": true, \"error\": \"ECONNREFUSED 10.0.0.1:443\"}' > \"$STELIS_BOUNDARY_RECEIPT\"" down-out)))
    (list (make-artifact 'good-a 'file) (make-artifact 'silent-a 'file)
-         (make-artifact 'bad-a 'file) (make-artifact 'noflag-a 'file))))
+         (make-artifact 'bad-a 'file) (make-artifact 'noflag-a 'file)
+         (make-artifact 'down-a 'file))))
 
 (define benv
   (make-build-env (lambda (a _dir)
                     (case a [(good-a) good-out] [(silent-a) silent-out]
-                            [(bad-a) bad-out] [(noflag-a) noflag-out] [else #f]))
+                            [(bad-a) bad-out] [(noflag-a) noflag-out]
+                            [(down-a) down-out] [else #f]))
                   tmp (build-path tmp "cache")))
 
 (define state (build-path tmp ".stelis"))
@@ -58,7 +66,7 @@
 (define (build!)
   (parameterize ([current-output-port (open-output-nowhere)])
     (define-values (status records)
-      (run-plan g '(good silent bad noflag) runtimes #:context benv #:state-dir state))
+      (run-plan g '(good silent bad noflag down) runtimes #:context benv #:state-dir state))
     records))
 (define (record-of recs name)
   (findf (lambda (r) (eq? name (trace-record-task r))) recs))
@@ -80,6 +88,12 @@
 (check-false (trace-record-source-report (record-of recs 'noflag))
              "valid JSON missing the required `unchanged' key is not a report")
 
+(check-equal? (trace-record-source-report (record-of recs 'down))
+              (source-report #f #f #f "ECONNREFUSED 10.0.0.1:443")
+              "an unreachable source is its own arm, and wins over a stray `unchanged'")
+(check-equal? (trace-record-outcome (record-of recs 'down)) 'ok
+              "keeping the last good copy is a clean run, not a failure")
+
 ;; a stale receipt from a prior run must not be misread as this run's: `silent'
 ;; never writes one, so even after `good'/`bad' wrote theirs it stays #f across a
 ;; second build (each task's receipt is cleared before it runs).
@@ -95,6 +109,9 @@
               "records/since are shown only when the loader gave them")
 (check-equal? (source-report->string (source-report #f 12 #f))
               "source changed — re-ingested, 12 new records")
+(check-equal? (source-report->string (source-report #f #f #f "ECONNREFUSED 10.0.0.1:443"))
+              "source unreachable — kept the last good copy: ECONNREFUSED 10.0.0.1:443"
+              "an outage never reads as a quiet day")
 
 ;; --- prospective, history-flavored boundary line -------------------------------
 ;; persist the build (run-plan returns records; main.rkt is what appends them to
@@ -111,6 +128,8 @@
             "the prospective boundary line reads the task's last recorded report")
 (check-false (regexp-match? #rx"last run" (reason->string 'silent bdec))
              "a boundary that never reported gets the plain line")
+(check-true (regexp-match? #rx"last run: source unreachable" (reason->string 'down bdec))
+            "the prospective line says the last run could not reach the source")
 (check-false (regexp-match? #rx"last run" (reason->string 'never-built bdec))
              "an unknown task gets the plain line")
 

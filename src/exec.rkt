@@ -306,16 +306,33 @@
 ;; is REQUIRED and must be a boolean (a receipt lacking it is malformed → #f); a
 ;; report present but not unchanged is a changed-source report (the loader ran and
 ;; re-ingested but chose to quantify it).
+;; Third arm (st-ml9.9): {"unreachable": true, "error": string|null} — the loader
+;; could not reach its source and left its outputs as they were. `unreachable'
+;; takes precedence over `unchanged' when both are present, because a loader that
+;; failed to fetch has NOT established the source is unchanged, whatever else it
+;; wrote. The error text is capped: it rides every trace line and the build log.
+(define RECEIPT-ERROR-CAP 300)
 (define (read-boundary-receipt path)
   (and (file-exists? path)
        (with-handlers ([exn:fail? (lambda (_) #f)])
          (define j (call-with-input-file path read-json))
-         (and (hash? j) (hash-has-key? j 'unchanged) (boolean? (hash-ref j 'unchanged))
-              (let ([records (hash-ref j 'records #f)]
-                    [since (hash-ref j 'since #f)])
-                (source-report (hash-ref j 'unchanged)
-                               (and (exact-nonnegative-integer? records) records)
-                               (and (string? since) since)))))))
+         (and (hash? j)
+              (cond
+                [(eq? #t (hash-ref j 'unreachable #f))
+                 (define err (hash-ref j 'error #f))
+                 (source-report #f #f #f
+                                (if (and (string? err) (> (string-length err) 0))
+                                    (if (> (string-length err) RECEIPT-ERROR-CAP)
+                                        (string-append (substring err 0 RECEIPT-ERROR-CAP) "…")
+                                        err)
+                                    "no error text given"))]
+                [(and (hash-has-key? j 'unchanged) (boolean? (hash-ref j 'unchanged)))
+                 (define records (hash-ref j 'records #f))
+                 (define since (hash-ref j 'since #f))
+                 (source-report (hash-ref j 'unchanged)
+                                (and (exact-nonnegative-integer? records) records)
+                                (and (string? since) since))]
+                [else #f])))))
 
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
 ;;            #:env (listof (cons string string)) #:context (or/c build-env? #f)
@@ -479,10 +496,14 @@
            ;; above; the quantified detail (records/since) rides the trace and shows
            ;; in --explain --last, so it is not re-derived here (no divergent prose).
            (when boundary-report
-             (printf "  ↺ source ~a\n"
-                     (if (source-report-unchanged? boundary-report)
-                         "unchanged — ingestion skipped"
-                         "changed — re-ingested"))))
+             (printf "  ~a source ~a\n"
+                     (if (source-report-error boundary-report) "⚠" "↺")
+                     (cond
+                       [(source-report-error boundary-report)
+                        "unreachable — kept the last good copy"]
+                       [(source-report-unchanged? boundary-report)
+                        "unchanged — ingestion skipped"]
+                       [else "changed — re-ingested"]))))
          (when (and ok? env)
            ;; retract removed keys from the merged 'dir(s) before observing, so the
            ;; recorded per-key map reflects the pruned set.

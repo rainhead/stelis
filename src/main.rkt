@@ -501,8 +501,9 @@
           (cond
             ;; an UNCHANGED source short-circuits ingestion and leaves outputs
             ;; untouched, so the delta can only echo "identical" — the report says
-            ;; it better and fuller; show it alone.
-            [(and sr (source-report-unchanged? sr))
+            ;; it better and fuller; show it alone. An UNREACHABLE source leaves
+            ;; them untouched too (the last good copy), same treatment.
+            [(and sr (or (source-report-unchanged? sr) (source-report-error sr)))
              (format " → reran; ~a" (source-report->string sr))]
             ;; a CHANGED source means the loader re-ingested; keep the delta clause
             ;; too, since whether the outputs actually moved is the informative bit.
