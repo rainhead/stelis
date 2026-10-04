@@ -198,7 +198,10 @@ per-table row `count(*)` as the attribute-level observation (`relation-columns`,
 `relation-row-count`, st-7vz/st-0vz); `make-relation-observer` (st-ml9.6) answers
 both for every relation of one database in two DuckDB launches instead of ~four per
 relation, byte-identical, holding each answer until a task writes a relation that
-shares a table with it — salishsea's resolvers use it (beeatlas's don't yet) ·
+shares a table with it — salishsea's resolvers use it (beeatlas's don't yet).
+A relation may live in a SQLite file (`sqlite-db`, st-ml9): the file is
+ATTACHed read-only into a transient DuckDB and digested the same row-coherent
+way, which is how salishsea's mirrors are inputs without a second digest ·
 [`written.rkt`](src/written.rkt) which artifacts a task has written in this
 process: `run-task` (and a derivation) notes its declared outputs when it finishes,
 so a cached observation is keyed by the artifact's write generation — the same
@@ -245,7 +248,8 @@ the root's CID, so one changed key rewrites a root and one bucket, not the whole
 map of 256 or fewer is the flat block it always was, same CID. A node is the array
 `["stelis/keyed-node/1", {bucket → CID}]` and a leaf always a map, so the two are
 told apart by shape, not by what a leaf's values are. The layout is our own (IPFS
-HAMT-style hash sharding, atproto-style DRISL + CID links, neither's spec). Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
+HAMT-style hash sharding, atproto-style DRISL + CID links, neither's spec;
+ADR 0014). Applies to `'dir` and the keyed notes store; a **db-relation is deliberately
 NOT a caller** — its identity is the row-coherent digest, because per-column
 multiset digests false-skip on a cross-row value swap (st-d5d) ·
 [`dasl.rkt`](src/dasl.rkt) + [`drisl.rkt`](src/drisl.rkt) the CID and the
@@ -454,11 +458,28 @@ everything the CLI needs to build it — path resolver, runtimes, relation
 resolvers, build clock, checkout, default state dir. main.rkt is written against
 it, so a second graph is a second value, not a second CLI ·
 [`salishsea.rkt`](src/salishsea.rkt) the second project (st-ml9): salishsea.io's
-logged-out reads as static files. A boundary snapshots Supabase into a local
-DuckDB file (rows serialized by Postgres's `to_jsonb`, PostgREST's own
-serializer, so the files match what the frontend parses), and a transform writes
-one file per Pacific day. The snapshot reruns every build; an unchanged database
-digests the same, and early cutoff skips the rest. It also records when it was
+logged-out reads as static files — and since salishsea's decision 061
+(salish-xv35, 2026-10) the ingest and the derivation too. Three `'boundary`
+tasks fetch the upstream sources themselves, each into a SQLite mirror on the
+volume holding ONLY what the source said (Maplify over a 30-day window plus one
+sampled older month; iNaturalist by `updated_since` plus a reconciled window;
+Orcasound whole), each writing its boundary receipt — including the
+`unreachable` arm, so an outage never reads as a quiet day. A fourth boundary
+snapshots what Postgres still holds (native sightings, the register, the
+catalogue, Happywhale frozen, and its own Maplify copy while that ingest runs)
+into a local DuckDB file (rows serialized by Postgres's `to_jsonb`, PostgREST's
+own serializer, so the files match what the frontend parses). `derive-occurrences`
+and `derive-profile-links` are DuckDB twins of Postgres's views over the mirrors
+and the snapshot, writing `build.*` relations into the snapshot file; every
+published file reads those. Before the derivation sits the `maplify-names`
+gate: a register edition that un-names a Maplify sighting would silently drop
+it from the map, so the gate judges this build's resolution against the LAST
+PASSING build's, kept in `maplify-names.json` beside the mirrors — a declared
+`'authoritative` output, forward-only, the one state the build owns that
+cannot be regenerated. `dwca` writes the Darwin Core archive from twins of the
+`dwc` views. A transform writes one file per Pacific day. The snapshot reruns
+every build; an unchanged database digests the same, and early cutoff skips
+the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),
 and a `manifest` task writes `manifest.json` from that AFTER the day files and the
 calendar's month files (`calendar`, per-region day counts; its code includes
