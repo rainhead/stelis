@@ -63,6 +63,12 @@
 (check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'maplify-names.json))
            'authoritative)
 (check-eq? (producer-of salishsea-graph 'maplify-names.json) 'maplify-names)
+;; and the curator's allow-list is its input: a checked-in file nobody in the graph writes,
+;; declared so an acceptance clears the hold by a declared input moving
+(check-not-false (memq 'maplify-unnamed.tsv (inputs-of 'maplify-names)))
+(check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'maplify-unnamed.tsv))
+           'authoritative)
+(check-false (producer-of salishsea-graph 'maplify-unnamed.tsv) "written by a person with git, not a task")
 
 ;; Nothing compares the build's derivation with Postgres's any more.
 (for ([retired (in-list '(occurrences-agreement identifier-candidates-agreement profile-links-agreement))])

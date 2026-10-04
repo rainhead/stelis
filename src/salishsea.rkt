@@ -334,6 +334,11 @@
      ;; Declared so the graph names its producer and extent, not so the cache can
      ;; address it: an authoritative output is excluded from cutoff by design.
      (make-artifact 'maplify-names.json 'file #:provenance 'authoritative)
+     ;; The pairs a curator has accepted as un-named (data/maplify-unnamed.tsv): a
+     ;; checked-in decision record, written by a person with git, that the guard reads
+     ;; — so an acceptance clears the hold by a declared input moving. Producerless and
+     ;; forward-only: ADR 0013's other 'authoritative arm.
+     (make-artifact 'maplify-unnamed.tsv 'file #:provenance 'authoritative)
      ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6).
      (make-artifact 'orcasound.bouts 'db-relation)
      (make-artifact 'orcasound.bout_entities 'db-relation)
@@ -423,12 +428,14 @@
    ;; on the map to lose.
    (make-task 'maplify-names 'gate
               #:inputs '(maplify.sightings maplify_mirror.sightings register.entities register.names
-                         register.ancestor register.deprecations)
+                         register.ancestor register.deprecations maplify-unnamed.tsv)
               #:outputs '(maplify-names-hold maplify-names.json)
               #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
                                  '("scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
+                                   "scripts/register/unnamed.ts"
                                    "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
-                                 (list SNAPSHOT-DB (path->string maplify-mirror))))
+                                 (list SNAPSHOT-DB (path->string maplify-mirror)
+                                       "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
    ;; The five per-source Postgres views behind derived.occurrences, as DuckDB SQL
    ;; (salishsea decision 061), reading Maplify, iNaturalist and Orcasound from the
    ;; build's mirrors (salish-xv35.9) through derive/sources.sql. Its two regex
@@ -603,6 +610,7 @@
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
+    [(maplify-unnamed.tsv) (build-path SALISHSEA "data" "maplify-unnamed.tsv")]
     [else #f]))
 
 (define (relation-tables artifact)
