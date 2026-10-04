@@ -22,9 +22,9 @@
                         maplify-names derive-occurrences occurrence-days)
               (string-append "the day files need the three sources' ingests, the snapshot, the name guard and the "
                              "derivation; iNaturalist's ingest follows the snapshot, whose register names the taxa it fetches"))
-(check-equal? (set-count pruned) 12
+(check-equal? (set-count pruned) 11
               (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
-                             "index, the manifest, the Maplify overlap report and the Darwin Core archive are off the path to days"))
+                             "index, the manifest and the Darwin Core archive are off the path to days"))
 (for ([export (in-list '(occurrence-days calendar occurrence-ids))])
   (check-equal? (inputs-of export) '(build.occurrences)
                 "every occurrence export reads the build's occurrences, and nothing of Postgres's answer"))
@@ -98,9 +98,10 @@
 (check-equal? (inputs-of 'ingest-inaturalist) '(register.mappings)
               "ingest-inaturalist reads its upstream and the register's mappings, nothing else")
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-inaturalist)) 'boundary)
-(check-not-false (memq 'register.names (inputs-of 'maplify-overlap))
-                 "the report filters the mirror by scope, which needs the register's names")
-(check-false (memq 'maplify-overlap manifest-plan) "the Maplify overlap report holds nothing published back")
+(check-false (hash-ref (graph-tasks salishsea-graph) 'maplify-overlap #f)
+             "the Maplify overlap report retired with Postgres's Maplify ingest (salish-xv35.9)")
+(check-false (memq 'maplify.sightings (inputs-of 'maplify-names))
+             "the name guard judges against its own baseline, not Postgres's answer")
 (for ([retired (in-list '(orcasound-overlap inaturalist-overlap))])
   (check-false (hash-ref (graph-tasks salishsea-graph) retired #f)
                (format "~a retired with Postgres's ingest of its source (salish-xv35.9)" retired)))

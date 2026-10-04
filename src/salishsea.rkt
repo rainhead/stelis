@@ -13,9 +13,9 @@
 ;;   ingest-orcasound ───▶ orcasound.*  ───────┤    holding only what it said)
 ;;                                             │
 ;;   snapshot ──▶ what Postgres still holds ───┤   (native sightings, Happywhale,
-;;   (boundary)   (the register, the catalogue,│    the reference tables, and its
-;;       │         reference tables, native)   │    own copy of Maplify, for its
-;;       │              │                      │    overlap report and name guard)
+;;   (boundary)   (the register, the catalogue,│    the reference tables; nothing
+;;       │         reference tables, native)   │    of the three sources any more)
+;;       │              │                      │
 ;;       │              ▼                      ▼
 ;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
 ;;       │        (gate: every Maplify      (DuckDB twins of            │
@@ -40,8 +40,8 @@
 ;;                (when it was taken)   (after every published file)
 ;;
 ;; salishsea.io itself reads these files (salish-xv35.16). Postgres stopped ingesting
-;; iNaturalist and Orcasound (salish-xv35.9); it still ingests Maplify, and the Maplify
-;; overlap report compares its copy with the mirror until that stops too.
+;; all three sources (salish-xv35.9: iNaturalist and Orcasound on 2026-10-04, Maplify
+;; the day after); its copies stay frozen, read only by the twin test.
 ;; The boundary runs every build — it cannot know whether Postgres changed without
 ;; asking. What it wrote is content-addressed like any other relation, so a
 ;; database that did NOT change digests the same and early cutoff skips the rest.
@@ -144,9 +144,8 @@
 ;; The relations a mirror holds, each named "<source>.<table>", as the mirror is attached
 ;; under the source's name.
 (define orcasound-relations '(orcasound.bouts orcasound.bout_entities))
-;; Maplify's mirror is attached as maplify_mirror, not maplify: the snapshot already
-;; names Postgres's copy maplify.sightings, which the overlap report and the name guard
-;; read while Postgres ingests Maplify too.
+;; Maplify's mirror is attached as maplify_mirror, not maplify: the snapshot named
+;; Postgres's copy maplify.sightings while both ingested, and the twin test still does.
 (define maplify-relations '(maplify_mirror.sightings maplify_mirror.covered_days))
 ;; iNaturalist's, attached as inaturalist_mirror for the same reason.
 (define inaturalist-relations
@@ -162,17 +161,17 @@
 ;; salish-xv35.1): every table the five views behind derived.occurrences read, the
 ;; reference tables the functions they call read, the Maplify resolvers' inputs, and
 ;; the enums' declared orders; and the identifications people assert, which the
-;; profile pages' link views start from (salish-xv35.13). Maplify's table is still
-;; snapshotted for its overlap report and the name guard, while Postgres ingests
-;; Maplify too; Postgres stopped ingesting iNaturalist and Orcasound (salish-xv35.9),
-;; so their tables are not read at all — the iNaturalist taxa were the last, until the
-;; mirror held every taxon the register names (salish-xv35.9.3). The derivation reads
-;; the mirrors instead.
+;; profile pages' link views start from (salish-xv35.13). Postgres stopped ingesting
+;; all three sources (salish-xv35.9), so none of their tables is read — the iNaturalist
+;; taxa were the last, until the mirror held every taxon the register names
+;; (salish-xv35.9.3), and Maplify's table the last of the sources, read by the overlap
+;; report and the name guard's bootstrap until Postgres's Maplify ingest stopped. The
+;; derivation reads the mirrors instead.
 ;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
 (define derivation-input-tables
-  '("maplify.sightings" "maplify.collection_rule"
+  '("maplify.collection_rule"
     "happywhale.encounters" "happywhale.users" "happywhale.individuals"
     "happywhale.species" "happywhale.media"
     "public.observations" "public.observation_photos" "public.contributors"
@@ -346,7 +345,6 @@
      ;; returned for each window, in the map's scope or not, and the days fetched.
      (make-artifact 'maplify_mirror.sightings 'db-relation)
      (make-artifact 'maplify_mirror.covered_days 'db-relation)
-     (make-artifact 'maplify-overlap.json 'file)
      ;; iNaturalist's observations as the build fetches them (salish-xv35.8): every one in
      ;; the fetch box, their photos, the taxa they reach, the days reconciled, and how far
      ;; the changes sweep has read (sync).
@@ -421,13 +419,13 @@
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
    ;; A register edition that loses a name would quietly drop every Maplify sighting
    ;; that used it, since the derivation resolves names from the register it is given.
-   ;; Postgres's ingest refuses that, so while it ingests Maplify its stored answer is
-   ;; the last one accepted: this fails when the build's own rule can no longer name
-   ;; a pair Postgres named, before the derivation, so the last good files stand.
-   ;; Only pairs the mirror still holds count: a sighting Maplify no longer returns isn't
-   ;; on the map to lose.
+   ;; This fails when the build's own rule can no longer name a pair the last passing
+   ;; build named (its baseline, maplify-names.json), before the derivation, so the last
+   ;; good files stand. Only pairs the mirror still holds count: a sighting Maplify no
+   ;; longer returns isn't on the map to lose. The register-refresh workflow asks the
+   ;; same question of an edition before loading it, so this is the backstop.
    (make-task 'maplify-names 'gate
-              #:inputs '(maplify.sightings maplify_mirror.sightings register.entities register.names
+              #:inputs '(maplify_mirror.sightings register.entities register.names
                          register.ancestor register.deprecations maplify-unnamed.tsv)
               #:outputs '(maplify-names-hold maplify-names.json)
               #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
@@ -521,18 +519,6 @@
                                    "scripts/read-path/windows.ts"
                                    "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
                                  (list (path->string maplify-mirror))))
-   ;; While Postgres still ingests Maplify too, what differs, over the days the mirror has
-   ;; fetched: its in-scope sightings, by the snapshot's register, against Postgres's.
-   (make-task 'maplify-overlap 'transform
-              #:inputs (append maplify-relations
-                               '(maplify.sightings register.entities register.names
-                                 register.ancestor register.deprecations))
-              #:outputs '(maplify-overlap.json)
-              #:invoke (node-script/code "scripts/read-path/compare-maplify-mirror.ts"
-                                 '("scripts/ingest/maplify.ts" "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
-                                 (list SNAPSHOT-DB (path->string maplify-mirror)
-                                       (path->string (build-path mirror-dir "maplify-overlap.json")))))
 ;; iNaturalist, fetched by the build (salishsea decision 061, salish-xv35.8): what changed
    ;; since the last run (updated_since, which is how a late upload arrives), the last ten
    ;; days and one older month reconciled for deletions, every observation in the fetch box
@@ -608,7 +594,6 @@
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(dwca) (build-path export-dir "dwca")]
-    [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(maplify-unnamed.tsv) (build-path SALISHSEA "data" "maplify-unnamed.tsv")]
     [else #f]))
