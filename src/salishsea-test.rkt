@@ -55,6 +55,11 @@
 (check-equal? guard-plan '(ingest-maplify snapshot maplify-names)
               "the guard reads Postgres's stored answer and the register, for the pairs the mirror holds")
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'maplify-names)) 'gate)
+;; its baseline is forward-only state the gate itself writes (salish-xv35.9.2): declared,
+;; with the gate as its producer, so the graph knows the file exists and whose it is
+(check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'maplify-names.json))
+           'authoritative)
+(check-eq? (producer-of salishsea-graph 'maplify-names.json) 'maplify-names)
 
 ;; Nothing compares the build's derivation with Postgres's any more.
 (for ([retired (in-list '(occurrences-agreement identifier-candidates-agreement profile-links-agreement))])

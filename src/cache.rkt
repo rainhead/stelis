@@ -478,10 +478,11 @@
 ;; has a digest but no keys, and tokens/relations have no path and drop out.
 ;; Cutoff applies to 'derived state ONLY — the filter is an allow-list, so every
 ;; other provenance is excluded (forward-only writes are effects; "rebuilt to
-;; identical bytes" isn't a claim we make about them). In practice 'derived is the
-;; only provenance that can reach here at all: check-graph-leaves refuses to let an
-;; 'authoritative or 'upstream artifact have a producer, so neither ever appears in
-;; task-outputs. The allow-list is the belt to that suspenders.
+;; identical bytes" isn't a claim we make about them). 'upstream can never reach
+;; here (check-graph-leaves refuses it a producer), but 'authoritative CAN: ADR 0013
+;; leaves it 'either, and salishsea's name guard writes its own baseline as one
+;; (maplify-names.json). So the allow-list is load-bearing, not a belt to
+;; suspenders — it is what keeps a forward-only write out of the cutoff.
 (define (output-snapshot+keys g name env)
   (define t (hash-ref (graph-tasks g) name))
   (define observed

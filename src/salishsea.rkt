@@ -326,6 +326,13 @@
      ;; That every Maplify name Postgres resolved still resolves in the register the
      ;; build was given.
      (make-artifact 'maplify-names-hold 'token)
+     ;; The guard's baseline: the last PASSING build's answers, which the next build is
+     ;; judged against (salish-xv35.9.2). Forward-only — each pass rewrites it from the
+     ;; one before, and once Postgres stops resolving Maplify nothing can regenerate it
+     ;; — so 'authoritative, written by a task in this graph (ADR 0013's 'either arm).
+     ;; Declared so the graph names its producer and extent, not so the cache can
+     ;; address it: an authoritative output is excluded from cutoff by design.
+     (make-artifact 'maplify-names.json 'file #:provenance 'authoritative)
      ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6).
      (make-artifact 'orcasound.bouts 'db-relation)
      (make-artifact 'orcasound.bout_entities 'db-relation)
@@ -414,7 +421,7 @@
    (make-task 'maplify-names 'gate
               #:inputs '(maplify.sightings maplify_mirror.sightings register.entities register.names
                          register.ancestor register.deprecations)
-              #:outputs '(maplify-names-hold)
+              #:outputs '(maplify-names-hold maplify-names.json)
               #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
                                  '("scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
                                    "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
@@ -587,6 +594,7 @@
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
+    [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [else #f]))
 
 (define (relation-tables artifact)
