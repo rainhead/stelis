@@ -21,9 +21,9 @@
 (check-equal? ordered '(ingest-inaturalist ingest-maplify ingest-orcasound snapshot
                         maplify-names derive-occurrences occurrence-days)
               "the day files need the three sources' ingests, the snapshot, the name guard and the derivation")
-(check-equal? (set-count pruned) 11
+(check-equal? (set-count pruned) 12
               (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
-                             "index, the manifest and the Maplify overlap report are off the path to days"))
+                             "index, the manifest, the Maplify overlap report and the Darwin Core archive are off the path to days"))
 (for ([export (in-list '(occurrence-days calendar occurrence-ids))])
   (check-equal? (inputs-of export) '(build.occurrences)
                 "every occurrence export reads the build's occurrences, and nothing of Postgres's answer"))
@@ -110,6 +110,16 @@
               "a haul-out page reads the sites and their reports: the register holds no places")
 (check-false (memq 'snapshot-meta (inputs-of 'profile-index))
              "the redirects and the sitemap don't depend on when the snapshot was taken, so they cut off")
+
+;; The Darwin Core archive (salish-xv35.9): behind the name guard, dated by the day, and
+;; reading no source it doesn't publish.
+(check-not-false (memq 'maplify-names-hold (inputs-of 'dwca)) "a register that un-names sightings stops the archive too")
+(check-not-false (memq 'snapshot-day (inputs-of 'dwca)) "dated by the snapshot's day")
+(check-false (memq 'snapshot-meta (inputs-of 'dwca)) "not the moment, which moves every build")
+(for ([unpublished (in-list '(inaturalist_mirror.observations happywhale.encounters))])
+  (check-false (memq unpublished (inputs-of 'dwca))
+               (format "~a publishes to GBIF itself, so the archive doesn't read it" unpublished)))
+(check-equal? ((project-path salishsea-project) 'dwca (string->path "/x")) (string->path "/x/dwca"))
 
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'snapshot)) 'boundary
               "the snapshot asks Postgres every build — it cannot know otherwise")

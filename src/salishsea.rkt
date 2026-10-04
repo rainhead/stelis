@@ -273,6 +273,12 @@
    ;; The Pacific year it was taken in, all the profile pages read of when: moves
    ;; once a year where snapshot-meta moves every build (salish-xv35.12).
    (make-artifact 'snapshot-year 'db-relation)
+   ;; The UTC day it was taken on, which the Darwin Core archive is dated by: moves once a
+   ;; day, so the archive reruns when its data changes or the date does, not every build.
+   (make-artifact 'snapshot-day 'db-relation)
+   ;; The Darwin Core archive GBIF crawls (salish-xv35.9): the zip, its GeoParquet
+   ;; sidecar and their checksums, at /dwca/ as the nightly workflow published them.
+   (make-artifact 'dwca 'dir)
    ;; One JSON array per Pacific day, newest first — what fetchOccurrences gets
    ;; for that day with no region selected.
    (make-artifact 'days 'dir)
@@ -348,7 +354,7 @@
 (define tasks
   (list
    (make-task 'snapshot 'boundary
-              #:outputs (list* 'snapshot-meta 'snapshot-year
+              #:outputs (list* 'snapshot-meta 'snapshot-year 'snapshot-day
                                (append catalogue-relations derivation-input-relations))
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
@@ -435,6 +441,7 @@
                                    "src/fold.ts" "src/extents.ts"
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/shared.sql"
+                                   "scripts/read-path/derive/lookups.sql"
                                    "scripts/read-path/derive/occurrences.sql")
                                  (list* SNAPSHOT-DB MIRRORS)))
    ;; Postgres's derived.identifier_candidates as DuckDB SQL: each designation an
@@ -522,6 +529,35 @@
                                    "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
                                    "scripts/read-path/windows.ts" "src/extents.ts")
                                  (list (path->string inaturalist-mirror))))
+   ;; The Darwin Core archive (salish-xv35.9), which a nightly workflow built from
+   ;; Postgres's dwc views until Postgres stopped ingesting Maplify. derive/dwc.sql's
+   ;; twins of those views, over the same lookups and Maplify resolution the occurrences
+   ;; use, written by the nightly's own archive writer after the nightly's own checks.
+   ;; Behind the name guard, like the occurrences: a register that un-names Maplify
+   ;; sightings would drop them from the archive too. It reads Maplify and native
+   ;; sightings only (iNaturalist and Happywhale publish to GBIF themselves), so neither
+   ;; of those is an input. Dated by the snapshot's day.
+   (make-task 'dwca 'transform
+              #:inputs '(snapshot-day maplify-names-hold
+                         maplify_mirror.sightings maplify.collection_rule
+                         inaturalist_mirror.taxa inaturalist.taxa
+                         public.observations public.observation_photos public.contributors
+                         public.providers public.collections public.organizations
+                         register.entities register.names register.mappings register.ancestor
+                         register.deprecations register.classification types.enums)
+              #:outputs '(dwca)
+              #:invoke (node-script/code "scripts/read-path/dwca.ts"
+                                 '("scripts/dwca/assertions.ts" "scripts/dwca/build.ts" "scripts/dwca/eml.ts"
+                                   "scripts/dwca/fields.ts" "scripts/dwca/guard.ts" "scripts/dwca/meta-xml.ts"
+                                   "scripts/dwca/verify-artifact.ts" "scripts/dwca/zip.ts"
+                                   "scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
+                                   "scripts/read-path/derive/extract.ts" "scripts/read-path/derive/maplify-entities.ts"
+                                   "scripts/read-path/derive/sources.ts" "scripts/read-path/derive/sources.sql"
+                                   "scripts/read-path/derive/shared.sql" "scripts/read-path/derive/lookups.sql"
+                                   "scripts/read-path/derive/dwc.sql"
+                                   "scripts/read-path/duckdb-budget.ts" "scripts/read-path/replace-dir.ts"
+                                   "src/extents.ts" "src/fold.ts")
+                                 (list* SNAPSHOT-DB MIRRORS)))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
    ;; failed export must leave the last manifest standing. It reads none of them.
@@ -549,6 +585,7 @@
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
+    [(dwca) (build-path export-dir "dwca")]
     [(maplify-overlap.json) (build-path mirror-dir "maplify-overlap.json")]
     [else #f]))
 
@@ -556,6 +593,7 @@
   (case artifact
     [(snapshot-meta) '("snapshot.meta")]
     [(snapshot-year) '("snapshot.year")]
+    [(snapshot-day) '("snapshot.day")]
     [else
      (cond
        [(or (memq artifact derivation-input-relations)
