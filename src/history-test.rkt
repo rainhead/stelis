@@ -262,6 +262,26 @@
   (check-equal? (map build-record-number (history-load rt)) '(4 5 6) "and the next build is #6")
   (delete-directory/files rt))
 
+;; --- Retention under a clock that stepped backwards (st-ml9.10) ------------------
+;; recorded-at is wall clock. A machine whose clock was reset dates a build EARLIER
+;; than the ones before it; pruning must drop only the aged-out prefix, never reach
+;; past a build inside the window to an out-of-order old line and take the newer
+;; builds with it.
+(let ([st (make-temporary-file "stelis-history-skew-~a" 'directory)])
+  (define day 86400)
+  (define t0 1790000000)
+  ;; 1: old. 2, 3: inside the window. 4: dated OLD by a stepped clock. 5: inside.
+  (for ([at (list t0 (+ t0 (* 40 day)) (+ t0 (* 41 day)) (+ t0 day) (+ t0 (* 42 day)))]
+        [v (in-naturals 1)])
+    (history-append! st 'species-maps kg (number->string v)
+                     (list (rec-maps "t" (list (cons "a" (format "v~a" v)))))
+                     #:project 'salishsea #:recorded-at at))
+  (define-values (gone _c) (history-prune! st (* 30 day) #:now (+ t0 (* 45 day))))
+  (check-equal? gone 1 "only the prefix before the first in-window build goes")
+  (check-equal? (map build-record-number (history-load st)) '(2 3 4 5)
+                "the mis-dated build and everything after it survive")
+  (delete-directory/files st))
+
 ;; --- Chunked maps (st-ml9.7): stored as a tree, read back whole ---------------
 (let ([ct (make-temporary-file "stelis-history-chunked-~a" 'directory)])
   (define big (for/list ([i (in-range 1000)]) (cons (format "days/~a.json" i) (format "h~a" i))))

@@ -568,11 +568,24 @@
        (define e (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line))))
        (and (hash? e) (let ([t (hash-ref e 'recorded-at #f)]) (and (exact-integer? t) t))))
      (define horizon (- now keep-seconds))
-     ;; the last line recorded before the horizon; everything up to it goes
+     ;; the aged-out PREFIX: the last line recorded before the horizon that no
+     ;; line inside the window precedes; everything up to it goes (undated lines
+     ;; among them too). Only a prefix, never "the last old line anywhere"
+     ;; (st-ml9.10): recorded-at is wall clock, and a clock stepped backwards —
+     ;; NTP, a machine reset on redeploy — can date a line earlier than its
+     ;; predecessors. Taking the last old line would then drop the newer,
+     ;; correctly dated builds before it. So the first line inside the window
+     ;; ends the prefix, and an out-of-order old line after it stays.
      (define last-old
-       (for/last ([line (in-list body)] [i (in-naturals)]
-                  #:when (let ([t (recorded-at line)]) (and t (< t horizon))))
-         i))
+       (let loop ([ls body] [i 0] [last #f])
+         (cond
+           [(null? ls) last]
+           [else
+            (define t (recorded-at (car ls)))
+            (cond
+              [(and t (>= t horizon)) last]
+              [t (loop (cdr ls) (add1 i) i)]
+              [else (loop (cdr ls) (add1 i) last)])])))
      (cond
        [(not last-old) (values 0 0)]
        [else
