@@ -136,16 +136,6 @@
 ;; bytes costs ~4N of memory: on salishsea's 1 GB machine, a log near its 30-day
 ;; retention would not fit. These read a line at a time, from either end.
 
-;; in-lines-of : path -> (sequenceof string)
-;; The file's lines, read one at a time (the file is read to its end).
-(define (in-lines-of path)
-  (define in (open-input-file path))
-  (in-producer (lambda ()
-                 (define line (read-line in 'linefeed))
-                 (when (eof-object? line) (close-input-port in))
-                 line)
-               eof-object?))
-
 ;; first-line-where : path (string -> (or/c X #f)) -> (or/c X #f)
 ;; The first non-#f answer of `f' over the file's lines, in order, reading only as
 ;; far as it.
@@ -707,16 +697,18 @@
 ;; can.
 (define (collect-blocks! state-dir f)
   (define roots
-    (for*/fold ([named (set)]) ([line (in-lines-of f)]
-                                [e (in-value (line->entry line))]
-                                #:when e)
-      (for*/fold ([named (let ([g (hash-ref e 'graph-hash #f)]) (if (string? g) (set-add named g) named))])
-                 ([r (in-list (hash-ref e 'records))]
-                  [pos (in-list KEYED-DATUM-POSITIONS)]
-                  #:when (and (list? r) (< pos (length r)) (list? (list-ref r pos)))
-                  [entry (in-list (list-ref r pos))]
-                  #:when (and (pair? entry) (string? (cdr entry))))
-        (set-add named (cdr entry)))))
+    (call-with-input-file f
+      (lambda (in)
+        (for*/fold ([named (set)]) ([line (in-lines in 'linefeed)]
+                                    [e (in-value (line->entry line))]
+                                    #:when e)
+          (for*/fold ([named (let ([g (hash-ref e 'graph-hash #f)]) (if (string? g) (set-add named g) named))])
+                     ([r (in-list (hash-ref e 'records))]
+                      [pos (in-list KEYED-DATUM-POSITIONS)]
+                      #:when (and (list? r) (< pos (length r)) (list? (list-ref r pos)))
+                      [entry (in-list (list-ref r pos))]
+                      #:when (and (pair? entry) (string? (cdr entry))))
+            (set-add named (cdr entry)))))))
   ;; a chunked map's root names its buckets, and they theirs
   (define named
     (let walk ([todo (set->list roots)] [named roots])
