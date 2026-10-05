@@ -519,7 +519,7 @@
               #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
                                  '("scripts/read-path/derive/extract.sql"
                                    "scripts/read-path/derive/sources.ts"
-                                   "scripts/read-path/derive/sources.sql"
+                                   "scripts/read-path/derive/sources.sql" "scripts/read-path/derive/source-taxa.sql"
                                    "scripts/read-path/derive/maplify-entities.ts"
                                    "scripts/read-path/derive/inaturalist-scope.ts"
                                    "scripts/ingest/maplify.ts" "scripts/ingest/inaturalist.ts"
@@ -527,7 +527,7 @@
                                    "src/fold.ts" "src/extents.ts"
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/shared.sql"
-                                   "scripts/read-path/derive/lookups.sql"
+                                   "scripts/read-path/derive/lookups.sql" "scripts/read-path/derive/maplify-collection.sql"
                                    "scripts/read-path/derive/occurrences.sql")
                                  (list* SNAPSHOT-DB MIRRORS)))
    ;; Postgres's derived.identifier_candidates as DuckDB SQL: each designation an
@@ -556,12 +556,12 @@
               #:outputs catalogue-view-relations
               #:invoke (node-script/code "scripts/read-path/derive-catalogue.ts"
                                  '("scripts/read-path/derive/sources.ts"
-                                   "scripts/read-path/derive/sources.sql"
+                                   "scripts/read-path/derive/source-taxa.sql"
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/shared.sql"
                                    "scripts/read-path/derive/lookups.sql"
                                    "scripts/read-path/derive/catalogue.sql")
-                                 (list* SNAPSHOT-DB MIRRORS)))
+                                 (list SNAPSHOT-DB (path->string inaturalist-mirror))))
    (make-task 'derive-profile-links 'transform
               #:inputs '(build.occurrences build.occurrence_identifier_candidates
                          public.identifications orcasound.bout_entities
@@ -573,7 +573,7 @@
               #:invoke (node-script/code "scripts/read-path/derive-profile-links.ts"
                                  '("scripts/read-path/derive/haulout-distance.ts"
                                    "scripts/read-path/derive/sources.ts"
-                                   "scripts/read-path/derive/sources.sql"
+                                   "scripts/read-path/derive/sources.sql" "scripts/read-path/derive/source-taxa.sql"
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/derive/shared.sql"
                                    "scripts/read-path/derive/haulout-nearby.sql"
@@ -647,8 +647,8 @@
                                    "scripts/dwca/verify-artifact.ts" "scripts/dwca/zip.ts"
                                    "scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
                                    "scripts/read-path/derive/extract.sql" "scripts/read-path/derive/maplify-entities.ts"
-                                   "scripts/read-path/derive/sources.ts" "scripts/read-path/derive/sources.sql"
-                                   "scripts/read-path/derive/shared.sql" "scripts/read-path/derive/lookups.sql"
+                                   "scripts/read-path/derive/sources.ts" "scripts/read-path/derive/sources.sql" "scripts/read-path/derive/source-taxa.sql"
+                                   "scripts/read-path/derive/shared.sql" "scripts/read-path/derive/lookups.sql" "scripts/read-path/derive/maplify-collection.sql"
                                    "scripts/read-path/derive/dwc.sql"
                                    "scripts/read-path/duckdb-budget.ts" "scripts/read-path/replace-dir.ts"
                                    "src/extents.ts" "src/fold.ts")
