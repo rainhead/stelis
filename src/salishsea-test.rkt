@@ -18,10 +18,11 @@
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
 ;; Orcasound and the snapshot of what Postgres still holds.
 (define-values (ordered pruned) (plan salishsea-graph 'days))
-(check-equal? ordered '(ingest-maplify ingest-orcasound snapshot ingest-inaturalist
+(check-equal? ordered '(ingest-maplify ingest-orcasound reference snapshot ingest-inaturalist
                         maplify-names derive-occurrences occurrence-days)
-              (string-append "the day files need the three sources' ingests, the snapshot, the name guard and the "
-                             "derivation; iNaturalist's ingest follows the snapshot, whose register names the taxa it fetches"))
+              (string-append "the day files need the three sources' ingests, the reference files, the snapshot, the name "
+                             "guard and the derivation; iNaturalist's ingest follows the snapshot, whose register names "
+                             "the taxa it fetches"))
 (check-equal? (set-count pruned) 11
               (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
                              "index, the manifest and the Darwin Core archive are off the path to days"))
@@ -47,6 +48,21 @@
              "and neither do the links or the archive")
 (check-not-false (memq 'types.enums (inputs-of 'derive-occurrences))
                  "two of the views compare enums by their declared order")
+
+;; The reference tables are checked-in files (salishsea decision 064): the reference task
+;; produces them, from declared files nobody in the graph writes, and the snapshot no longer
+;; reads them from Postgres.
+(for ([table (in-list '(public.providers public.organizations public.collections
+                        maplify.collection_rule types.enums))])
+  (check-eq? (producer-of salishsea-graph table) 'reference
+             (format "~a comes from its checked-in file" table))
+  (check-not-false (memq table (inputs-of 'derive-occurrences))
+                   (format "and the derivation still reads ~a" table)))
+(for ([file (in-list (inputs-of 'reference))])
+  (check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) file)) 'authoritative
+             (format "~a is ours and forward-only" file))
+  (check-false (producer-of salishsea-graph file) (format "~a is written by a curator with git" file)))
+(check-equal? (length (inputs-of 'reference)) 5)
 (check-false (memq 'public.identifications (inputs-of 'derive-occurrences))
              "the occurrences don't read the identifications; only the links do")
 

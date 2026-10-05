@@ -12,9 +12,11 @@
 ;;   ingest-inaturalist ─▶ inaturalist_mirror.*┤    fetch, into a SQLite mirror
 ;;   ingest-orcasound ───▶ orcasound.*  ───────┤    holding only what it said)
 ;;                                             │
+;;   reference ─▶ the reference tables ────────┤   (checked-in files under data/
+;;                                             │    reference/, decision 064)
 ;;   snapshot ──▶ what Postgres still holds ───┤   (native sightings, Happywhale,
-;;   (boundary)   (the register, the catalogue,│    the reference tables; nothing
-;;       │         reference tables, native)   │    of the three sources any more)
+;;   (boundary)   (the register, the catalogue,│    the register, the catalogue;
+;;       │         native sightings)           │    nothing of the three sources)
 ;;       │              │                      │
 ;;       │              ▼                      ▼
 ;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
@@ -170,17 +172,32 @@
 ;; snapshot.ts writes each under its Postgres name, typed rather than as documents,
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
-(define derivation-input-tables
-  '("maplify.collection_rule"
-    "happywhale.encounters" "happywhale.users" "happywhale.individuals"
+(define snapshot-input-tables
+  '("happywhale.encounters" "happywhale.users" "happywhale.individuals"
     "happywhale.species" "happywhale.media"
     "public.observations" "public.observation_photos" "public.contributors"
     "public.identifications"
-    "public.providers" "public.collections" "public.organizations"
     "register.entities" "register.names" "register.mappings"
-    "register.ancestor" "register.deprecations" "register.classification"
-    "types.enums"))
+    "register.ancestor" "register.deprecations" "register.classification"))
 
+;; The reference tables (salishsea decision 064, salish-9uu.2.1): providers,
+;; organizations, collections, Maplify's collection rules and the enums' declared
+;; orders. Migrations wrote them and nothing in the app does, so they are checked-in
+;; files under data/reference/ now, loaded into the snapshot database under the same
+;; Postgres names by the reference task, and the derivation reads them unchanged.
+(define reference-tables
+  '("public.providers" "public.organizations" "public.collections"
+    "maplify.collection_rule" "types.enums"))
+(define reference-relations (map string->symbol reference-tables))
+;; Each table's file, as a declared input nobody in the graph writes.
+(define reference-files
+  '(reference/providers.tsv reference/organizations.tsv reference/collections.tsv
+    reference/maplify-collection-rules.tsv reference/enums.tsv))
+
+(define snapshot-input-relations (map string->symbol snapshot-input-tables))
+;; Everything the derivations read besides the mirrors: what the snapshot copies from
+;; Postgres and what the reference task loads from the files.
+(define derivation-input-tables (append snapshot-input-tables reference-tables))
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
 ;; The upstream sources as the build's own mirrors hold them (salish-xv35.9), which the
@@ -314,7 +331,7 @@
     (for/list ([name (in-list catalogue-relations)])
       (make-artifact name 'db-relation))
     ;; What the occurrences are derived from (decision 061). Derived, like the rest
-    ;; of the snapshot: the database holds the originals.
+    ;; of the snapshot: the database or the checked-in files hold the originals.
     (for/list ([name (in-list derivation-input-relations)])
       (make-artifact name 'db-relation))
     (list
@@ -338,6 +355,13 @@
      ;; — so an acceptance clears the hold by a declared input moving. Producerless and
      ;; forward-only: ADR 0013's other 'authoritative arm.
      (make-artifact 'maplify-unnamed.tsv 'file #:provenance 'authoritative)
+     ;; The reference tables' files (decision 064): checked in, edited by a curator's
+     ;; pull request, so producerless and forward-only like the allow-list above.
+     (make-artifact 'reference/providers.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'reference/organizations.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'reference/collections.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'reference/maplify-collection-rules.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'reference/enums.tsv 'file #:provenance 'authoritative)
      ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6).
      (make-artifact 'orcasound.bouts 'db-relation)
      (make-artifact 'orcasound.bout_entities 'db-relation)
@@ -366,9 +390,17 @@
   (list
    (make-task 'snapshot 'boundary
               #:outputs (list* 'snapshot-meta 'snapshot-year 'snapshot-day
-                               (append catalogue-relations derivation-input-relations))
+                               (append catalogue-relations snapshot-input-relations))
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
+   ;; The reference tables from their checked-in files (decision 064): a transform, not
+   ;; a boundary, since its inputs are declared files. Into the snapshot database, which
+   ;; the snapshot attaches rather than recreates, so neither erases the other's tables.
+   (make-task 'reference 'transform
+              #:inputs reference-files
+              #:outputs reference-relations
+              #:invoke (node-script/code "scripts/read-path/reference.ts" '()
                                  (list SNAPSHOT-DB)))
    (make-task 'occurrence-days 'transform
               #:inputs '(build.occurrences)
@@ -596,6 +628,11 @@
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(maplify-unnamed.tsv) (build-path SALISHSEA "data" "maplify-unnamed.tsv")]
+    [(reference/providers.tsv) (build-path SALISHSEA "data" "reference" "providers.tsv")]
+    [(reference/organizations.tsv) (build-path SALISHSEA "data" "reference" "organizations.tsv")]
+    [(reference/collections.tsv) (build-path SALISHSEA "data" "reference" "collections.tsv")]
+    [(reference/maplify-collection-rules.tsv) (build-path SALISHSEA "data" "reference" "maplify-collection-rules.tsv")]
+    [(reference/enums.tsv) (build-path SALISHSEA "data" "reference" "enums.tsv")]
     [else #f]))
 
 (define (relation-tables artifact)
