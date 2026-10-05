@@ -16,9 +16,11 @@
 ;;                                             │    un-names a Maplify pair; decision 064)
 ;;   reference ─▶ the reference tables ────────┤   (checked-in files under data/
 ;;                                             │    reference/, decision 064)
-;;   snapshot ──▶ what Postgres still holds ───┤   (native sightings, Happywhale,
-;;   (boundary)   (the catalogue,              │    the catalogue; nothing of the
-;;       │         native sightings)           │    three sources or the register)
+;;   catalogue ─▶ the catalogue ───────────────┤   (checked-in files under data/
+;;                                             │    catalogue/, decision 064)
+;;   snapshot ──▶ what Postgres still holds ───┤   (what users write, and
+;;   (boundary)   (native sightings,           │    Happywhale's frozen tables)
+;;       │         Happywhale)                 │
 ;;       │              │                      │
 ;;       │              ▼                      ▼
 ;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
@@ -165,12 +167,19 @@
 (define catalogue-relations (map snapshot-relation catalogue-tables))
 
 ;; Three of them are views over the register (salishsea decision 064, salish-9uu.2.3):
-;; the build derives them from its own register (derive-catalogue), so the snapshot
-;; copies only the rest. They keep their snapshot names, which the pages read.
+;; the build derives them from its own register (derive-catalogue). The rest are ours,
+;; checked in under salishsea's data/catalogue/ and loaded by the catalogue task, which
+;; computes what Postgres derived (the folded codes, an individual's vitals from the
+;; register). All keep their snapshot names, which the pages read; the snapshot task
+;; copies none of them.
 (define catalogue-register-views '("group_parents" "matriline_members" "animal_names"))
 (define catalogue-view-relations (map snapshot-relation catalogue-register-views))
-(define catalogue-snapshot-relations
+(define catalogue-file-relations
   (filter (lambda (r) (not (memq r catalogue-view-relations))) catalogue-relations))
+;; Each table's file, a declared input nobody in the graph writes.
+(define catalogue-files
+  '(catalogue/individuals.tsv catalogue/designations.tsv catalogue/nicknames.tsv
+    catalogue/parties.tsv catalogue/social-groups.tsv catalogue/haulouts.tsv))
 
 ;; What the occurrences were derived from in Postgres (salishsea decision 061,
 ;; salish-xv35.1): every table the five views behind derived.occurrences read, the
@@ -197,7 +206,10 @@
 ;; says which release; nothing reads it but a person asking.
 (define register-tables
   '("register.entities" "register.names" "register.mappings"
-    "register.ancestor" "register.deprecations" "register.classification"))
+    "register.ancestor" "register.deprecations" "register.classification"
+    ;; what an individual's sex, birth years and life status are derived from (decision
+    ;; 051, salish-9uu.2.3), which the catalogue task reads
+    "register.vitals" "register.current_status"))
 (define register-relations (map string->symbol register-tables))
 
 ;; The reference tables (salishsea decision 064, salish-9uu.2.1): providers,
@@ -378,6 +390,14 @@
      ;; The reference tables' files (decision 064): checked in, edited by a curator's
      ;; pull request, so producerless and forward-only like the allow-list above.
      (make-artifact 'reference/providers.tsv 'file #:provenance 'authoritative)
+     ;; The catalogue's files (decision 064, salish-9uu.2.3): ours, checked in, edited by
+     ;; a curator's pull request.
+     (make-artifact 'catalogue/individuals.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'catalogue/designations.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'catalogue/nicknames.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'catalogue/parties.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'catalogue/social-groups.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'catalogue/haulouts.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/organizations.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/collections.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/maplify-collection-rules.tsv 'file #:provenance 'authoritative)
@@ -412,7 +432,7 @@
   (list
    (make-task 'snapshot 'boundary
               #:outputs (list* 'snapshot-meta 'snapshot-year 'snapshot-day
-                               (append catalogue-snapshot-relations snapshot-input-relations))
+                               snapshot-input-relations)
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
@@ -549,6 +569,15 @@
    ;; The catalogue's three views over the register (salish-9uu.2.3): twins of Postgres's,
    ;; over the release the build fetched and the catalogue's own rows, written under the
    ;; snapshot's names. iNaturalist's taxa come from the mirror.
+   ;; The catalogue from its checked-in files (salish-9uu.2.3), with what Postgres derived
+   ;; computed here: the folded codes, and each individual's vitals from the register.
+   (make-task 'catalogue 'transform
+              #:inputs (append catalogue-files '(register.vitals register.current_status))
+              #:outputs catalogue-file-relations
+              #:invoke (node-script/code "scripts/read-path/catalogue.ts"
+                                 '("scripts/read-path/reference.ts" "src/fold.ts"
+                                   "scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB)))
    (make-task 'derive-catalogue 'transform
               #:inputs '(register.entities register.names register.mappings register.ancestor
                          register.deprecations inaturalist_mirror.taxa types.enums
@@ -683,6 +712,12 @@
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(maplify-unnamed.tsv) (build-path SALISHSEA "data" "maplify-unnamed.tsv")]
+    [(catalogue/individuals.tsv) (build-path SALISHSEA "data" "catalogue" "individuals.tsv")]
+    [(catalogue/designations.tsv) (build-path SALISHSEA "data" "catalogue" "designations.tsv")]
+    [(catalogue/nicknames.tsv) (build-path SALISHSEA "data" "catalogue" "nicknames.tsv")]
+    [(catalogue/parties.tsv) (build-path SALISHSEA "data" "catalogue" "parties.tsv")]
+    [(catalogue/social-groups.tsv) (build-path SALISHSEA "data" "catalogue" "social-groups.tsv")]
+    [(catalogue/haulouts.tsv) (build-path SALISHSEA "data" "catalogue" "haulouts.tsv")]
     [(reference/providers.tsv) (build-path SALISHSEA "data" "reference" "providers.tsv")]
     [(reference/organizations.tsv) (build-path SALISHSEA "data" "reference" "organizations.tsv")]
     [(reference/collections.tsv) (build-path SALISHSEA "data" "reference" "collections.tsv")]
