@@ -38,8 +38,15 @@
 ;;                        since it has no timeline to strand.
 ;;   history-retention  : (or/c exact-positive-integer #f) — seconds of build history
 ;;                        to keep (history-prune!, st-ml9.7), or #f to keep it all.
+;;                        Pruned in batches: up to a thirtieth more is kept, so the
+;;                        log is rewritten about once a day rather than every build.
 ;;                        salishsea builds every few minutes and keeps 30 days;
 ;;                        beeatlas builds nightly and keeps its whole timeline.
+;;   build-log-after-build? : boolean — refresh the operator build log (st-9rf) after
+;;                        every --build. beeatlas publishes the page, so it does;
+;;                        salishsea builds every five minutes and publishes nothing
+;;                        from it, so rendering it each time was ~6 s of every build
+;;                        for a page nobody opened. --render-log renders it on demand.
 (provide (struct-out project)
          make-project)
 
@@ -49,7 +56,8 @@
                  source-date-epoch
                  checkout checkout-env
                  default-state-dir
-                 history-retention))
+                 history-retention
+                 build-log-after-build?))
 
 (define (make-project name
                       #:graph graph
@@ -64,11 +72,13 @@
                       #:checkout checkout
                       #:checkout-env checkout-env
                       #:default-state-dir default-state-dir
-                      #:history-retention [history-retention #f])
+                      #:history-retention [history-retention #f]
+                      #:build-log-after-build? [build-log-after-build? #t])
   (project name graph runtimes path
            resolve-relation resolve-relation-columns resolve-store-keys
            partial-tasks edge-verify-tasks
            source-date-epoch
            checkout checkout-env
            default-state-dir
-           history-retention))
+           history-retention
+           build-log-after-build?))

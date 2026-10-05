@@ -878,7 +878,9 @@
    (let ([keep (project-history-retention P)])
      (when keep
        (define-values (builds blocks)
-         (after! 'pruning (lambda () (history-prune! stelis-state keep))))
+         ;; in batches of a thirtieth of the retention (a day of 30): pruning
+         ;; rewrites the log, so once a day rather than once a build
+         (after! 'pruning (lambda () (history-prune! stelis-state keep #:slack (quotient keep 30)))))
        (when (positive? builds)
          (printf "history: ~a build~a older than ~a days expired, ~a block~a removed\n"
                  builds (if (= 1 builds) "" "s") (quotient keep 86400)
@@ -886,7 +888,8 @@
    ;; st-9rf: refresh the operator build log AFTER the append, so the page
    ;; describes the build that just finished — records and all, failures
    ;; included (partial success is exactly what an operator page is for).
-   (after! 'build-log write-build-log!)
+   (when (project-build-log-after-build? P)
+     (after! 'build-log write-build-log!))
    (printf "⏱ after the tasks: ~a\n"
            (string-join
             (for/list ([phase (in-list '(history pruning build-log))]

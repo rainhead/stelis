@@ -382,3 +382,43 @@
   (history-append! dir 'mid g "1" build1)
   (check-equal? (history-foreign-projects dir 'beeatlas) '()
                 "history-append! without #:project writes a beeatlas record"))
+
+;; --- Pruning in batches, reading only the ends of the log ------------------------
+;; At a build every five minutes one build ages out per build, and each prune rewrote
+;; and re-read the whole log; with slack it waits until a batch has aged out.
+(let ([bt (make-temporary-file "stelis-history-batch-~a" 'directory)])
+  (define day 86400)
+  (define t0 1790000000)
+  (for ([at (list t0 (+ t0 day) (+ t0 (* 2 day)))] [v (in-naturals 1)])
+    (history-append! bt 'species-maps kg (number->string v)
+                     (list (rec-maps "t" (list (cons "a" (format "v~a" v)))))
+                     #:project 'salishsea #:recorded-at at))
+  ;; the oldest build is half a day past a 30-day horizon: inside a day's slack
+  (define-values (early _e) (history-prune! bt (* 30 day) #:now (+ t0 (* 30 day) (quotient day 2))
+                                            #:slack day))
+  (check-equal? early 0 "nothing goes while the oldest build is within the slack")
+  (check-equal? (length (history-load bt)) 3)
+  ;; two and a half days past: past the slack, and everything aged out goes at once
+  (define-values (batch _b) (history-prune! bt (* 30 day) #:now (+ t0 (* 32 day) (quotient day 2))
+                                            #:slack day))
+  (check-equal? batch 3 "every build older than the horizon goes in one batch")
+  (check-equal? (history-pruned-count bt) 3)
+  (delete-directory/files bt))
+
+;; The project check reads the oldest and newest builds only, from both ends of a log
+;; whose lines are longer than the blocks it reads backwards in.
+(let ([lt (make-temporary-file "stelis-history-long-~a" 'directory)])
+  (define long-map (for/list ([i (in-range 3000)]) (cons (format "key-~a" i) (make-string 40 #\x))))
+  (define (write-line! e)
+    (call-with-output-file (build-path lt "history.rktd") #:exists 'append
+      (lambda (o) (write e o) (newline o))))
+  (define (entry project)
+    (hash 'version 3 'project project 'target 'all 'graph-hash "g" 'epoch "1"
+          'records (list (list 't (list 'run 'x '()) #f 'ok '() #f long-map '() '() #f))))
+  (write-line! (entry 'beeatlas))
+  (for ([_ (in-range 3)]) (write-line! (entry 'salishsea)))
+  (check-true (> (file-size (build-path lt "history.rktd")) (* 4 65536))
+              "the lines are longer than a backward read's block")
+  (check-equal? (history-foreign-projects lt 'salishsea) '(beeatlas) "the oldest build is beeatlas's")
+  (check-equal? (history-foreign-projects lt 'beeatlas) '(salishsea) "the newest is salishsea's")
+  (delete-directory/files lt))

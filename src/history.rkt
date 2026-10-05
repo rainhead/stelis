@@ -24,6 +24,7 @@
 ;; outgrows in-memory Datalog (DESIGN: defer it).
 
 (require racket/file
+         (only-in racket/port copy-port)
          racket/list
          racket/path
          racket/set
@@ -106,22 +107,86 @@
 
 ;; history-foreign-projects : path-string symbol -> (listof symbol)
 ;; The projects OTHER than `project' that have builds recorded under `state-dir',
-;; sorted; '() when the dir is empty, missing, or wholly `project''s. Reads every
-;; line regardless of version — a stale-version line is still a record of SOME
-;; project's build, and a dir that holds one is still that project's dir.
+;; sorted; '() when the dir is empty, missing, or wholly `project''s. Any version
+;; counts — a stale-version line is still a record of SOME project's build, and a
+;; dir that holds one is still that project's dir.
+;;
+;; Asked of the OLDEST and NEWEST builds only, because this check runs before every
+;; append: once a dir holds one project's builds, another project's build is refused
+;; rather than written, so the projects in a log can only change where it began
+;; (a legacy keyless log a new project was pointed at) or where it ends (a log
+;; another project wrote last). Reading every line answered the same question in
+;; time and memory that grew with the log — on salishsea's Fly machine, a whole
+;; parse of a history that reaches ~200 MB at its retention, before every build.
 (define (history-foreign-projects state-dir project)
   (define f (history-file state-dir))
   (cond
     [(not (file-exists? f)) '()]
     [else
+     (define (project-of line)
+       (define e (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line))))
+       (and (hash? e) (not (pruned-header? e)) (hash-ref e 'project LEGACY-PROJECT)))
      (define seen
-       (for*/list ([line (in-list (file->lines f))]
-                   [e (in-value (with-handlers ([exn:fail? (lambda (_) #f)])
-                                  (read (open-input-string line))))]
-                   #:when (and (hash? e) (not (pruned-header? e))))
-         (hash-ref e 'project LEGACY-PROJECT)))
+       (filter values (list (first-line-where f project-of) (last-line-where f project-of))))
      (sort (remove-duplicates (remove* (list project) seen))
            symbol<?)]))
+
+;; --- Reading a log without loading it ------------------------------------------
+;; Racket strings hold four bytes a character, so `file->lines' on a history of N
+;; bytes costs ~4N of memory: on salishsea's 1 GB machine, a log near its 30-day
+;; retention would not fit. These read a line at a time, from either end.
+
+;; in-lines-of : path -> (sequenceof string)
+;; The file's lines, read one at a time (the file is read to its end).
+(define (in-lines-of path)
+  (define in (open-input-file path))
+  (in-producer (lambda ()
+                 (define line (read-line in 'linefeed))
+                 (when (eof-object? line) (close-input-port in))
+                 line)
+               eof-object?))
+
+;; first-line-where : path (string -> (or/c X #f)) -> (or/c X #f)
+;; The first non-#f answer of `f' over the file's lines, in order, reading only as
+;; far as it.
+(define (first-line-where path f)
+  (call-with-input-file path
+    (lambda (in)
+      (let loop ()
+        (define line (read-line in 'linefeed))
+        (cond
+          [(eof-object? line) #f]
+          [(string=? "" (string-trim line)) (loop)]
+          [(f line) => values]
+          [else (loop)])))))
+
+;; last-line-where : path (string -> (or/c X #f)) -> (or/c X #f)
+;; The first non-#f answer of `f' over the file's lines, from the LAST backwards,
+;; reading the file from its end in blocks and holding at most one line beyond them.
+(define (last-line-where path f)
+  (define size (file-size path))
+  (define block 65536)
+  (call-with-input-file path
+    (lambda (in)
+      ;; `tail' is the bytes after the last newline seen so far (a partial line)
+      (let loop ([end size] [tail #""])
+        (cond
+          [(zero? end)
+           (and (positive? (bytes-length tail))
+                (let ([line (bytes->string/utf-8 tail #\?)])
+                  (and (not (string=? "" (string-trim line))) (f line))))]
+          [else
+           (define start (max 0 (- end block)))
+           (file-position in start)
+           (define chunk (bytes-append (read-bytes (- end start) in) tail))
+           ;; the complete lines in this chunk, last first; the first piece may be
+           ;; partial unless the chunk starts the file
+           (define pieces (regexp-split #rx#"\n" chunk))
+           (define complete (if (zero? start) pieces (cdr pieces)))
+           (or (for/or ([b (in-list (reverse complete))])
+                 (define line (bytes->string/utf-8 b #\?))
+                 (and (not (string=? "" (string-trim line))) (f line)))
+               (if (zero? start) #f (loop start (car pieces))))])))))
 
 ;; history-append! : path-string symbol graph string (listof trace-record)
 ;;                   [#:project symbol] -> string
@@ -543,7 +608,10 @@
 ;; numbers below the first remaining one.
 (define (history-pruned-count state-dir)
   (define f (history-file state-dir))
-  (if (file-exists? f) (lines-pruned-count (file->lines f)) 0))
+  ;; the header, when there is one, is the first line: history-prune! writes it there
+  (if (file-exists? f)
+      (or (first-line-where f (lambda (line) (lines-pruned-count (list line)))) 0)
+      0))
 
 ;; history-prune! : path-string exact-nonnegative-integer [#:now exact-integer]
 ;;                  -> (values exact-nonnegative-integer exact-nonnegative-integer)
@@ -551,64 +619,95 @@
 ;; ones before them), then delete the blocks no remaining line names. Returns how
 ;; many builds and how many blocks went. The log is rewritten whole, beside itself,
 ;; and renamed over, so a reader sees the old history or the new one.
-(define (history-prune! state-dir keep-seconds #:now [now (current-seconds)])
+;; Retention prunes in BATCHES: only once the oldest build is `slack' past the
+;; horizon, and then everything aged out goes at once. Pruning rewrites the whole
+;; log and re-reads every surviving line to find the blocks they still name, so at a
+;; build every five minutes, pruning the one build that aged out each time cost a
+;; full rewrite and parse per build; with a day's slack it costs one a day. The log
+;; then holds between `keep-seconds' and `keep-seconds' + `slack' of builds.
+;; Whether to prune at all is read off the oldest dated line alone.
+(define (history-prune! state-dir keep-seconds #:now [now (current-seconds)]
+                        #:slack [slack 0])
   (define f (history-file state-dir))
+  (define horizon (- now keep-seconds))
+  (define (recorded-at line)
+    (define e (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line))))
+    (and (hash? e) (not (pruned-header? e))
+         (let ([t (hash-ref e 'recorded-at #f)]) (and (exact-integer? t) t))))
   (cond
     [(not (file-exists? f)) (values 0 0)]
-    [else
-     (define lines (file->lines f))
-     (define pruned (lines-pruned-count lines))
-     (define body
-       (for/list ([line (in-list lines)]
-                  #:unless (string=? "" (string-trim line))
-                  #:unless (pruned-header? (with-handlers ([exn:fail? (lambda (_) #f)])
-                                             (read (open-input-string line)))))
-         line))
-     (define (recorded-at line)
-       (define e (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line))))
-       (and (hash? e) (let ([t (hash-ref e 'recorded-at #f)]) (and (exact-integer? t) t))))
-     (define horizon (- now keep-seconds))
-     ;; the aged-out PREFIX: the last line recorded before the horizon that no
-     ;; line inside the window precedes; everything up to it goes (undated lines
-     ;; among them too). Only a prefix, never "the last old line anywhere"
-     ;; (st-ml9.10): recorded-at is wall clock, and a clock stepped backwards —
-     ;; NTP, a machine reset on redeploy — can date a line earlier than its
-     ;; predecessors. Taking the last old line would then drop the newer,
-     ;; correctly dated builds before it. So the first line inside the window
-     ;; ends the prefix, and an out-of-order old line after it stays.
-     (define last-old
-       (let loop ([ls body] [i 0] [last #f])
-         (cond
-           [(null? ls) last]
-           [else
-            (define t (recorded-at (car ls)))
-            (cond
-              [(and t (>= t horizon)) last]
-              [t (loop (cdr ls) (add1 i) i)]
-              [else (loop (cdr ls) (add1 i) last)])])))
-     (cond
-       [(not last-old) (values 0 0)]
-       [else
-        (define-values (gone kept) (split-at body (add1 last-old)))
-        ;; numbers count the builds history-load reads, so only those
-        (define dropped (for/sum ([line (in-list gone)]) (if (line->entry line) 1 0)))
-        (define tmp (path-add-extension f #".pruning"))
+    ;; nothing has aged out by more than the slack: no build before the first dated
+    ;; one can go (an undated line goes only once a dated one before the horizon
+    ;; does), and the first dated one is not old enough
+    [(let ([oldest (first-line-where f recorded-at)])
+       (or (not oldest) (>= oldest (- horizon slack))))
+     (values 0 0)]
+    [else (prune-before! state-dir f horizon recorded-at)]))
+
+;; prune-before! : the rewrite itself, reading the log a line at a time.
+;; The aged-out PREFIX ends at the last line recorded before the horizon that no line
+;; inside the window precedes; everything up to it goes (undated lines among them
+;; too). Only a prefix, never "the last old line anywhere" (st-ml9.10): recorded-at
+;; is wall clock, and a clock stepped backwards — NTP, a machine reset on redeploy —
+;; can date a line earlier than its predecessors. Taking the last old line would then
+;; drop the newer, correctly dated builds before it. So the first line inside the
+;; window ends the prefix, and an out-of-order old line after it stays.
+(define (prune-before! state-dir f horizon recorded-at)
+  (define tmp (path-add-extension f #".pruning"))
+  (define-values (pruned dropped)
+    (call-with-input-file f
+      (lambda (in)
         (call-with-output-file tmp #:exists 'truncate
           (lambda (o)
-            (write (hash 'version HISTORY-VERSION 'pruned (+ pruned dropped)) o)
-            (newline o)
-            (for ([line (in-list kept)]) (write-string line o) (newline o))))
-        (rename-file-or-directory tmp f #t)
-        (values dropped (collect-blocks! state-dir kept))])]))
+            ;; the count already dropped, from the old header; the new header is
+            ;; written once the prefix has been read and the count it adds is known
+            (define pruned
+              (or (first-line-where f (lambda (line) (lines-pruned-count (list line)))) 0))
+            ;; scan the prefix: lines up to the first inside the window
+            (let loop ([pending '()] [gone 0])
+              (define line (read-line in 'linefeed))
+              (cond
+                [(eof-object? line)
+                 ;; every line was old or undated: the undated ones after the last
+                 ;; old line stay
+                 (write-header o pruned gone)
+                 (for ([l (in-list (reverse pending))]) (write-string l o) (newline o))
+                 (values pruned gone)]
+                [(string=? "" (string-trim line)) (loop pending gone)]
+                [(pruned-header? (with-handlers ([exn:fail? (lambda (_) #f)])
+                                   (read (open-input-string line))))
+                 (loop pending gone)]
+                [else
+                 (define t (recorded-at line))
+                 (cond
+                   [(and t (>= t horizon))
+                    ;; the first line inside the window: it, the undated lines
+                    ;; since the last old one, and everything after it stay
+                    (write-header o pruned gone)
+                    (for ([l (in-list (reverse pending))]) (write-string l o) (newline o))
+                    (write-string line o) (newline o)
+                    (copy-port in o)
+                    (values pruned gone)]
+                   ;; an old line: it and the undated lines before it go
+                   [t (loop '() (+ gone (length (filter line->entry pending))
+                                   (if (line->entry line) 1 0)))]
+                   ;; undated: goes only if an old line follows it
+                   [else (loop (cons line pending) gone)])])))))))
+  (rename-file-or-directory tmp f #t)
+  (values dropped (collect-blocks! state-dir f)))
 
-;; collect-blocks! : path-string (listof string) -> exact-nonnegative-integer
-;; Delete every block that none of `lines' reaches, as its topology snapshot or as a
+(define (write-header o pruned gone)
+  (write (hash 'version HISTORY-VERSION 'pruned (+ pruned gone)) o)
+  (newline o))
+
+;; collect-blocks! : path-string path -> exact-nonnegative-integer
+;; Delete every block that none of the log `f''s lines reaches, as its topology snapshot or as a
 ;; keyed map (with the blocks below a chunked map's root); return how many. Only
 ;; history writes blocks (blockstore.rkt), so a block no build reaches is one nothing
 ;; can.
-(define (collect-blocks! state-dir lines)
+(define (collect-blocks! state-dir f)
   (define roots
-    (for*/fold ([named (set)]) ([line (in-list lines)]
+    (for*/fold ([named (set)]) ([line (in-lines-of f)]
                                 [e (in-value (line->entry line))]
                                 #:when e)
       (for*/fold ([named (let ([g (hash-ref e 'graph-hash #f)]) (if (string? g) (set-add named g) named))])

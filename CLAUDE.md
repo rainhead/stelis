@@ -292,8 +292,14 @@ corruption is detected rather than decoded; freshness never reads its sequence
 (ADR 0005). RETENTION (st-ml9.7): a project may keep only recent history
 (`#:history-retention`; salishsea 30 days, beeatlas all). Each line records when it
 was written — the file's one clock, housekeeping only — and `history-prune!` drops
-the aged-out PREFIX after each build, then deletes the blocks no remaining line
-names. The count dropped is a header line, so every survivor keeps its NUMBER
+the aged-out PREFIX, then deletes the blocks no remaining line names. It prunes in
+BATCHES (once the oldest build is a thirtieth of the retention past it, so about
+daily), because a prune rewrites and re-reads the whole log; deciding whether to
+reads the oldest dated line alone. Nothing a build does every time reads the whole
+log any more — the project check reads its oldest and newest builds only — since
+Racket holds a string at four bytes a character and salishsea's log at retention is
+~200 MB on a 1 GB machine. salishsea also skips the build-log render after each
+build (`#:build-log-after-build? #f`; nothing publishes it, `--render-log` draws it). The count dropped is a header line, so every survivor keeps its NUMBER
 (`build-record-number`; publish receipts join on number + epoch), and answers that
 reach the horizon say where the record starts ·
 [`explain.rkt`](src/explain.rkt) per-task why-run/why-skip ·
