@@ -24,9 +24,20 @@
                              "register, the name guard and the derivation; the register follows Maplify's ingest, whose "
                              "pairs it must not un-name, and iNaturalist's follows the register, which names the taxa "
                              "it fetches"))
-(check-equal? (set-count pruned) 11
-              (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
-                             "index, the manifest and the Darwin Core archive are off the path to days"))
+(check-equal? (set-count pruned) 12
+              (string-append "the calendar, the id index, the candidates and links, the catalogue's register "
+                             "views, the pages, the profile index, the manifest and the Darwin Core archive are "
+                             "off the path to days"))
+
+;; The catalogue's views over the register are the build's (salishsea decision 064,
+;; salish-9uu.2.3): derive-catalogue produces them under the snapshot's names, from the
+;; register the build fetched and the catalogue's own rows; the snapshot copies the rest.
+(for ([v (in-list '(group-parents-snapshot matriline-members-snapshot animal-names-snapshot))])
+  (check-eq? (producer-of salishsea-graph v) 'derive-catalogue (format "~a is derived" v)))
+(for ([v (in-list '(individuals-snapshot designations-snapshot social-groups-snapshot
+                    nicknames-snapshot parties-snapshot haulouts-snapshot))])
+  (check-eq? (producer-of salishsea-graph v) 'snapshot (format "~a is still copied" v)))
+(check-not-false (memq 'register.ancestor (inputs-of 'derive-catalogue)))
 (for ([export (in-list '(occurrence-days calendar occurrence-ids))])
   (check-equal? (inputs-of export) '(build.occurrences)
                 "every occurrence export reads the build's occurrences, and nothing of Postgres's answer"))

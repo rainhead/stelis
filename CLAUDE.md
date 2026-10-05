@@ -499,7 +499,11 @@ same names (salishsea decision 064, the first move of its step 4). The register
 too: an `ingest-register` boundary fetches its newest release each build (one
 redirect probe; a download only when the tag moved), writes `register.*` into the
 snapshot file, and refuses an edition that would un-name a Maplify pair the held
-edition names — the build keeps what it holds and the run log says why. A transform writes one file per Pacific day. The snapshot reruns
+edition names — the build keeps what it holds and the run log says why. And the
+catalogue's three views over the register (`group_parents`, `matriline_members`,
+`animal_names`) are a `derive-catalogue` transform's, written under the snapshot's
+names the pages read (salish-9uu.2.3); the snapshot copies only the catalogue's own
+tables, which leave Postgres next. A transform writes one file per Pacific day. The snapshot reruns
 every build; an unchanged database digests the same, and early cutoff skips
 the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),

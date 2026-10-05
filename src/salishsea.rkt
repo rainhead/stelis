@@ -32,6 +32,9 @@
 ;;       │                                              derive-profile-links
 ;;       │                                              ▶ build.individual_occurrences
 ;;       │                                                and its three siblings
+;;       ├──────▶ the catalogue ──┬──▶ derive-catalogue: its three views over the
+;;       │                         │    register (group_parents, matriline_members,
+;;       │                         ▼    animal_names), under the snapshot's names
 ;;       ├──────▶ the catalogue ──────▶ individual-pages ▶ profiles/individuals/
 ;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
 ;;       │         table) + the links   ecotype-pages ───▶ profiles/ecotypes/
@@ -160,6 +163,14 @@
   (string->symbol (string-append (string-replace table "_" "-") "-snapshot")))
 
 (define catalogue-relations (map snapshot-relation catalogue-tables))
+
+;; Three of them are views over the register (salishsea decision 064, salish-9uu.2.3):
+;; the build derives them from its own register (derive-catalogue), so the snapshot
+;; copies only the rest. They keep their snapshot names, which the pages read.
+(define catalogue-register-views '("group_parents" "matriline_members" "animal_names"))
+(define catalogue-view-relations (map snapshot-relation catalogue-register-views))
+(define catalogue-snapshot-relations
+  (filter (lambda (r) (not (memq r catalogue-view-relations))) catalogue-relations))
 
 ;; What the occurrences were derived from in Postgres (salishsea decision 061,
 ;; salish-xv35.1): every table the five views behind derived.occurrences read, the
@@ -401,7 +412,7 @@
   (list
    (make-task 'snapshot 'boundary
               #:outputs (list* 'snapshot-meta 'snapshot-year 'snapshot-day
-                               (append catalogue-relations snapshot-input-relations))
+                               (append catalogue-snapshot-relations snapshot-input-relations))
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
                                  '("scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB)))
@@ -535,6 +546,22 @@
    ;; Orcasound's bout entities (from its mirror) and the catalogue. A haul-out report's distance is
    ;; PostGIS's spheroidal one, measured in node with GeographicLib, which PostGIS
    ;; calls, rather than with DuckDB's spatial extension on a 1 GB machine.
+   ;; The catalogue's three views over the register (salish-9uu.2.3): twins of Postgres's,
+   ;; over the release the build fetched and the catalogue's own rows, written under the
+   ;; snapshot's names. iNaturalist's taxa come from the mirror.
+   (make-task 'derive-catalogue 'transform
+              #:inputs '(register.entities register.names register.mappings register.ancestor
+                         register.deprecations inaturalist_mirror.taxa types.enums
+                         individuals-snapshot social-groups-snapshot)
+              #:outputs catalogue-view-relations
+              #:invoke (node-script/code "scripts/read-path/derive-catalogue.ts"
+                                 '("scripts/read-path/derive/sources.ts"
+                                   "scripts/read-path/derive/sources.sql"
+                                   "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/derive/shared.sql"
+                                   "scripts/read-path/derive/lookups.sql"
+                                   "scripts/read-path/derive/catalogue.sql")
+                                 (list* SNAPSHOT-DB MIRRORS)))
    (make-task 'derive-profile-links 'transform
               #:inputs '(build.occurrences build.occurrence_identifier_candidates
                          public.identifications orcasound.bout_entities
