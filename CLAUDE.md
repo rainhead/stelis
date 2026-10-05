@@ -505,8 +505,10 @@ catalogue's three views over the register (`group_parents`, `matriline_members`,
 names the pages read (salish-9uu.2.3); and the catalogue's own tables are
 checked-in files under salishsea's `data/catalogue/`, loaded by a `catalogue` task
 that computes what Postgres derived (folded codes; each individual's vitals from
-`register.vitals` and `register.current_status`). The snapshot reads only what users
-write and Happywhale's frozen tables. A transform writes one file per Pacific day. The snapshot reruns
+`register.vitals` and `register.current_status`). Happywhale's frozen tables are a
+producerless `'upstream` file on the volume (`mirrors/happywhale.duckdb`, kept off the
+public repository), loaded by a `happywhale` task (salish-9uu.2.4). The snapshot now
+reads only what users write. A transform writes one file per Pacific day. The snapshot reruns
 every build; an unchanged database digests the same, and early cutoff skips
 the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),

@@ -18,12 +18,12 @@
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
 ;; Orcasound and the snapshot of what Postgres still holds.
 (define-values (ordered pruned) (plan salishsea-graph 'days))
-(check-equal? ordered '(ingest-maplify ingest-orcasound reference snapshot ingest-register ingest-inaturalist
-                        maplify-names derive-occurrences occurrence-days)
-              (string-append "the day files need the three sources' ingests, the reference files, the snapshot, the "
-                             "register, the name guard and the derivation; the register follows Maplify's ingest, whose "
-                             "pairs it must not un-name, and iNaturalist's follows the register, which names the taxa "
-                             "it fetches"))
+(check-equal? ordered '(happywhale ingest-maplify ingest-orcasound reference snapshot ingest-register
+                        ingest-inaturalist maplify-names derive-occurrences occurrence-days)
+              (string-append "the day files need Happywhale's frozen file, the three sources' ingests, the reference "
+                             "files, the snapshot, the register, the name guard and the derivation; the register follows "
+                             "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
+                             "which names the taxa it fetches"))
 (check-equal? (set-count pruned) 13
               (string-append "the calendar, the id index, the candidates and links, the catalogue and its "
                              "register views, the pages, the profile index, the manifest and the Darwin Core "
@@ -41,6 +41,13 @@
                              (inputs-of 'catalogue)))])
   (check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) file)) 'authoritative)
   (check-false (producer-of salishsea-graph file)))
+;; Happywhale's frozen tables come from a file on the volume (salish-9uu.2.4), not the
+;; snapshot: somebody else's data snapshotted in once, which no task writes.
+(for ([t (in-list '(happywhale.encounters happywhale.users happywhale.individuals
+                    happywhale.species happywhale.media))])
+  (check-eq? (producer-of salishsea-graph t) 'happywhale (format "~a comes from the frozen file" t)))
+(check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'happywhale.duckdb)) 'upstream)
+(check-false (producer-of salishsea-graph 'happywhale.duckdb))
 (check-not-false (memq 'register.vitals (inputs-of 'catalogue))
                  "an individual's vitals are the register's")
 (check-false (for/or ([o (in-list (task-outputs (hash-ref (graph-tasks salishsea-graph) 'snapshot)))])

@@ -18,9 +18,10 @@
 ;;                                             │    reference/, decision 064)
 ;;   catalogue ─▶ the catalogue ───────────────┤   (checked-in files under data/
 ;;                                             │    catalogue/, decision 064)
-;;   snapshot ──▶ what Postgres still holds ───┤   (what users write, and
-;;   (boundary)   (native sightings,           │    Happywhale's frozen tables)
-;;       │         Happywhale)                 │
+;;   happywhale ─▶ Happywhale's tables ────────┤   (frozen, from mirrors/happywhale.duckdb)
+;;   snapshot ──▶ what Postgres still holds ───┤   (what users write: native sightings,
+;;   (boundary)   (native sightings)           │    photos, contributors, identifications)
+;;       │                                     │
 ;;       │              │                      │
 ;;       │              ▼                      ▼
 ;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
@@ -195,10 +196,18 @@
 ;; so each is named for its table here too: --why names the one that moved, and the
 ;; per-column observation says which column.
 (define snapshot-input-tables
-  '("happywhale.encounters" "happywhale.users" "happywhale.individuals"
-    "happywhale.species" "happywhale.media"
-    "public.observations" "public.observation_photos" "public.contributors"
+  '("public.observations" "public.observation_photos" "public.contributors"
     "public.identifications"))
+
+;; Happywhale's tables, frozen since their in-database loader stopped being called
+;; (salishsea decision 061): read from one file on the volume (decision 064,
+;; salish-9uu.2.4), exported once from Postgres and kept off the public repository, and
+;; loaded into the snapshot database under the same names by the happywhale task.
+(define happywhale-tables
+  '("happywhale.encounters" "happywhale.users" "happywhale.individuals"
+    "happywhale.species" "happywhale.media"))
+(define happywhale-relations (map string->symbol happywhale-tables))
+(define happywhale-frozen (build-path mirror-dir "happywhale.duckdb"))
 
 ;; The register (salishsea decision 064, salish-9uu.2.2): fetched by the build from its
 ;; newest release, as the three sources are, and written into the snapshot database under
@@ -229,7 +238,8 @@
 (define snapshot-input-relations (map string->symbol snapshot-input-tables))
 ;; Everything the derivations read besides the mirrors: what the snapshot copies from
 ;; Postgres, what the reference task loads from the files, and the register.
-(define derivation-input-tables (append snapshot-input-tables reference-tables register-tables))
+(define derivation-input-tables
+  (append snapshot-input-tables happywhale-tables reference-tables register-tables))
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
 ;; The upstream sources as the build's own mirrors hold them (salish-xv35.9), which the
@@ -389,6 +399,9 @@
      (make-artifact 'maplify-unnamed.tsv 'file #:provenance 'authoritative)
      ;; The reference tables' files (decision 064): checked in, edited by a curator's
      ;; pull request, so producerless and forward-only like the allow-list above.
+     ;; Happywhale's frozen tables (salish-9uu.2.4): somebody else's data, snapshotted in
+     ;; once, which nothing in the graph writes.
+     (make-artifact 'happywhale.duckdb 'file #:provenance 'upstream)
      (make-artifact 'reference/providers.tsv 'file #:provenance 'authoritative)
      ;; The catalogue's files (decision 064, salish-9uu.2.3): ours, checked in, edited by
      ;; a curator's pull request.
@@ -571,6 +584,13 @@
    ;; snapshot's names. iNaturalist's taxa come from the mirror.
    ;; The catalogue from its checked-in files (salish-9uu.2.3), with what Postgres derived
    ;; computed here: the folded codes, and each individual's vitals from the register.
+   ;; Happywhale from its frozen file (salish-9uu.2.4), under the snapshot's names.
+   (make-task 'happywhale 'transform
+              #:inputs '(happywhale.duckdb)
+              #:outputs happywhale-relations
+              #:invoke (node-script/code "scripts/read-path/happywhale.ts"
+                                 '("scripts/read-path/snapshot.ts" "scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB (path->string happywhale-frozen))))
    (make-task 'catalogue 'transform
               ;; types.enums: the vocabularies its files are held to, as Postgres's enum
               ;; types held its columns (with its NOT NULLs, uniques, foreign keys, CHECKs)
@@ -713,6 +733,7 @@
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
+    [(happywhale.duckdb) happywhale-frozen]
     [(maplify-unnamed.tsv) (build-path SALISHSEA "data" "maplify-unnamed.tsv")]
     [(catalogue/individuals.tsv) (build-path SALISHSEA "data" "catalogue" "individuals.tsv")]
     [(catalogue/designations.tsv) (build-path SALISHSEA "data" "catalogue" "designations.tsv")]
