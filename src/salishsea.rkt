@@ -572,7 +572,9 @@
    ;; The catalogue from its checked-in files (salish-9uu.2.3), with what Postgres derived
    ;; computed here: the folded codes, and each individual's vitals from the register.
    (make-task 'catalogue 'transform
-              #:inputs (append catalogue-files '(register.vitals register.current_status))
+              ;; types.enums: the vocabularies its files are held to, as Postgres's enum
+              ;; types held its columns (with its NOT NULLs, uniques, foreign keys, CHECKs)
+              #:inputs (append catalogue-files '(register.vitals register.current_status types.enums))
               #:outputs catalogue-file-relations
               #:invoke (node-script/code "scripts/read-path/catalogue.ts"
                                  '("scripts/read-path/reference.ts" "src/fold.ts"
