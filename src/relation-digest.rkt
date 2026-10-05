@@ -14,7 +14,11 @@
 ;; It runs between tasks, when no loader/dbt holds the db's write lock.
 ;;
 ;; Shape (see st-d5d design):
-;;   * per row: md5_number_lower(to_json(row)) — a 64-bit hash of the row's JSON
+;;   * per row: hash(to_json(row)) — DuckDB's 64-bit hash of the row's JSON (ROW-HASH
+;;     below; md5_number_lower until st-0gc, ~2.5x slower on salishsea's largest
+;;     relation). DuckDB does not promise hash() is stable across its versions, so an
+;;     upgrade may move every digest once: every task reruns one build, the safe
+;;     direction — a changed hash function can never make two different rows agree.
 ;;   * combined by sum(), which is order-INDEPENDENT (a+b = b+a): the digest is
 ;;     the same no matter what order DuckDB's (possibly parallel) scan returns
 ;;     rows in. sum treats the table as a MULTISET, so duplicate rows each count
@@ -36,8 +40,20 @@
          "duckdb.rkt"
          "written.rkt")
 
+;; A column name, quoted. Names are already gated to plain identifiers, but a plain
+;; identifier can still be a reserved word: the register's classification has columns
+;; named `order' and `class', and unquoted they made the batched query a syntax error —
+;; so every build fell back to ~four DuckDB launches per relation (the batch's whole
+;; point, st-ml9.6), and those two columns went unobserved.
+(define (quote-ident name) (string-append "\"" name "\""))
+
+;; The one per-row (and per-value) hash every digest here sums: the row digest, the
+;; per-column digests and the batched observation must agree byte for byte.
+(define ROW-HASH "hash")
+
 (provide relation-digest relation-columns relation-row-count
          make-relation-observer
+         observe-tables ; for its tests: the observer falls back silently when it fails
          (struct-out sqlite-db))
 
 ;; A relation's database: a DuckDB file (a path, as always), or a SQLite file (sqlite-db),
@@ -75,7 +91,7 @@
 (define (table-digest-subquery qualified)
   (string-append
    "(SELECT count(*)::VARCHAR || ':' || "
-   "coalesce(sum(md5_number_lower(to_json(x)::VARCHAR))::VARCHAR, '0') "
+   "coalesce(sum(" ROW-HASH "(to_json(x)::VARCHAR))::VARCHAR, '0') "
    "FROM (SELECT COLUMNS(lambda c: NOT starts_with(c, '_dlt_')) FROM "
    qualified ") x)"))
 
@@ -198,7 +214,7 @@
 
 ;; columns-query : string (listof string) -> string
 ;; One "<table>.<col>=<digest>:<count>" row per column. Per column: the
-;; order-independent sum of md5 row hashes (coalesced to '0' for an all-null
+;; order-independent sum of ROW-HASH row hashes (coalesced to '0' for an all-null
 ;; column) and count() (non-null count). Column names are pre-gated identifiers.
 (define (columns-query qualified cols)
   (string-append
@@ -207,8 +223,8 @@
     (for/list ([col (in-list cols)])
       (string-append
        "  SELECT '" qualified "." col "' AS c, "
-       "coalesce(sum(md5_number_lower(to_json(" col ")::VARCHAR))::VARCHAR, '0') AS d, "
-       "count(" col ")::VARCHAR AS n FROM " qualified))
+       "coalesce(sum(" ROW-HASH "(to_json(" (quote-ident col) ")::VARCHAR))::VARCHAR, '0') AS d, "
+       "count(" (quote-ident col) ")::VARCHAR AS n FROM " qualified))
     "\n  UNION ALL\n")
    "\n) ORDER BY c;"))
 
@@ -278,8 +294,8 @@
         (for/list ([col (in-list (cdr tc))])
           (string-append
            "SELECT 'C|" t "." col "|' || "
-           "coalesce(sum(md5_number_lower(to_json(" col ")::VARCHAR))::VARCHAR, '0') || ':' || "
-           "count(" col ")::VARCHAR FROM " t)))))
+           "coalesce(sum(" ROW-HASH "(to_json(" (quote-ident col) ")::VARCHAR))::VARCHAR, '0') || ':' || "
+           "count(" (quote-ident col) ")::VARCHAR FROM " t)))))
     "\nUNION ALL\n")
    ";"))
 

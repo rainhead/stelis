@@ -202,7 +202,10 @@ coherent = the skip signal), plus per-column digests + non-null counts and a
 per-table row `count(*)` as the attribute-level observation (`relation-columns`,
 `relation-row-count`, st-7vz/st-0vz); `make-relation-observer` (st-ml9.6) answers
 both for every relation of one database in two DuckDB launches instead of ~four per
-relation, byte-identical, holding each answer until a task writes a relation that
+relation, byte-identical (it falls back to per-relation launches SILENTLY when the
+batch fails — an unquoted reserved-word column did that on every salishsea build from
+2026-10-04 to 10-05, so column names are always quoted now; rows hash with DuckDB's
+`hash()` since st-0gc), holding each answer until a task writes a relation that
 shares a table with it — salishsea's resolvers use it (beeatlas's don't yet).
 A relation may live in a SQLite file (`sqlite-db`, st-ml9): the file is
 ATTACHed read-only into a transient DuckDB and digested the same row-coherent

@@ -200,6 +200,17 @@
                 (sq-digest 'bouts) (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")))
    (test-equal? "and relation-columns' columns"
                 (sq-columns 'bouts) (relation-columns (sqlite-db sq "orcasound") '("orcasound.bouts")))
+   ;; A column named with a reserved word (the register's classification has `order'
+   ;; and `class'): unquoted, the batch was a syntax error and every build fell back to
+   ;; per-relation launches, answering the same — so only the batch itself shows it.
+   (ddl! db (string-append
+             "CREATE TABLE s.kw (\"order\" VARCHAR, \"class\" VARCHAR, k INTEGER);"
+             "INSERT INTO s.kw VALUES ('Cetacea', 'Mammalia', 1);"))
+   (test-true "the batch answers for a table whose columns are reserved words"
+              (hash? (observe-tables db '("s.kw" "s.r"))))
+   (test-equal? "and per relation, its columns are observed"
+                (map car (relation-columns db '("s.kw")))
+                '("s.kw.*" "s.kw.class" "s.kw.k" "s.kw.order"))
    (define-values (none-digest _nc)
      (make-relation-observer '(r) (lambda (_) #f) (lambda (_) '("s.r"))))
    (test-false "no database yet: no answer" (none-digest 'r))
