@@ -294,8 +294,8 @@ corruption is detected rather than decoded; freshness never reads its sequence
 was written — the file's one clock, housekeeping only — and `history-prune!` drops
 the aged-out PREFIX, then deletes the blocks no remaining line names. It prunes in
 BATCHES (once the oldest build is a thirtieth of the retention past it, so about
-daily), because a prune rewrites and re-reads the whole log; deciding whether to
-reads the oldest dated line alone. Nothing a build does every time reads the whole
+daily), because a prune rewrites and re-reads the whole log; the check for whether
+one is due reads only the oldest dated line. Nothing a build does every time reads the whole
 log any more — the project check reads its oldest and newest builds only — since
 Racket holds a string at four bytes a character and salishsea's log at retention is
 ~200 MB on a 1 GB machine. salishsea also skips the build-log render after each
