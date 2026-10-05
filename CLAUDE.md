@@ -492,7 +492,11 @@ cannot be regenerated. `dwca` writes the Darwin Core archive from twins of the
 collections, Maplify's collection rules, the enum orders — are not read from Postgres:
 they are checked-in files under salishsea's `data/reference/`, producerless
 `'authoritative` inputs that a `reference` task loads into the snapshot file under the
-same names (salishsea decision 064, the first move of its step 4). A transform writes one file per Pacific day. The snapshot reruns
+same names (salishsea decision 064, the first move of its step 4). The register
+too: an `ingest-register` boundary fetches its newest release each build (one
+redirect probe; a download only when the tag moved), writes `register.*` into the
+snapshot file, and refuses an edition that would un-name a Maplify pair the held
+edition names — the build keeps what it holds and the run log says why. A transform writes one file per Pacific day. The snapshot reruns
 every build; an unchanged database digests the same, and early cutoff skips
 the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),

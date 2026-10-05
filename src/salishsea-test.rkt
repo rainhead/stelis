@@ -18,11 +18,12 @@
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
 ;; Orcasound and the snapshot of what Postgres still holds.
 (define-values (ordered pruned) (plan salishsea-graph 'days))
-(check-equal? ordered '(ingest-maplify ingest-orcasound reference snapshot ingest-inaturalist
+(check-equal? ordered '(ingest-maplify ingest-orcasound reference snapshot ingest-register ingest-inaturalist
                         maplify-names derive-occurrences occurrence-days)
-              (string-append "the day files need the three sources' ingests, the reference files, the snapshot, the name "
-                             "guard and the derivation; iNaturalist's ingest follows the snapshot, whose register names "
-                             "the taxa it fetches"))
+              (string-append "the day files need the three sources' ingests, the reference files, the snapshot, the "
+                             "register, the name guard and the derivation; the register follows Maplify's ingest, whose "
+                             "pairs it must not un-name, and iNaturalist's follows the register, which names the taxa "
+                             "it fetches"))
 (check-equal? (set-count pruned) 11
               (string-append "the calendar, the id index, the candidates and links, the pages, the profile "
                              "index, the manifest and the Darwin Core archive are off the path to days"))
@@ -71,8 +72,17 @@
 (check-not-false (memq 'maplify-names-hold (inputs-of 'derive-occurrences))
                  "the derivation waits on the guard")
 (define-values (guard-plan _gp) (plan salishsea-graph 'maplify-names-hold))
-(check-equal? guard-plan '(ingest-maplify snapshot maplify-names)
-              "the guard reads Postgres's stored answer and the register, for the pairs the mirror holds")
+(check-equal? guard-plan '(ingest-maplify ingest-register maplify-names)
+              "the guard reads the register the build fetched, for the pairs the mirror holds")
+
+;; The register is the build's own fetch (salishsea decision 064), not Postgres's copy: the
+;; ingest-register boundary produces every register relation, and the snapshot none.
+(for ([r (in-list '(register.entities register.names register.mappings register.ancestor
+                    register.deprecations register.classification register.edition))])
+  (check-eq? (producer-of salishsea-graph r) 'ingest-register (format "~a comes from the release" r)))
+(check-equal? (inputs-of 'ingest-register) '(maplify_mirror.sightings maplify-unnamed.tsv)
+              "it judges a new edition by the Maplify pairs and the curator's allow-list")
+(check-eq? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-register)) 'boundary)
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'maplify-names)) 'gate)
 ;; its baseline is forward-only state the gate itself writes (salish-xv35.9.2): declared,
 ;; with the gate as its producer, so the graph knows the file exists and whose it is

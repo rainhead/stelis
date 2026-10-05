@@ -12,11 +12,13 @@
 ;;   ingest-inaturalist ─▶ inaturalist_mirror.*┤    fetch, into a SQLite mirror
 ;;   ingest-orcasound ───▶ orcasound.*  ───────┤    holding only what it said)
 ;;                                             │
+;;   ingest-register ─▶ register.* ───────────┤   (its newest release, refused if it
+;;                                             │    un-names a Maplify pair; decision 064)
 ;;   reference ─▶ the reference tables ────────┤   (checked-in files under data/
 ;;                                             │    reference/, decision 064)
 ;;   snapshot ──▶ what Postgres still holds ───┤   (native sightings, Happywhale,
-;;   (boundary)   (the register, the catalogue,│    the register, the catalogue;
-;;       │         native sightings)           │    nothing of the three sources)
+;;   (boundary)   (the catalogue,              │    the catalogue; nothing of the
+;;       │         native sightings)           │    three sources or the register)
 ;;       │              │                      │
 ;;       │              ▼                      ▼
 ;;       │        maplify-names ──▶ derive-occurrences ──▶ build.occurrences
@@ -176,9 +178,16 @@
   '("happywhale.encounters" "happywhale.users" "happywhale.individuals"
     "happywhale.species" "happywhale.media"
     "public.observations" "public.observation_photos" "public.contributors"
-    "public.identifications"
-    "register.entities" "register.names" "register.mappings"
+    "public.identifications"))
+
+;; The register (salishsea decision 064, salish-9uu.2.2): fetched by the build from its
+;; newest release, as the three sources are, and written into the snapshot database under
+;; the names Postgres's copy had, so the derivation reads it unchanged. `register.edition'
+;; says which release; nothing reads it but a person asking.
+(define register-tables
+  '("register.entities" "register.names" "register.mappings"
     "register.ancestor" "register.deprecations" "register.classification"))
+(define register-relations (map string->symbol register-tables))
 
 ;; The reference tables (salishsea decision 064, salish-9uu.2.1): providers,
 ;; organizations, collections, Maplify's collection rules and the enums' declared
@@ -196,8 +205,8 @@
 
 (define snapshot-input-relations (map string->symbol snapshot-input-tables))
 ;; Everything the derivations read besides the mirrors: what the snapshot copies from
-;; Postgres and what the reference task loads from the files.
-(define derivation-input-tables (append snapshot-input-tables reference-tables))
+;; Postgres, what the reference task loads from the files, and the register.
+(define derivation-input-tables (append snapshot-input-tables reference-tables register-tables))
 (define derivation-input-relations (map string->symbol derivation-input-tables))
 
 ;; The upstream sources as the build's own mirrors hold them (salish-xv35.9), which the
@@ -362,6 +371,8 @@
      (make-artifact 'reference/collections.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/maplify-collection-rules.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/enums.tsv 'file #:provenance 'authoritative)
+     ;; Which register release the build holds (salish-9uu.2.2).
+     (make-artifact 'register.edition 'db-relation)
      ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6).
      (make-artifact 'orcasound.bouts 'db-relation)
      (make-artifact 'orcasound.bout_entities 'db-relation)
@@ -456,6 +467,23 @@
    ;; good files stand. Only pairs the mirror still holds count: a sighting Maplify no
    ;; longer returns isn't on the map to lose. The register-refresh workflow asks the
    ;; same question of an edition before loading it, so this is the backstop.
+   ;; The register from its newest release (decision 064, salish-9uu.2.2): a probe of
+   ;; which tag is newest every run, a fetch only when it moved. An edition that would
+   ;; un-name a Maplify pair the held edition names is refused before it is adopted — the
+   ;; Maplify mirror's pairs and the curator's allow-list are the inputs that question
+   ;; reads — and the build goes on with the edition it holds, the run log and heartbeat
+   ;; saying why. The name guard below stays as the backstop.
+   (make-task 'ingest-register 'boundary
+              #:inputs '(maplify_mirror.sightings maplify-unnamed.tsv)
+              #:outputs (cons 'register.edition register-relations)
+              #:invoke (node-script/code "scripts/read-path/ingest-register.ts"
+                                 '("scripts/ingest/maplify.ts" "scripts/register/check-unnaming.ts"
+                                   "scripts/register/edition.ts" "scripts/register/name-index.ts"
+                                   "scripts/register/unnamed.ts" "scripts/read-path/check-maplify-names.ts"
+                                   "scripts/read-path/ingest-runs.ts" "scripts/ingest/retry.ts"
+                                   "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
+                                 (list SNAPSHOT-DB (path->string maplify-mirror)
+                                       "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
    (make-task 'maplify-names 'gate
               #:inputs '(maplify_mirror.sightings register.entities register.names
                          register.ancestor register.deprecations maplify-unnamed.tsv)
@@ -646,7 +674,7 @@
             (memq artifact orcasound-relations)
             (memq artifact maplify-relations)
             (memq artifact inaturalist-relations)
-            (memq artifact '(build.occurrences build.occurrence_identifier_candidates))
+            (memq artifact '(build.occurrences build.occurrence_identifier_candidates register.edition))
             (memq artifact profile-link-relations))
         (list (symbol->string artifact))]
        [else
