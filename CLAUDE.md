@@ -69,7 +69,12 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   `--run <task>` (execute one task in its hermetic runtime) ·
   `--build --all --export-dir <dir>` (build EVERY target into `<dir>` — the run.py
   replacement: covers all of run.py's steps, but content-addressed-skips current
-  work and is partial-success rather than fail-fast).
+  work and is partial-success rather than fail-fast). Every task's status is
+  followed by a `⏱` line — how long the engine spent DECIDING (addressing its
+  inputs), RUNNING it, and OBSERVING its outputs — and the build ends with the
+  bookkeeping after the last task and the CPU it took, engine and tasks apart:
+  on a shared CPU that, not wall time, is what a build costs. Status lines are
+  flushed as written, so a log's timestamps are the engine's, not the next task's.
   `--verify-edges` (POST-BUILD: re-run each covered task in an EXPORT_DIR seeded
   with ONLY its declared inputs — are they sufficient, and are the declared outputs
   complete? The only check that asks whether the graph is TRUE rather than merely

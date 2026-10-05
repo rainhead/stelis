@@ -859,17 +859,26 @@
                #:context benv
                #:state-dir stelis-state
                #:rebuild-keys-of rebuild-keys-of))
+   ;; build-timing: the bookkeeping after the last task, which no task's line covers.
+   (define after-ms (make-hasheq))
+   (define (after! phase thunk)
+     (define t0 (current-inexact-monotonic-milliseconds))
+     (begin0 (thunk)
+             (hash-set! after-ms phase (- (current-inexact-monotonic-milliseconds) t0))))
    ;; st-sds: append this build to the history (retiring last-build.rktd). The
    ;; source-epoch is sequence metadata for browsing only — freshness never reads
    ;; it. The graph snapshot is written once per distinct topology.
-   (history-append! stelis-state (or name 'all) G
-                    (source-date-epoch) records
-                    #:project (project-name P))
+   (after! 'history
+           (lambda ()
+             (history-append! stelis-state (or name 'all) G
+                              (source-date-epoch) records
+                              #:project (project-name P))))
    ;; st-ml9.7: a project that keeps only recent history drops what has aged out,
    ;; and the blocks only those builds named, before the log is rendered from it.
    (let ([keep (project-history-retention P)])
      (when keep
-       (define-values (builds blocks) (history-prune! stelis-state keep))
+       (define-values (builds blocks)
+         (after! 'pruning (lambda () (history-prune! stelis-state keep))))
        (when (positive? builds)
          (printf "history: ~a build~a older than ~a days expired, ~a block~a removed\n"
                  builds (if (= 1 builds) "" "s") (quotient keep 86400)
@@ -877,7 +886,18 @@
    ;; st-9rf: refresh the operator build log AFTER the append, so the page
    ;; describes the build that just finished — records and all, failures
    ;; included (partial success is exactly what an operator page is for).
-   (write-build-log!)
+   (after! 'build-log write-build-log!)
+   (printf "⏱ after the tasks: ~a\n"
+           (string-join
+            (for/list ([phase (in-list '(history pruning build-log))]
+                       #:when (hash-ref after-ms phase #f))
+              (format "~a ~a s" phase (real->decimal-string (/ (hash-ref after-ms phase) 1000.0) 1)))
+            " · "))
+   ;; On a shared CPU what a build costs is CPU time, not wall time: the engine's
+   ;; own, and every task process's (Racket reports reaped subprocesses' separately).
+   (printf "⏱ CPU: engine ~a s · tasks ~a s\n"
+           (real->decimal-string (/ (current-process-milliseconds) 1000.0) 1)
+           (real->decimal-string (/ (current-process-milliseconds 'subprocesses) 1000.0) 1))
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))

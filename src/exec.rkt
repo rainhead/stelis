@@ -334,6 +334,17 @@
                                 (and (string? since) since))]
                 [else #f])))))
 
+;; timing->string : (hash symbol -> milliseconds) -> string
+;; One task's phases, in the order they happen, each to a tenth of a second:
+;; "deciding 0.4 s · running 2.1 s · observing 1.3 s". A phase that didn't happen
+;; (a cached task neither runs nor is observed) is left out.
+(define (timing->string timing)
+  (string-join
+   (for/list ([phase (in-list '(deciding running observing))]
+              #:when (hash-ref timing phase #f))
+     (format "~a ~a s" phase (real->decimal-string (/ (hash-ref timing phase) 1000.0) 1)))
+   " · "))
+
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
 ;;            #:env (listof (cons string string)) #:context (or/c build-env? #f)
 ;;            -> (values (hash symbol->symbol) (listof trace-record?))
@@ -367,10 +378,21 @@
   (for ([name (in-list ordered)])
     (define t (hash-ref (graph-tasks g) name))
     (define blockers (blockers-of g name status))
+    ;; Where this task's wall time went (build-timing): deciding whether it runs
+    ;; (addressing its inputs), running it, and observing what it produced. Printed
+    ;; with each task, so the build's own costs are visible beside its tasks'.
+    (define timing (make-hasheq))
+    (define (timed! phase thunk)
+      (define t0 (current-inexact-monotonic-milliseconds))
+      (begin0 (thunk)
+              (hash-update! timing phase
+                            (lambda (ms) (+ ms (- (current-inexact-monotonic-milliseconds) t0)))
+                            0.0)))
     ;; the pre-run decision (recorded even for blocked tasks) and, when the
     ;; task is content-addressable, the snapshot to store after a clean run
     (define-values (dec snap)
-      (if env (decision+snapshot g name env) (values #f #f)))
+      (timed! 'deciding
+              (lambda () (if env (decision+snapshot g name env) (values #f #f)))))
     (define delta #f)
     ;; the observation (st-sds): each derived output's content hash after a run,
     ;; recorded on the trace so history projects an artifact→hash timeline. '()
@@ -397,7 +419,8 @@
     ;; the cache receipt, then compute and report the early-cutoff delta (st-8ig).
     ;; Going through here is what earns a new node kind cutoff, history, and
     ;; observations for free — a rule-check, having no file outputs, does not.
-    (define (observe-outputs!)
+    (define (observe-outputs!) (timed! 'observing observe-outputs/untimed!))
+    (define (observe-outputs/untimed!)
       (define-values (out-hashes out-keys) (output-snapshot+keys g name env))
       (set! output-hashes out-hashes)
       (set! output-key-hashes out-keys)
@@ -433,7 +456,8 @@
          (define rc (task-invoke t))
          (printf "\n▶ ~a  [rule: ~a]\n" name (rule-check-label rc))
          (define-values (ok? note)
-           ((rule-check-run rc) (check-context g name env state-dir)))
+           (timed! 'running
+                   (lambda () ((rule-check-run rc) (check-context g name env state-dir)))))
          (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
          (when (and ok? env)
            (cache-store! (build-env-cache-dir env) name snap
@@ -448,10 +472,12 @@
          (define d (task-invoke t))
          (printf "\n▶ ~a  [derivation: ~a]\n" name (derivation-label d))
          (define-values (ok? note)
-           (dynamic-wind
-            void
-            (lambda () ((derivation-run d) (check-context g name env state-dir)))
-            (lambda () (note-written! (task-outputs t)))))
+           (timed! 'running
+                   (lambda ()
+                     (dynamic-wind
+                      void
+                      (lambda () ((derivation-run d) (check-context g name env state-dir)))
+                      (lambda () (note-written! (task-outputs t)))))))
          (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
          (when (and ok? env) (observe-outputs!))
          (if ok? 'ok 'failed)]
@@ -481,8 +507,10 @@
            (if receipt
                (cons (cons "STELIS_BOUNDARY_RECEIPT" (path->string receipt)) extra-env)
                extra-env))
-         (define code (run-task g name runtimes #:env run-env #:label name
-                                #:rebuild-keys (and rk (car rk))))
+         (define code (timed! 'running
+                              (lambda ()
+                                (run-task g name runtimes #:env run-env #:label name
+                                          #:rebuild-keys (and rk (car rk))))))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
          ;; the loader's source report (st-8bj), read whether or not there are
@@ -512,6 +540,11 @@
                (prune-keys! d (cdr rk))))
            (observe-outputs!))
          (if ok? 'ok 'failed)]))
+    (printf "  ⏱ ~a\n" (timing->string timing))
+    ;; Stelis's own lines are block-buffered when the build's output is not a
+    ;; terminal (a log), so a line would otherwise surface only when the next task
+    ;; launches, stamped with that later time.
+    (flush-output)
     (hash-set! status name outcome)
     (set! records
           (cons (trace-record name dec snap outcome blockers delta
