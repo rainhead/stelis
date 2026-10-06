@@ -25,6 +25,11 @@
 ;;                      : the build-env resolver slots (cache.rkt), or #f when the
 ;;                        project has no such inputs
 ;;   partial-tasks      : (listof symbol) — tasks that honour STELIS_REBUILD_KEYS
+;;   incremental-tasks  : (listof symbol) — tasks that honour STELIS_CHANGED_INPUTS
+;;                        (ADR 0015): told which of their inputs changed since their
+;;                        last recorded run, when their outputs are as that run left
+;;                        them, so they can recompute only the partition that reads
+;;                        those inputs. A hint: a task that ignores it recomputes whole.
 ;;   edge-verify-tasks  : (listof symbol) — the tasks --verify-edges covers
 ;;   source-date-epoch  : (-> string) — the deterministic build clock (ADR 0004)
 ;;   checkout           : path — the project's repository, which its recipes' code
@@ -52,7 +57,7 @@
 
 (struct project (name graph runtimes path
                  resolve-relation resolve-relation-columns resolve-store-keys
-                 partial-tasks edge-verify-tasks
+                 partial-tasks incremental-tasks edge-verify-tasks
                  source-date-epoch
                  checkout checkout-env
                  default-state-dir
@@ -67,6 +72,7 @@
                       #:resolve-relation-columns [resolve-relation-columns #f]
                       #:resolve-store-keys [resolve-store-keys #f]
                       #:partial-tasks [partial-tasks '()]
+                      #:incremental-tasks [incremental-tasks '()]
                       #:edge-verify-tasks [edge-verify-tasks '()]
                       #:source-date-epoch source-date-epoch
                       #:checkout checkout
@@ -76,7 +82,7 @@
                       #:build-log-after-build? [build-log-after-build? #t])
   (project name graph runtimes path
            resolve-relation resolve-relation-columns resolve-store-keys
-           partial-tasks edge-verify-tasks
+           partial-tasks incremental-tasks edge-verify-tasks
            source-date-epoch
            checkout checkout-env
            default-state-dir

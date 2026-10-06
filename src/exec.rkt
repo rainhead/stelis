@@ -177,8 +177,16 @@
 ;; canonical_name contains spaces). An exporter that honors the var emits only
 ;; those keys into the existing EXPORT_DIR (merge in place); one that ignores it
 ;; rebuilds fully — so this is an opt-in HINT, never a correctness dependency.
+;; #:changed-inputs, when a list of artifact names, tells the task WHICH of its
+;; declared inputs changed since its last recorded run (ADR 0015), as
+;; STELIS_CHANGED_INPUTS (newline-separated). The contract it states: every other
+;; input still has the content address that run read it at, and the outputs are as
+;; that run left them (run-plan checks both before setting it), so the task may recompute only
+;; the partition that reads a named input and replace that partition in place. The
+;; same hint discipline: a task that ignores the variable recomputes everything.
 (define (run-task g name runtimes #:env [extra-env '()] #:label [label #f]
-                  #:rebuild-keys [rebuild-keys #f])
+                  #:rebuild-keys [rebuild-keys #f]
+                  #:changed-inputs [changed-inputs #f])
   (define rec (task-invoke (hash-ref (graph-tasks g) name)))
   (unless rec (error 'run-task "task ~a has no recipe" name))
   (define argv (recipe->argv rec runtimes))
@@ -187,9 +195,16 @@
   ;; a list (even empty — a pure-retraction rebuild) requests partial mode; #f is a
   ;; full rebuild (the var stays unset).
   (define env*
-    (if (list? rebuild-keys)
-        (cons (cons "STELIS_REBUILD_KEYS" (string-join rebuild-keys "\n")) extra-env)
-        extra-env))
+    (let* ([e extra-env]
+           [e (if (list? rebuild-keys)
+                  (cons (cons "STELIS_REBUILD_KEYS" (string-join rebuild-keys "\n")) e)
+                  e)]
+           [e (if (list? changed-inputs)
+                  (cons (cons "STELIS_CHANGED_INPUTS"
+                              (string-join (map symbol->string changed-inputs) "\n"))
+                        e)
+                  e)])
+      e))
   (flush-output) ; our buffered banner must land before the child's direct fd writes
   ;; Whatever the outcome, the task may have written its outputs, so a cached
   ;; observation of any of them is stale from here (written.rkt, st-ml9.6).
@@ -376,11 +391,17 @@
 ;; 'dir output(s). Partial mode additionally requires prior-complete-build?
 ;; (st-243): the on-disk 'dir(s) must MATCH the last clean run's receipt, not
 ;; merely exist — anything else falls back to a full rebuild, and says so.
+;; #:incremental? says which tasks are told their changed inputs (ADR 0015): one
+;; that is, whose decision was 'input-changed and whose recorded outputs are intact
+;; (recorded-outputs-intact?), runs with STELIS_CHANGED_INPUTS naming the inputs
+;; the decision named; any other reason to run — code, recipe, a missing or stale
+;; output, no receipt — is a full recompute, and the task is told nothing.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
                   #:context [env #f]
                   #:state-dir [state-dir #f]
-                  #:rebuild-keys-of [rebuild-keys-of (lambda (_) #f)])
+                  #:rebuild-keys-of [rebuild-keys-of (lambda (_) #f)]
+                  #:incremental? [incremental? (lambda (_) #f)])
   (define status (make-hash))
   (define records '())
   (for ([name (in-list ordered)])
@@ -503,6 +524,19 @@
                     (if (pair? (cdr rk)) (format ", pruning ~a" (length (cdr rk))) ""))]
            [rk-wanted
             (printf "  ⇒ full rebuild: prior 'dir output missing or ≠ its last receipt\n")])
+         ;; changed inputs (ADR 0015): named only when the run is FOR changed inputs
+         ;; and the outputs are the last clean run's; the decision's details are the
+         ;; sorted names of the inputs whose address moved.
+         (define ci-wanted (and env dec (incremental? name)
+                                (eq? (decision-reason dec) 'input-changed)))
+         (define changed-inputs
+           (and ci-wanted (recorded-outputs-intact? g name env) (decision-details dec)))
+         (cond
+           [changed-inputs
+            (printf "  ⇒ incremental: ~a input(s) changed: ~a\n"
+                    (length changed-inputs) (string-join (map symbol->string changed-inputs) ", "))]
+           [ci-wanted
+            (printf "  ⇒ full recompute: an output is missing or ≠ its last receipt\n")])
          ;; a probing boundary (st-8bj) may report its source unchanged instead of
          ;; re-ingesting. Hand it a fresh receipt path via env and clear any stale
          ;; one first, so we never misread a prior run's report as this run's.
@@ -518,6 +552,7 @@
          (define code (timed! 'running
                               (lambda ()
                                 (run-task g name runtimes #:env run-env #:label name
+                                          #:changed-inputs changed-inputs
                                           #:rebuild-keys (and rk (car rk))))))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)

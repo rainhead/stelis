@@ -841,6 +841,10 @@
                 #:path salishsea-path
                 #:resolve-relation resolve-relation
                 #:resolve-relation-columns resolve-relation-columns
+                ;; Told which inputs changed (ADR 0015): each derivation is one source
+                ;; arm per input group, written one source at a time, so a save — the
+                ;; store's four tables — recomputes the native arm alone (salish-9uu.8).
+                #:incremental-tasks '(derive-occurrences derive-identifier-candidates derive-profile-links)
                 #:source-date-epoch salishsea-source-date-epoch
                 #:checkout (string->path SALISHSEA)
                 #:checkout-env "SALISHSEA_DIR"

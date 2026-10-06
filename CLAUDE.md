@@ -185,6 +185,15 @@ task is handed a `STELIS_BOUNDARY_RECEIPT` path (st-8bj): a probing loader that
 short-circuits an unchanged source writes `{unchanged, records, since}` there, and
 run-plan reads it back as a `source-report` on the trace, so `--explain`/`--why`
 name WHY the boundary didn't re-ingest (the loader-side probe is beeatlas-29j).
+A task the project lists as incremental (`#:incremental-tasks`, ADR 0015) is handed
+`STELIS_CHANGED_INPUTS` — the inputs whose address moved, newline-separated — when
+its decision was `'input-changed` AND its recorded outputs are intact
+(`recorded-outputs-intact?`: present, and digesting to the last clean run's
+receipt), so it may recompute only the partition that reads them and replace it in
+place; any other reason to run, or a missing or stale output, is a full recompute
+and the task is told nothing. A hint like `STELIS_REBUILD_KEYS`: a task that ignores
+it recomputes whole and is as correct. salishsea's three derivations take it (a save
+is the store's four tables, so the native arm alone).
 A loader that could NOT reach its source and kept its last good copy writes
 `{unreachable: true, error}` instead (st-ml9.9) — the third arm, so an outage
 reads as "source unreachable" in the trace and the operator log rather than as

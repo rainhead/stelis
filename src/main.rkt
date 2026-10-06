@@ -920,7 +920,8 @@
                #:env (task-env out)
                #:context benv
                #:state-dir stelis-state
-               #:rebuild-keys-of rebuild-keys-of))
+               #:rebuild-keys-of rebuild-keys-of
+               #:incremental? (lambda (name) (and (memq name (project-incremental-tasks P)) #t))))
    ;; build-timing: the bookkeeping after the last task, which no task's line covers.
    (define after-ms (make-hasheq))
    (define (after! phase thunk)

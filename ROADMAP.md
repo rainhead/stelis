@@ -105,6 +105,10 @@ entries are unchanged; what changed is that they need a pull to start.
   hurts; retraction-clean incremental maintenance. The H1 observation history
   (content + basis per output, plus per-key/per-column granularity) is the
   substrate this folds over — the natural entry point into this horizon (st-066).
+  **Pulled 2026-10-06** by salishsea's save-triggered build, which re-derived
+  ~64,000 occurrences to publish one (ADR 0015): step 1, the engine tells a task
+  which inputs changed and the task recomputes that partition (st-6d2.1); step 2, a
+  relation observed by a key column, so the day files rebuild per key (st-6d2.2); Z-sets themselves stay recorded until the ingests' deltas ask.
 - **Editorial data-quality flags** (moved from H1): rules that flag records for
   end **users** (dup collector-day, out-of-state, bee-vs-flower) and travel with
   the data into published outputs — they annotate, never block (ADR 0006). The

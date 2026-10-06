@@ -48,6 +48,7 @@
          decide
          stale-relation-outputs
          stale-disk-outputs
+         recorded-outputs-intact?
          decision+snapshot
          task-decision
          cache-hit?
@@ -743,6 +744,21 @@
                 #:when now
                 #:unless (equal? (car now) (hash-ref recorded out #f)))
        out)]))
+
+;; recorded-outputs-intact? : graph symbol build-env? -> boolean
+;; Are the task's recorded outputs all present and exactly what its last clean run
+;; left (ADR 0015)? The precondition for telling a task which inputs changed: a
+;; recompute of one partition REPLACES rows in, or files beside, the rest, so the
+;; rest must be the last run's whole answer — not a missing file (output-missing),
+;; not a table something rewrote underneath (output-stale), not a run that never
+;; recorded a receipt. The same three questions `decide' asks, answered together;
+;; `decide' asks them in precedence order and reports only the first.
+(define (recorded-outputs-intact? g name env)
+  (define entry (read-cache-entry (build-env-cache-dir env) name))
+  (and entry
+       (null? (missing (env-output-paths env (hash-ref (graph-tasks g) name))))
+       (null? (stale-relation-outputs g name env entry))
+       (null? (stale-disk-outputs g name env entry))))
 
 ;; names whose hash differs between the two maps, or that exist in only one.
 ;; Keys are artifact symbols by default; code maps pass string<? (path keys).
