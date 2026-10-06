@@ -29,8 +29,6 @@
          racket/string
          "model.rkt"
          "project.rkt"
-         (only-in "beeatlas.rkt" beeatlas-project)
-         (only-in "salishsea.rkt" salishsea-project)
          "cache.rkt"
          "exec.rkt"
          "explain.rkt"
@@ -125,15 +123,31 @@
 ;; --- the project (st-ml9.1) ------------------------------------------------------
 ;; Everything below is written against P rather than against beeatlas by name. The
 ;; registry is the one place that knows which projects exist.
-(define projects (hash 'beeatlas beeatlas-project
-                      'salishsea salishsea-project))
+;;
+;; ONLY THE SELECTED PROJECT IS LOADED (st-5jg). A project module is a graph plus
+;; everything that authors it — beeatlas's pulls the taxon-reasoning stack and the
+;; Python import scanner — and the engine on salishsea's 1 GB Fly machine carried all
+;; of beeatlas's for nothing: 147 MB resident before any task, against 100 MB with
+;; salishsea's module alone (measured 2026-10-06; Chez's boot images and racket/base
+;; are 80 of either). So each project is named here by a module path and required
+;; when chosen. The `compile-deps' submodule is never instantiated — it exists so
+;; that `raco make src/main.rkt`, which the Fly image runs, still compiles both
+;; project modules: `raco make` follows static requires only, and a module loaded
+;; by `dynamic-require' alone would be compiled in memory on every start instead
+;; (measured: slower AND larger than loading both).
+(module compile-deps racket/base (require "beeatlas.rkt" "salishsea.rkt"))
+(define-runtime-module-path-index beeatlas-module "beeatlas.rkt")
+(define-runtime-module-path-index salishsea-module "salishsea.rkt")
+(define projects (hash 'beeatlas (cons beeatlas-module 'beeatlas-project)
+                      'salishsea (cons salishsea-module 'salishsea-project)))
 (define P
-  (hash-ref projects (project-arg)
-            (lambda ()
-              (error 'stelis "--project ~a: no such project (known: ~a)"
-                     (project-arg)
-                     (string-join (sort (map symbol->string (hash-keys projects)) string<?)
-                                  ", ")))))
+  (let ([entry (hash-ref projects (project-arg)
+                         (lambda ()
+                           (error 'stelis "--project ~a: no such project (known: ~a)"
+                                  (project-arg)
+                                  (string-join (sort (map symbol->string (hash-keys projects)) string<?)
+                                               ", "))))])
+    (dynamic-require (car entry) (cdr entry))))
 (define G (project-graph P))
 (define RT (project-runtimes P))
 (define (artifact-path a dir) ((project-path P) a dir))

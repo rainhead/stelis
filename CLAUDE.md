@@ -95,7 +95,10 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   because withholding those would mean mutating real files; this asks by
   OBSERVATION, so nothing is withheld. Exits non-zero on an undeclared read).
 - **Projects:** every mode takes `--project <name>` (`beeatlas`, the default, or
-  `salishsea`), placed before the target. Each project has its own state dir, and
+  `salishsea`), placed before the target. Only the chosen project's module is
+  loaded (st-5jg: beeatlas's closure is ~40 MB of resident code salishsea never
+  uses); main.rkt's `compile-deps` submodule is what keeps `raco make src/main.rkt`
+  compiling both, so don't remove it as dead. Each project has its own state dir, and
   build records name their project: a state dir holding another project's builds
   is refused rather than read across (st-z1c). salishsea's state defaults into its
   own checkout; beeatlas's stays cwd-relative `.stelis` (st-7f4).
