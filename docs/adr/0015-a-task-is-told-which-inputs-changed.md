@@ -88,8 +88,12 @@ replace one partition beside a rest that is not the last run's answer.
 
 - `run-plan` gains `#:incremental?`; `run-task` gains `#:changed-inputs`;
   `cache.rkt` gains `recorded-outputs-intact?`; a project gains
-  `#:incremental-tasks`. salishsea names its three derivations. The build prints
-  `⇒ incremental: N input(s) changed: …` when the hint is given.
+  `#:incremental-tasks`. salishsea names its occurrences derivation. The identifier
+  candidates and the profile links read `build.occurrences` as one input, so the
+  hint cannot tell them which source moved; for them the fact has to arrive per
+  key, which is step 2's keyed observation (by the `source` column, the same
+  mechanism as by day). The build prints `⇒ incremental: N input(s) changed: …`
+  when the hint is given.
 - The trace record does not yet say whether a run was incremental; `--explain
   --last` shows the decision, which names the inputs, and the output delta. If a
   partition bug ever needs the fact recorded, it is one field, additive.

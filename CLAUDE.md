@@ -192,8 +192,10 @@ its decision was `'input-changed` AND its recorded outputs are intact
 receipt), so it may recompute only the partition that reads them and replace it in
 place; any other reason to run, or a missing or stale output, is a full recompute
 and the task is told nothing. A hint like `STELIS_REBUILD_KEYS`: a task that ignores
-it recomputes whole and is as correct. salishsea's three derivations take it (a save
-is the store's four tables, so the native arm alone).
+it recomputes whole and is as correct. salishsea's occurrences derivation takes it (a
+save is the store's tables, so the native arm alone); the candidates and profile
+links read `build.occurrences` as one input, so for them the fact has to arrive per
+key (st-6d2.2).
 A loader that could NOT reach its source and kept its last good copy writes
 `{unreachable: true, error}` instead (st-ml9.9) — the third arm, so an outage
 reads as "source unreachable" in the trace and the operator log rather than as

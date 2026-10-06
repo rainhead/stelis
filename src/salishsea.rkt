@@ -841,10 +841,14 @@
                 #:path salishsea-path
                 #:resolve-relation resolve-relation
                 #:resolve-relation-columns resolve-relation-columns
-                ;; Told which inputs changed (ADR 0015): each derivation is one source
-                ;; arm per input group, written one source at a time, so a save — the
-                ;; store's four tables — recomputes the native arm alone (salish-9uu.8).
-                #:incremental-tasks '(derive-occurrences derive-identifier-candidates derive-profile-links)
+                ;; Told which inputs changed (ADR 0015): the occurrences derivation is
+                ;; one source arm per input group, written one source at a time, so a
+                ;; save — the store's tables — recomputes the native arm alone
+                ;; (salish-9uu.8.1). The candidates and the profile links read
+                ;; build.occurrences as ONE input, so the hint cannot tell them which
+                ;; source moved; they wait for the relation to be observed by its source
+                ;; column (st-6d2.2), when STELIS_REBUILD_KEYS can name it.
+                #:incremental-tasks '(derive-occurrences)
                 #:source-date-epoch salishsea-source-date-epoch
                 #:checkout (string->path SALISHSEA)
                 #:checkout-env "SALISHSEA_DIR"
