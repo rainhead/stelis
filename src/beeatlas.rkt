@@ -475,9 +475,12 @@
 ;; CAP, and --verify-edges reports what it does not cover rather than presenting
 ;; itself as exhaustive — a check that quietly tests a subset reads as coverage it
 ;; does not have. Widen it by verifying a task, not by adding a name.
+;; topology-postprocess joined with st-8vm: it is the beeatlas-hyq task, which
+;; renamed its output over its own @export input, and the harness could only see
+;; that once it compared inputs before and after the run.
 (define beeatlas-edge-verify-tasks
   '(generate-sqlite species-export collectors-export places-export
-    species-maps places-maps feeds))
+    species-maps places-maps feeds topology-postprocess))
 
 ;; --- Taxon reasoning (st-ozp) -------------------------------------------------
 ;; The Horizon 2 substrate beachhead (ADR 0008): a `derivation' node — a

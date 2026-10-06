@@ -84,7 +84,9 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   flushed as written, so a log's timestamps are the engine's, not the next task's.
   `--verify-edges` (POST-BUILD: re-run each covered task in an EXPORT_DIR seeded
   with ONLY its declared inputs — are they sufficient, and are the declared outputs
-  complete? The only check that asks whether the graph is TRUE rather than merely
+  complete? And did it WRITE to any input it declares, seeded or fixed-path
+  (hashed before and after — read-only, so the ambient ones are in reach too;
+  st-8vm, the beeatlas-hyq rename-over-own-input)? The only check that asks whether the graph is TRUE rather than merely
   coherent, st-8an. Needs a reference build to seed from; exits non-zero on a bad
   edge OR an incomplete reference, and names the tasks it does not cover rather
   than presenting a curated subset as coverage) ·
@@ -466,7 +468,8 @@ to publish a conflicted result and cross-checks coverage against Bee-Gap ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules,
 plus the history projection (observed/ran/derived-from facts) ·
 [`edge-verify.rkt`](src/edge-verify.rkt) checks a task's declared edge against
-runtime reality (declared inputs sufficient? outputs complete?) ·
+runtime reality (declared inputs sufficient? outputs complete? inputs left
+unwritten?) ·
 [`read-trace.rkt`](src/read-trace.rkt) + [`src/probe/`](src/probe/) the same
 question asked by OBSERVATION rather than withholding (st-25h). The probe is a
 `sitecustomize.py` prepended to PYTHONPATH, so `site` loads it before any task

@@ -12,10 +12,13 @@
 ;; this file is the environment-coupled half, kept separate for that reason.
 
 (require rackunit
+         racket/list
+         racket/path
          "beeatlas.rkt"
+         "model.rkt"
          "edge-verify.rkt")
 
-;; the shipped terminals whose edges have been built+verified (st-h4m, st-4cm).
+;; the shipped terminals whose edges have been built+verified (st-h4m, st-4cm, st-8vm).
 ;; species-maps and feeds joined when st-4cm corrected their edges: species-maps
 ;; reads three @export parquets (not species.json); feeds reads the ecdysis_data
 ;; db-relation ambiently (no @export input, so nothing to seed).
@@ -28,11 +31,15 @@
 ;; reference = the scratch out-dir a prior --build populates with @export copies
 (define reference (build-path (find-system-path 'temp-dir) "stelis-out"))
 
-;; the EXPORT_DIR inputs the terminals need seeded (by basename); checklist.parquet
-;; joined for species-maps' per-species checklist counties.
+;; the EXPORT_DIR inputs the terminals need seeded (by basename) — read off the
+;; graph rather than listed, so widening TERMINALS cannot leave a seed behind and
+;; turn a skip into an UNVERIFIABLE failure (or the reverse).
 (define REQUIRED-SEEDS
-  '("occurrences.parquet" "occurrence_places.parquet" "species.parquet"
-    "checklist.parquet"))
+  (remove-duplicates
+   (for*/list ([name (in-list TERMINALS)]
+               [in (in-list (task-inputs (hash-ref (graph-tasks beeatlas-graph) name)))]
+               #:when (export-dir-artifact? beeatlas-path in))
+     (file-name-from-path (beeatlas-path in reference)))))
 
 (define (reference-usable?)
   (and (file-exists? beeatlas-db)          ; beeatlas checkout present

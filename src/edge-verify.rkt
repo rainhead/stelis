@@ -10,13 +10,24 @@
 ;;   run the task in an EXPORT_DIR seeded with ONLY its declared inputs, and check
 ;;     (a) it still succeeds        — the declared inputs are SUFFICIENT
 ;;     (b) it wrote exactly its declared outputs — the outputs are COMPLETE
+;;     (c) it wrote to none of its declared inputs — no input is secretly also
+;;         an output (st-8vm)
 ;;
 ;; Scope — the tractable "negative space." Only EXPORT_DIR reads/writes are
-;; tested. Inputs that resolve to FIXED paths (the dbt sandbox, the DuckDB
-;; relations, committed content/seeds) are AMBIENT — left in place, not withheld —
-;; because withholding them would mean mutating real files. That is exactly the
-;; axis the recurring bug lives on (the @export copies), so it is the axis worth
-;; checking; a missing SANDBOX input would not be caught here (a known limit).
+;; tested for (a) and (b). Inputs that resolve to FIXED paths (the dbt sandbox,
+;; committed content/seeds) are AMBIENT — left in place, not withheld — because
+;; withholding them would mean mutating real files. That is exactly the axis the
+;; recurring bug lives on (the @export copies), so it is the axis worth checking;
+;; a missing SANDBOX input would not be caught here (a known limit).
+;;
+;; (c) has no such limit, because it only READS: every declared input with a
+;; path — seeded or ambient — is hashed before the run and again after, and one
+;; whose bytes moved (or which vanished, or appeared) is MUTATED. That is the
+;; beeatlas-hyq shape: topology_postprocess.py renamed its simplified output over
+;; its own @export input, simplifying twice, and the appeared-minus-seeded listing
+;; that answers (b) subtracted the evidence away. A task rewriting a checked-in
+;; seed or a sandbox mart it reads shows up here too. DuckDB relations resolve to
+;; #f and stay out — the relation-grain question is not this harness's.
 ;;
 ;; This is a harness, not a unit test (it shells into the real runtimes against a
 ;; reference build), mirroring determinism.rkt. The PURE classification core
@@ -34,12 +45,15 @@
          racket/set
          racket/list
          racket/format
+         file/sha1
          "model.rkt"
-         "exec.rkt")
+         "exec.rkt"
+         "tree-digest.rkt")
 
 (provide (struct-out edge-verdict)
          export-dir-artifact?
          classify-outputs
+         classify-mutations
          verify-edge
          verify-edges)
 
@@ -49,14 +63,19 @@
 ;;   seeded      — the declared EXPORT_DIR inputs we placed (basenames)
 ;;   missing     — declared EXPORT_DIR outputs that did NOT appear (basenames)
 ;;   undeclared  — files that appeared but were NOT declared outputs (basenames)
-;; clean? holds iff exit-code is 0 and both missing and undeclared are empty.
-(struct edge-verdict (task ran? exit-code seeded missing undeclared) #:transparent)
+;;   mutated     — declared INPUTS the run wrote to (artifact names), seeded or
+;;                 ambient: a third category, not a kind of undeclared output,
+;;                 because the file was supposed to be there — just not changed
+;; clean? holds iff exit-code is 0 and missing, undeclared and mutated are empty.
+(struct edge-verdict (task ran? exit-code seeded missing undeclared mutated)
+  #:transparent)
 
 (define (edge-verdict-clean? v)
   (and (edge-verdict-ran? v)
        (zero? (edge-verdict-exit-code v))
        (null? (edge-verdict-missing v))
-       (null? (edge-verdict-undeclared v))))
+       (null? (edge-verdict-undeclared v))
+       (null? (edge-verdict-mutated v))))
 (provide edge-verdict-clean?)
 
 ;; export-dir-artifact? : (symbol export-dir -> path?/#f) symbol -> boolean
@@ -77,6 +96,26 @@
 (define (classify-outputs declared appeared)
   (values (sort (set->list (set-subtract declared appeared)) string<?)
           (sort (set->list (set-subtract appeared declared)) string<?)))
+
+;; classify-mutations : (hash symbol -> digest/#f) (hash symbol -> digest/#f)
+;;                      -> (listof string)
+;; The PURE core of (c): the input artifacts whose digest differs between the
+;; snapshot taken before the run and the one taken after, sorted by name. A
+;; before/after comparison rather than a set difference, which is why it is not
+;; an arm of classify-outputs. #f means "no file there", so an input the task
+;; deleted, or one absent beforehand that it created, is a mutation like any
+;; other write.
+(define (classify-mutations before after)
+  (sort (for/list ([(a d) (in-hash before)]
+                   #:unless (equal? d (hash-ref after a #f)))
+          (symbol->string a))
+        string<?))
+
+;; input-digest : path -> digest/#f — what one input's file looks like right now.
+(define (input-digest p)
+  (cond [(file-exists? p) (call-with-input-file p sha1)]
+        [(directory-exists? p) (tree-digest p)]
+        [else #f]))
 
 ;; verify-edge : graph symbol (hash symbol->runtime)
 ;;               (symbol export-dir -> path?/#f) path-string -> edge-verdict
@@ -102,6 +141,14 @@
       (copy-file src (build-path work base))
       (path->string base)))
   (define seeded-set (list->set seeded))
+  ;; (c): every declared input with a path, hashed where the task will find it —
+  ;; the seeded copy under `work', or the real fixed path for an ambient one.
+  (define (snapshot-inputs)
+    (for*/hash ([in (in-list (task-inputs t))]
+                [p (in-value (resolve in work))]
+                #:when p)
+      (values in (input-digest p))))
+  (define before (snapshot-inputs))
   ;; declared EXPORT_DIR outputs, by basename.
   (define declared-out
     (list->set
@@ -119,8 +166,9 @@
      (list->set (map path->string (map file-name-from-path (directory-list work))))
      seeded-set))
   (define-values (missing undeclared) (classify-outputs declared-out appeared))
+  (define mutated (classify-mutations before (snapshot-inputs)))
   (delete-directory/files work)
-  (edge-verdict name #t code seeded missing undeclared))
+  (edge-verdict name #t code seeded missing undeclared mutated))
 
 ;; verify-edges : graph (listof symbol) (hash symbol->runtime)
 ;;                (symbol export-dir -> path?/#f) path-string -> boolean
@@ -159,6 +207,9 @@
                       (format "MISSING ~a  " (string-join* (edge-verdict-missing v))))
                   (if (null? (edge-verdict-undeclared v)) ""
                       (format "UNDECLARED ~a" (string-join* (edge-verdict-undeclared v)))))]))
+      (unless (null? (edge-verdict-mutated v))
+        (printf "    inputs   : MUTATED ~a (the task wrote to what it declares it reads)\n"
+                (string-join* (edge-verdict-mutated v))))
       v)))
   (define verdicts (filter edge-verdict? results))
   (define unverifiable (filter pair? results))
