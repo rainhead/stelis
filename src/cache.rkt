@@ -637,7 +637,7 @@
 
 ;; --- The decision core ----------------------------------------------------------
 
-;; decide : snapshot? (or/c hash? #f) (listof path-string) [(listof symbol)]
+;; decide : snapshot? (or/c hash? #f) (listof path-string) [(-> (listof symbol))]
 ;;          -> decision?
 ;; The pure core: compare a fresh snapshot against the recorded entry (#f = no
 ;; usable entry), given which recorded outputs are missing on disk (`missing-outputs`)
@@ -646,7 +646,15 @@
 ;; first applicable reason wins; the output reasons
 ;; are checked after the content reasons so a content change is always reported as
 ;; the content change.
-(define (decide snap entry missing-outputs [stale-outputs '()])
+;;
+;; `stale-outputs' is a THUNK, asked only when every content reason has passed
+;; (st-3jv): it is the one question here that costs IO — a DuckDB digest per
+;; db-relation output, a tree hash per 'dir — and a task whose code or inputs
+;; changed is going to run whatever the answer. Asked eagerly, it was the first
+;; relation question of every salishsea build, and it filled the relation
+;; observer's batch with the snapshot's tables moments before the snapshot
+;; boundary rewrote them all.
+(define (decide snap entry missing-outputs [stale-outputs (lambda () '())])
   (cond
     [(not entry) (decision 'run 'no-cache-entry '())]
     [else
@@ -672,7 +680,8 @@
        ;; (st-84u), or a file/dir something outside the graph rewrote (st-zh2). Rerun
        ;; to re-materialise it — otherwise a downstream read silently gets the wrong
        ;; content, having been told the input was unchanged.
-       [(pair? stale-outputs)    (decision 'run 'output-stale stale-outputs)]
+       [(let ([stale (stale-outputs)]) (and (pair? stale) stale))
+        => (lambda (stale) (decision 'run 'output-stale stale))]
        [else                     (decision 'skip 'cached '())])]))
 
 ;; stale-relation-outputs : graph symbol build-env? (or/c hash? #f) -> (listof symbol)
@@ -764,10 +773,12 @@
         (values (decide snap entry
                         (missing (env-output-paths env t))
                         ;; both kinds of "still there, but no longer what we made"
-                        ;; feed the one 'output-stale arm (st-84u + st-zh2)
-                        (sort (append (stale-relation-outputs g name env entry)
-                                      (stale-disk-outputs g name env entry))
-                              symbol<?))
+                        ;; feed the one 'output-stale arm (st-84u + st-zh2); asked
+                        ;; only once the content reasons have passed (st-3jv)
+                        (lambda ()
+                          (sort (append (stale-relation-outputs g name env entry)
+                                        (stale-disk-outputs g name env entry))
+                                symbol<?)))
                 snap))))
 
 ;; task-decision : graph symbol build-env? -> decision?

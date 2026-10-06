@@ -210,7 +210,14 @@ relation, byte-identical (it falls back to per-relation launches SILENTLY when t
 batch fails — an unquoted reserved-word column did that on every salishsea build from
 2026-10-04 to 10-05, so column names are always quoted now; rows hash with DuckDB's
 `hash()` since st-0gc), holding each answer until a task writes a relation that
-shares a table with it — salishsea's resolvers use it (beeatlas's don't yet).
+shares a table with it — salishsea's resolvers use it (beeatlas's don't yet). A
+batch leaves out relations the caller marks `#:pending?` — salishsea: produced by a
+'boundary that has not yet written them this process (st-3jv) — because the first
+relation question of a build came before the snapshot boundary ran and digested its
+~25 relations only for the snapshot to rewrite them; a pending relation asked about
+directly is observed, with its pending siblings. And cache.rkt's `decide` asks its
+stale-output question LAZILY (a thunk): only a task every content reason has passed
+pays for the relation digests and tree hashes it is.
 A relation may live in a SQLite file (`sqlite-db`, st-ml9): the file is
 ATTACHed read-only into a transient DuckDB and digested the same row-coherent
 way, which is how salishsea's mirrors are inputs without a second digest ·

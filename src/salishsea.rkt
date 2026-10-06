@@ -70,7 +70,8 @@
          "model.rkt"
          "exec.rkt"
          "project.rkt"
-         "relation-digest.rkt")
+         "relation-digest.rkt"
+         (only-in "written.rkt" write-generation))
 
 (provide salishsea-project
          salishsea-graph
@@ -785,13 +786,28 @@
 ;; one batch, held until a task writes the relation (st-ml9.6): the snapshot's ~45
 ;; relations cost two DuckDB launches, where asking one relation at a time cost about
 ;; four launches each, every one opening the 330 MB file.
+;;
+;; A batch leaves out what a boundary still to run will rewrite (st-3jv). The first
+;; relation question of a build is `reference's cached-output check, before the
+;; snapshot boundary has run, and it used to digest the snapshot's ~25 relations
+;; (7–10 s of `reference deciding') only for the snapshot to rewrite them and the
+;; observer to digest them again (4–5 s of `snapshot observing'). A boundary always
+;; runs (cache.rkt), so its outputs are pending until it has written them in this
+;; process; written.rkt's generation is the same fact the observer already holds
+;; answers by.
+(define (boundary-pending? relation)
+  (define producer (producer-of salishsea-graph relation))
+  (and producer
+       (eq? 'boundary (task-kind (hash-ref (graph-tasks salishsea-graph) producer)))
+       (zero? (write-generation relation))))
 (define-values (resolve-relation resolve-relation-columns)
   (make-relation-observer
    (for/list ([(name a) (in-hash (graph-artifacts salishsea-graph))]
               #:when (eq? (artifact-kind a) 'db-relation))
      name)
    relation-db
-   relation-tables))
+   relation-tables
+   #:pending? boundary-pending?))
 
 ;; --- Build clock (ADR 0004) -------------------------------------------------
 ;; The committer date of the checkout's HEAD, as for beeatlas; an already-set

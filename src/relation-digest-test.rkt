@@ -215,4 +215,43 @@
      (make-relation-observer '(r) (lambda (_) #f) (lambda (_) '("s.r"))))
    (test-false "no database yet: no answer" (none-digest 'r))
 
+   ;; --- Pending relations stay out of a batch they weren't asked about (st-3jv) ---
+   ;; `c' and `kw' are about to be rewritten by a task still to run; asking about `r'
+   ;; must not digest them along the way, or the answer taken now is held past the
+   ;; rewrite's absence from the observer's view. Visible from outside as: a write no
+   ;; task announced is SEEN on a pending relation (it was never held) and UNSEEN on
+   ;; one the batch took.
+   (ddl! db (string-append
+             "CREATE TABLE s.p1 (k INTEGER, v VARCHAR); INSERT INTO s.p1 VALUES (1, 'a');"
+             "CREATE TABLE s.p2 (k INTEGER, v VARCHAR); INSERT INTO s.p2 VALUES (1, 'a');"
+             "CREATE TABLE s.held (k INTEGER, v VARCHAR); INSERT INTO s.held VALUES (1, 'a');"))
+   (define prels (hash 'p1 '("s.p1") 'p2 '("s.p2") 'held '("s.held") 'r '("s.r")))
+   (define pending (box '(p1 p2)))
+   (define-values (pd _pc)
+     (make-relation-observer (hash-keys prels) (lambda (_) db) (lambda (a) (hash-ref prels a))
+                             #:pending? (lambda (a) (and (memq a (unbox pending)) #t))))
+   (define held-before (pd 'held))
+   (define p1-before (relation-digest db '("s.p1")))
+   (ddl! db "UPDATE s.held SET v = 'z'; UPDATE s.p1 SET v = 'z';")
+   (test-equal? "a relation the batch took is held across an unannounced write"
+                (pd 'held) held-before)
+   (test-false "a pending relation was not taken, so it is observed when asked"
+               (equal? (pd 'p1) p1-before))
+   ;; asking a pending relation directly brings the other pending ones along: p2 is
+   ;; now held, as `held' was
+   (define p2-held (relation-digest db '("s.p2")))
+   (ddl! db "UPDATE s.p2 SET v = 'z';")
+   (test-equal? "a pending relation asked directly batches its pending siblings"
+                (pd 'p2) p2-held)
+   ;; once the producer has written them (pending no more), a batch takes them again
+   (set-box! pending '())
+   (note-written! '(p1 p2))
+   (ddl! db "UPDATE s.r SET v = 'again' WHERE k = 1;")
+   (note-written! '(r))
+   (void (pd 'r))
+   (define p2-rebatched (relation-digest db '("s.p2")))
+   (ddl! db "UPDATE s.p2 SET v = 'zz';")
+   (test-equal? "no longer pending, it rode the next batch and is held across the write"
+                (pd 'p2) p2-rebatched)
+
    (delete-directory/files tmp)])

@@ -62,15 +62,25 @@
 
 ;; stale db-relation outputs (st-84u): unchanged inputs, but a recorded db-relation
 ;; output no longer matches the current DuckDB -> rerun, not skip.
-(check-equal? (decide snap-a (entry) '() '(rel))
+(check-equal? (decide snap-a (entry) '() (lambda () '(rel)))
               (decision 'run 'output-stale '(rel))
               "a stale db-relation output forces a rerun")
-(check-equal? (reason (decide snap-a (entry) '("out.db") '(rel)))
+(check-equal? (reason (decide snap-a (entry) '("out.db") (lambda () '(rel))))
               'output-missing
               "a missing file output outranks a stale relation")
-(check-equal? (reason (decide snap-a (entry #:inputs '((x . "OLD") (y . "hy"))) '() '(rel)))
+(check-equal? (reason (decide snap-a (entry #:inputs '((x . "OLD") (y . "hy"))) '() (lambda () '(rel))))
               'input-changed
               "a content change still outranks a stale relation")
+;; the stale question is the one that costs IO, and a task already bound to run
+;; has no use for its answer (st-3jv): it is asked only when nothing else decided
+(let ([asked 0])
+  (define (stale) (set! asked (add1 asked)) '(rel))
+  (decide snap-a (entry #:inputs '((x . "OLD") (y . "hy"))) '() stale)
+  (decide snap-a (entry) '("out.db") stale)
+  (decide snap-a #f '() stale)
+  (check-equal? asked 0 "a content change or a missing output decides without asking")
+  (decide snap-a (entry) '() stale)
+  (check-equal? asked 1 "only a task that would otherwise skip asks"))
 
 ;; stale-relation-outputs: which db-relation outputs no longer match the DuckDB.
 (let* ([dummy (build-path "/tmp/cache-test-x")]

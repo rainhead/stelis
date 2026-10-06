@@ -361,6 +361,7 @@
 
 ;; make-relation-observer :
 ;;   (listof symbol) (symbol -> (or/c db #f)) (symbol -> (or/c (listof string) #f))
+;;   [#:pending? (symbol -> boolean)]
 ;;   -> (values (symbol -> (or/c string #f))
 ;;              (symbol -> (or/c (listof (cons string string)) #f)))
 ;; A project's two relation resolvers (resolve-relation, resolve-relation-columns)
@@ -369,7 +370,18 @@
 ;; relation of that database whose answer it doesn't hold, in one batch, and holds
 ;; each answer until a task writes that relation, or any relation sharing a table
 ;; with it: a write is to tables, and the task declares only its own artifact.
-(define (make-relation-observer relations db-of tables-of)
+;;
+;; `pending?' names relations a batch should leave out when asked about some OTHER
+;; relation (st-3jv): those a task still to run in this process will rewrite, so an
+;; answer taken now is thrown away minutes later. The caller knows which — the
+;; project wires it to "produced by a 'boundary task that has not yet written it"
+;; (a boundary always runs, model.rkt). A pending relation asked about DIRECTLY is
+;; observed, and brings every other pending relation of its database into the
+;; batch: if one is being asked before its producer ran, so will the rest be
+;; (--explain, a target that leaves the boundary out), and the point of the batch
+;; is to answer them in one launch rather than one each.
+(define (make-relation-observer relations db-of tables-of
+                                #:pending? [pending? (lambda (_) #f)])
   ;; artifact -> (vector generation digest columns)
   (define memo (make-hasheq))
   ;; artifact -> the relations sharing a table with it, itself included
@@ -391,9 +403,11 @@
   (define (fill! a)
     (define db (db-of a))
     (when db
+      (define include-pending? (pending? a))
       (define wanted
         (for/list ([r (in-list relations)]
-                   #:when (and (not (current? r)) (equal? (db-of r) db) (tables-of r)))
+                   #:when (and (not (current? r)) (equal? (db-of r) db) (tables-of r)
+                               (or (eq? r a) include-pending? (not (pending? r)))))
           r))
       (define gens (for/list ([r (in-list wanted)]) (generation r)))
       (define all-tables (remove-duplicates (append* (map tables-of wanted))))
