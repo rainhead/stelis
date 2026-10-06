@@ -13,6 +13,7 @@
          "salishsea.rkt")
 
 (define (inputs-of task) (task-inputs (hash-ref (graph-tasks salishsea-graph) task)))
+(define (outputs-of task) (task-outputs (hash-ref (graph-tasks salishsea-graph) task)))
 
 ;; Since salishsea's step 3 (decision 061, salish-xv35.9) the published files read the
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
@@ -24,10 +25,10 @@
                              "files, the snapshot, the register, the name guard and the derivation; the register follows "
                              "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
                              "which names the taxa it fetches"))
-(check-equal? (set-count pruned) 13
+(check-equal? (set-count pruned) 14
               (string-append "the calendar, the id index, the candidates and links, the catalogue and its "
-                             "register views, the pages, the profile index, the manifest and the Darwin Core "
-                             "archive are off the path to days"))
+                             "register views, the pages, the whales page, the profile index, the manifest and "
+                             "the Darwin Core archive are off the path to days"))
 
 ;; The catalogue's views over the register are the build's (salishsea decision 064,
 ;; salish-9uu.2.3): derive-catalogue produces them under the snapshot's names, from the
@@ -166,7 +167,7 @@
 (check-equal? (last manifest-plan) 'manifest
               "the manifest comes after every export, so it never claims a build whose files aren't in place")
 (for ([export (in-list '(calendar ecotype-pages haulout-pages individual-pages matriline-pages
-                         occurrence-days occurrence-ids profile-index))])
+                         occurrence-days occurrence-ids profile-index whales-page))])
   (check-not-false (memq export manifest-plan) (format "the manifest waits on ~a" export)))
 
 (for ([pages (in-list '(individual-pages matriline-pages ecotype-pages haulout-pages))])
@@ -174,6 +175,13 @@
                    "the presence table's newest year is the snapshot's, so that year is an input")
   (check-false (memq 'snapshot-meta (inputs-of pages))
                "but not the moment it was taken, which moves every build: a no-op build skips the pages"))
+;; The whales page reads every occurrence, and the register's lineage to know a cetacean.
+(check-equal? (sort (inputs-of 'whales-page) symbol<?)
+              '(animal-names-snapshot build.occurrences register.ancestor register.classification
+                register.entities register.taxon_ancestor social-groups-snapshot)
+              "the whales page's inputs are what whales.ts reads")
+(check-not-false (memq 'register.taxon_ancestor (outputs-of 'ingest-register))
+                 "the build loads the register's taxon lineage")
 ;; The ecotype's links pooled, and each matriline's for its small map (decision 067).
 (check-equal? (sort (inputs-of 'ecotype-pages) symbol<?)
               '(build.ecotype_occurrences build.group_occurrences group-parents-snapshot snapshot-year

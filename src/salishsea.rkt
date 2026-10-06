@@ -42,6 +42,7 @@
 ;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
 ;;       │         table) + the links   ecotype-pages ───▶ profiles/ecotypes/
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
+;;       │                              whales-page ─────▶ whales.html
 ;;       │                              profile-index ───▶ redirects.json,
 ;;       │                                                  sitemap.xml,
 ;;       │                                                  catalog-codes.json,
@@ -225,7 +226,10 @@
     "register.ancestor" "register.deprecations" "register.classification"
     ;; what an individual's sex, birth years and life status are derived from (decision
     ;; 051, salish-9uu.2.3), which the catalogue task reads
-    "register.vitals" "register.current_status"))
+    "register.vitals" "register.current_status"
+    ;; each taxon's lineage to its kingdom: what makes a species a cetacean, for the
+    ;; whales page (salish-nkbq)
+    "register.taxon_ancestor"))
 (define register-relations (map string->symbol register-tables))
 
 ;; The reference tables (salishsea decision 064, salish-9uu.2.1): providers,
@@ -301,6 +305,13 @@
 (define haulout-page-relations
   (append (map snapshot-relation '("haulouts"))
           '(build.haulout_occurrences)))
+;; What the whales page reads (salishsea salish-nkbq, scripts/read-path/whales.ts): every
+;; occurrence, which taxa are cetaceans and how an ecotype reaches its species, the
+;; species' common names, and the ecotypes with pages.
+(define whales-page-relations
+  (append '(build.occurrences register.entities register.ancestor register.classification
+            register.taxon_ancestor)
+          (map snapshot-relation '("animal_names" "social_groups"))))
 (define profile-index-relations
   (map snapshot-relation '("individuals" "designations" "social_groups" "haulouts" "animal_names")))
 
@@ -327,7 +338,7 @@
                                       "src/individual-profile.ts" "src/matriline-profile.ts"
                                       "src/date-format.ts"
                                       "src/ecotype-profile.ts" "src/haulout-profile.ts"
-                                      "src/profile-shared.ts" "src/small-multiples.ts"
+                                      "src/profile-shared.ts" "src/small-multiples.ts" "src/site-nav.ts"
                                       "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
                                       (string-append "dist/" shell) "dist/.vite/manifest.json")
                                 (list kind SNAPSHOT-DB (path->string (in-checkout "dist"))))))
@@ -381,6 +392,8 @@
    ;; The register's names for every entity, which the report form's species menu reads
    ;; (salishsea decision 065: the map asks no database).
    (make-artifact 'animal-names.json 'file)
+   ;; Every cetacean species with its reports and a small map (salishsea salish-nkbq).
+   (make-artifact 'whales.html 'file)
    ;; What the profile pages show of the catalogue (salishsea decision 057). All of
    ;; what the snapshot writes is declared, including the relations no page reads yet.
    (append
@@ -505,6 +518,17 @@
                        ecotype-page-relations 'ecotype-pages)
    (profile-pages-task 'haulout-pages "haulouts" "haulout.html"
                        haulout-page-relations 'haulout-pages)
+   ;; The whales page: its code is whales.ts's import closure and its Vite-built shell, as
+   ;; a profile kind's is. It reads every occurrence, so it reruns whenever they change.
+   (make-task 'whales-page 'transform
+              #:inputs whales-page-relations
+              #:outputs '(whales.html)
+              #:invoke (node-script/code "scripts/read-path/whales.ts"
+                                 '("scripts/read-path/duckdb-budget.ts" "scripts/read-path/profile-document.ts"
+                                   "src/catalog.ts" "src/date-format.ts" "src/ecotype-profile.ts" "src/fold.ts"
+                                   "src/profile-shared.ts" "src/site-nav.ts" "src/small-multiples.ts"
+                                   "src/supabase.ts" "src/whales.ts" "dist/whales.html")
+                                 (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
    ;; No snapshot-meta: nothing here depends on when the snapshot was taken, so
    ;; unlike the pages this cuts off whenever the catalogue holds still. Vite's
    ;; sitemap is code, like the pages' shells, for the same reason.
@@ -725,7 +749,7 @@
    ;; failed export must leave the last manifest standing. It reads none of them.
    (make-task 'manifest 'transform
               #:inputs '(snapshot-meta days calendar ids
-                         individual-pages matriline-pages ecotype-pages haulout-pages
+                         individual-pages matriline-pages ecotype-pages haulout-pages whales.html
                          redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:outputs '(manifest.json)
               #:invoke (node-script/code "scripts/read-path/manifest.ts"
@@ -750,6 +774,7 @@
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(animal-names.json) (build-path export-dir "animal-names.json")]
+    [(whales.html) (build-path export-dir "whales.html")]
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(happywhale.duckdb) happywhale-frozen]
