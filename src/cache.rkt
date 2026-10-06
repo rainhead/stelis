@@ -28,7 +28,7 @@
          snapshot-code-hashes
          (struct-out output-delta)
          source-report source-report? source-report-unchanged? source-report-records
-         source-report-since source-report-error
+         source-report-since source-report-error source-report-refused?
          (struct-out build-env)
          make-build-env
          env-resolve
@@ -137,12 +137,23 @@
 ;;                place salishsea's decision 061 said would answer "is the source
 ;;                reachable". The task still counts as a clean run: the mirror IS
 ;;                the last good copy, which is what the loader chose to publish.
-(struct source-report (unchanged? records since error)
+;;   refused?   : boolean — the FOURTH arm (st-8wt): the loader reached its source
+;;                and was offered a new version, and REFUSED it by its own rule,
+;;                keeping what it held. `error' carries the loader's reason (it is
+;;                a failure arm too, so every reader that already tells failure by
+;;                `error' keeps doing so); `unchanged?' is #f — the source DID
+;;                change. Distinct from unreachable because the operator's next
+;;                move differs: an outage waits, a refusal is a curator's decision
+;;                to revisit (salishsea's ingest-register refuses a register edition
+;;                that would un-name Maplify sightings). Without this arm the trace
+;;                and the build log headlined that refusal as an outage, and only
+;;                the error text said otherwise.
+(struct source-report (unchanged? records since error refused?)
   #:transparent #:omit-define-syntaxes #:constructor-name make-source-report)
-;; Smart constructor: `error' defaults to #f, so the three-field call sites (and
-;; the three-element history datum) stay valid.
-(define (source-report unchanged? records since [error #f])
-  (make-source-report unchanged? records since error))
+;; Smart constructor: `error' and `refused?' default to #f, so the three- and
+;; four-field call sites (and the three- and four-element history datums) stay valid.
+(define (source-report unchanged? records since [error #f] [refused? #f])
+  (make-source-report unchanged? records since error refused?))
 
 ;; --- The build environment ------------------------------------------------------
 

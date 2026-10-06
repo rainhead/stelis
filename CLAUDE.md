@@ -182,7 +182,11 @@ A loader that could NOT reach its source and kept its last good copy writes
 `{unreachable: true, error}` instead (st-ml9.9) — the third arm, so an outage
 reads as "source unreachable" in the trace and the operator log rather than as
 a quiet day; it is still a clean run, since the mirror is what the loader chose
-to publish ·
+to publish. A loader that reached its source and REFUSED what it offered by its
+own rule writes `{refused: true, error}` (st-8wt) — the fourth arm, so a
+curator's decision (salishsea's ingest-register refusing a register edition that
+would un-name Maplify sightings) reads as a refusal, not as the outage its error
+text contradicted ·
 [`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
 addressed by its gate's recorded input address (st-ysf), so dbt-build can skip ·

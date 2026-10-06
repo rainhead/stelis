@@ -116,16 +116,21 @@
   (and (list? v) (= 2 (length v)) (output-delta (car v) (cadr v))))
 
 ;; Three elements for the two original arms, so every record written before
-;; st-ml9.9 reads back unchanged; a fourth, the error text, only for the
-;; unreachable arm — the datum says which it is by its length.
+;; st-ml9.9 reads back unchanged; a fourth, the error text, for the unreachable
+;; arm; a fifth, #t, only for the refused arm (st-8wt) — the datum says which it
+;; is by its length, and each arm added since reads every older line unchanged.
 (define (source-report->datum s)
   (and s (append (list (source-report-unchanged? s) (source-report-records s)
                        (source-report-since s))
-                 (if (source-report-error s) (list (source-report-error s)) '()))))
+                 (cond
+                   [(source-report-refused? s) (list (source-report-error s) #t)]
+                   [(source-report-error s) (list (source-report-error s))]
+                   [else '()]))))
 (define (datum->source-report v)
-  (and (list? v) (<= 3 (length v) 4)
+  (and (list? v) (<= 3 (length v) 5)
        (source-report (car v) (cadr v) (caddr v)
-                      (and (= 4 (length v)) (cadddr v)))))
+                      (and (>= (length v) 4) (cadddr v))
+                      (and (= 5 (length v)) (eq? #t (list-ref v 4))))))
 
 ;; Which datum positions hold the two KEYED layers (output-key-hashes,
 ;; input-key-hashes). history.rkt stores those maps as blocks and needs to find

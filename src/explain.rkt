@@ -97,6 +97,12 @@ produced: ~a" (names))]
      (if (source-report-records s) (format ", ~a new records" (source-report-records s)) "")
      (if (source-report-since s)   (format " since ~a" (source-report-since s)) "")))
   (cond
+    ;; the fourth arm (st-8wt): the source changed and the loader REFUSED the new
+    ;; version — a curator's decision to revisit, not an outage to wait out. Said
+    ;; before the unreachable arm, which also carries an error.
+    [(source-report-refused? s)
+     (format "source changed, but the loader refused it — kept the last good copy: ~a"
+             (source-report-error s))]
     ;; the third arm (st-ml9.9): say the outage, never "unchanged" — the loader
     ;; learned nothing about the source, only that it couldn't ask.
     [(source-report-error s)

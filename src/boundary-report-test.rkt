@@ -28,6 +28,7 @@
 (define bad-out    (build-path tmp "bad.txt"))
 (define noflag-out (build-path tmp "noflag.txt"))
 (define down-out   (build-path tmp "down.txt"))
+(define refused-out (build-path tmp "refused.txt"))
 
 (define runtimes (hash 'sh (runtime 'sh '("/bin/sh" "-c") "sh")))
 (define (sh fmt . args) (recipe 'sh (list (apply format fmt args))))
@@ -49,16 +50,22 @@
          ;; kept its last good copy and exited clean. `unchanged' present too, and
          ;; `unreachable' must win — a failed fetch established nothing.
          (make-task 'down 'boundary #:outputs '(down-a)
-                    #:invoke (sh "echo x > ~a; printf '%s' '{\"unreachable\": true, \"unchanged\": true, \"error\": \"ECONNREFUSED 10.0.0.1:443\"}' > \"$STELIS_BOUNDARY_RECEIPT\"" down-out)))
+                    #:invoke (sh "echo x > ~a; printf '%s' '{\"unreachable\": true, \"unchanged\": true, \"error\": \"ECONNREFUSED 10.0.0.1:443\"}' > \"$STELIS_BOUNDARY_RECEIPT\"" down-out))
+         ;; the fourth arm (st-8wt): the source was reached and had changed, and the
+         ;; loader REFUSED the new version by its own rule, keeping what it held. A
+         ;; stray `unreachable' beside it must not turn a curator's decision into an
+         ;; outage: the loader did reach its source.
+         (make-task 'refused 'boundary #:outputs '(refused-a)
+                    #:invoke (sh "echo x > ~a; printf '%s' '{\"refused\": true, \"unreachable\": true, \"error\": \"register v12 refused: it un-names 2 Maplify pairs\"}' > \"$STELIS_BOUNDARY_RECEIPT\"" refused-out)))
    (list (make-artifact 'good-a 'file) (make-artifact 'silent-a 'file)
          (make-artifact 'bad-a 'file) (make-artifact 'noflag-a 'file)
-         (make-artifact 'down-a 'file))))
+         (make-artifact 'down-a 'file) (make-artifact 'refused-a 'file))))
 
 (define benv
   (make-build-env (lambda (a _dir)
                     (case a [(good-a) good-out] [(silent-a) silent-out]
                             [(bad-a) bad-out] [(noflag-a) noflag-out]
-                            [(down-a) down-out] [else #f]))
+                            [(down-a) down-out] [(refused-a) refused-out] [else #f]))
                   tmp (build-path tmp "cache")))
 
 (define state (build-path tmp ".stelis"))
@@ -66,7 +73,7 @@
 (define (build!)
   (parameterize ([current-output-port (open-output-nowhere)])
     (define-values (status records)
-      (run-plan g '(good silent bad noflag down) runtimes #:context benv #:state-dir state))
+      (run-plan g '(good silent bad noflag down refused) runtimes #:context benv #:state-dir state))
     records))
 (define (record-of recs name)
   (findf (lambda (r) (eq? name (trace-record-task r))) recs))
@@ -94,6 +101,25 @@
 (check-equal? (trace-record-outcome (record-of recs 'down)) 'ok
               "keeping the last good copy is a clean run, not a failure")
 
+(check-equal? (trace-record-source-report (record-of recs 'refused))
+              (source-report #f #f #f "register v12 refused: it un-names 2 Maplify pairs" #t)
+              "a refused source is its own arm, and wins over a stray `unreachable'")
+(check-equal? (trace-record-outcome (record-of recs 'refused)) 'ok
+              "keeping the held version is a clean run too")
+
+;; the datum round trip: a refused report is a five-element datum, the older arms
+;; keep their three- and four-element shapes, so every recorded line reads back as
+;; it was written
+(for ([sr (list (source-report #t 0 "2026-07-20")
+                (source-report #f #f #f "ECONNREFUSED 10.0.0.1:443")
+                (source-report #f #f #f "register v12 refused" #t))])
+  (check-equal? (trace-record-source-report
+                 (datum->trace-record
+                  (trace-record->datum
+                   (trace-record 'probe (decision 'run 'boundary '()) #f 'ok '() #f '() '() '() sr))))
+                sr
+                "a source report survives the datum round trip, arm included"))
+
 ;; a stale receipt from a prior run must not be misread as this run's: `silent'
 ;; never writes one, so even after `good'/`bad' wrote theirs it stays #f across a
 ;; second build (each task's receipt is cleared before it runs).
@@ -112,6 +138,9 @@
 (check-equal? (source-report->string (source-report #f #f #f "ECONNREFUSED 10.0.0.1:443"))
               "source unreachable — kept the last good copy: ECONNREFUSED 10.0.0.1:443"
               "an outage never reads as a quiet day")
+(check-equal? (source-report->string (source-report #f #f #f "register v12 refused: it un-names 2 Maplify pairs" #t))
+              "source changed, but the loader refused it — kept the last good copy: register v12 refused: it un-names 2 Maplify pairs"
+              "a refusal never reads as an outage")
 
 ;; --- prospective, history-flavored boundary line -------------------------------
 ;; persist the build (run-plan returns records; main.rkt is what appends them to
@@ -130,6 +159,8 @@
              "a boundary that never reported gets the plain line")
 (check-true (regexp-match? #rx"last run: source unreachable" (reason->string 'down bdec))
             "the prospective line says the last run could not reach the source")
+(check-true (regexp-match? #rx"last run: source changed, but the loader refused it" (reason->string 'refused bdec))
+            "and that the last run refused what the source offered")
 (check-false (regexp-match? #rx"last run" (reason->string 'never-built bdec))
              "an unknown task gets the plain line")
 

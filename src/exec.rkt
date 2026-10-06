@@ -311,21 +311,29 @@
 ;; takes precedence over `unchanged' when both are present, because a loader that
 ;; failed to fetch has NOT established the source is unchanged, whatever else it
 ;; wrote. The error text is capped: it rides every trace line and the build log.
+;; Fourth arm (st-8wt): {"refused": true, "error": string|null} — the loader
+;; reached its source, was offered a new version, and refused it by its own rule,
+;; keeping what it held. Checked before `unreachable': a loader that refused did
+;; reach its source, so a receipt claiming both is a refusal with a confused
+;; loader, and the more specific claim stands.
 (define RECEIPT-ERROR-CAP 300)
 (define (read-boundary-receipt path)
+  (define (capped-error j)
+    (define err (hash-ref j 'error #f))
+    (if (and (string? err) (> (string-length err) 0))
+        (if (> (string-length err) RECEIPT-ERROR-CAP)
+            (string-append (substring err 0 RECEIPT-ERROR-CAP) "…")
+            err)
+        "no error text given"))
   (and (file-exists? path)
        (with-handlers ([exn:fail? (lambda (_) #f)])
          (define j (call-with-input-file path read-json))
          (and (hash? j)
               (cond
+                [(eq? #t (hash-ref j 'refused #f))
+                 (source-report #f #f #f (capped-error j) #t)]
                 [(eq? #t (hash-ref j 'unreachable #f))
-                 (define err (hash-ref j 'error #f))
-                 (source-report #f #f #f
-                                (if (and (string? err) (> (string-length err) 0))
-                                    (if (> (string-length err) RECEIPT-ERROR-CAP)
-                                        (string-append (substring err 0 RECEIPT-ERROR-CAP) "…")
-                                        err)
-                                    "no error text given"))]
+                 (source-report #f #f #f (capped-error j))]
                 [(and (hash-has-key? j 'unchanged) (boolean? (hash-ref j 'unchanged)))
                  (define records (hash-ref j 'records #f))
                  (define since (hash-ref j 'since #f))
@@ -527,6 +535,8 @@
              (printf "  ~a source ~a\n"
                      (if (source-report-error boundary-report) "⚠" "↺")
                      (cond
+                       [(source-report-refused? boundary-report)
+                        "changed, but refused by the loader — kept the last good copy"]
                        [(source-report-error boundary-report)
                         "unreachable — kept the last good copy"]
                        [(source-report-unchanged? boundary-report)
