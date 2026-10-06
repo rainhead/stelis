@@ -295,7 +295,9 @@
           '(build.group_occurrences)))
 (define ecotype-page-relations
   (append (map snapshot-relation '("social_groups" "group_parents"))
-          '(build.ecotype_occurrences)))
+          ;; group_occurrences: each matriline's reports, for its small map
+          ;; (salishsea decision 067).
+          '(build.ecotype_occurrences build.group_occurrences)))
 (define haulout-page-relations
   (append (map snapshot-relation '("haulouts"))
           '(build.haulout_occurrences)))
@@ -325,7 +327,7 @@
                                       "src/individual-profile.ts" "src/matriline-profile.ts"
                                       "src/date-format.ts"
                                       "src/ecotype-profile.ts" "src/haulout-profile.ts"
-                                      "src/profile-shared.ts"
+                                      "src/profile-shared.ts" "src/small-multiples.ts"
                                       "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
                                       (string-append "dist/" shell) "dist/.vite/manifest.json")
                                 (list kind SNAPSHOT-DB (path->string (in-checkout "dist"))))))

@@ -174,8 +174,10 @@
                    "the presence table's newest year is the snapshot's, so that year is an input")
   (check-false (memq 'snapshot-meta (inputs-of pages))
                "but not the moment it was taken, which moves every build: a no-op build skips the pages"))
+;; The ecotype's links pooled, and each matriline's for its small map (decision 067).
 (check-equal? (sort (inputs-of 'ecotype-pages) symbol<?)
-              '(build.ecotype_occurrences group-parents-snapshot snapshot-year social-groups-snapshot)
+              '(build.ecotype_occurrences build.group_occurrences group-parents-snapshot snapshot-year
+                social-groups-snapshot)
               "a kind's inputs are the tables profiles.ts loads for it, its links the build's own")
 (check-equal? (sort (inputs-of 'haulout-pages) symbol<?)
               '(build.haulout_occurrences haulouts-snapshot snapshot-year)
