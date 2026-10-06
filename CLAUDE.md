@@ -522,7 +522,9 @@ prerendered HTML, one task per kind reading only its own catalogue relations, wi
 the Vite-built shell and Vite's manifest hashed as code because the site build that
 writes `dist/` is outside the graph) and `profile-index` (`redirects.json`, folded
 designation → canonical page, which a redirect server on Fly answers legacy links
-from, and `sitemap.xml`; no snapshot-meta input, so it cuts off) —
+from, `sitemap.xml`, and `animal-names.json`, the register's names the report
+form reads now that the map asks no database; no snapshot-meta input, so it
+cuts off) —
 every export an input for order only — so the frontend can tell a quiet day from one
 no build has reached. Scripts live in salishsea's
 `scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and

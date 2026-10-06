@@ -44,7 +44,8 @@
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
 ;;       │                              profile-index ───▶ redirects.json,
 ;;       │                                                  sitemap.xml,
-;;       │                                                  catalog-codes.json
+;;       │                                                  catalog-codes.json,
+;;       │                                                  animal-names.json
 ;;       ├──────▶ snapshot-year ──────▶ (the pages)
 ;;       └──────▶ snapshot-meta ──────▶ manifest ──▶ manifest.json
 ;;                (when it was taken)   (after every published file)
@@ -293,7 +294,7 @@
   (append (map snapshot-relation '("haulouts"))
           '(build.haulout_occurrences)))
 (define profile-index-relations
-  (map snapshot-relation '("individuals" "designations" "social_groups" "haulouts")))
+  (map snapshot-relation '("individuals" "designations" "social_groups" "haulouts" "animal_names")))
 
 ;; A kind's page task. Its code is profiles.ts's import closure (esbuild's
 ;; metafile, not a grep: all three kinds' templates, since one script renders
@@ -367,6 +368,9 @@
    ;; The rows the map's sighting cards link designations from (T065A to her
    ;; page), so those links survive the database being unreachable.
    (make-artifact 'catalog-codes.json 'file)
+   ;; The register's names for every entity, which the report form's species menu reads
+   ;; (salishsea decision 065: the map asks no database).
+   (make-artifact 'animal-names.json 'file)
    ;; What the profile pages show of the catalogue (salishsea decision 057). All of
    ;; what the snapshot writes is declared, including the relations no page reads yet.
    (append
@@ -495,7 +499,7 @@
    ;; sitemap is code, like the pages' shells, for the same reason.
    (make-task 'profile-index 'transform
               #:inputs profile-index-relations
-              #:outputs '(redirects.json sitemap.xml catalog-codes.json)
+              #:outputs '(redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:invoke (node-script/code "scripts/read-path/profile-index.ts"
                                  '("scripts/read-path/profile-document.ts"
                                    "scripts/read-path/snapshot-tables.ts"
@@ -710,7 +714,7 @@
    (make-task 'manifest 'transform
               #:inputs '(snapshot-meta days calendar ids
                          individual-pages matriline-pages ecotype-pages haulout-pages
-                         redirects.json sitemap.xml catalog-codes.json)
+                         redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:outputs '(manifest.json)
               #:invoke (node-script "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
 
@@ -731,6 +735,7 @@
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
+    [(animal-names.json) (build-path export-dir "animal-names.json")]
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(happywhale.duckdb) happywhale-frozen]
