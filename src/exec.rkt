@@ -21,7 +21,9 @@
          "model.rkt"
          "cache.rkt"
          "trace.rkt"
-         "written.rkt")
+         "written.rkt"
+         (only-in "fan-out-key.rkt" store-keyed? verify-store-keyed
+                  fan-out-verdict-sound? fan-out-verdict-orphans))
 
 (provide runtime runtime? runtime-name runtime-launch ; re-provided from model.rkt
          runtime-label runtime-identity
@@ -582,9 +584,40 @@
            ;; recorded per-key map reflects the pruned set.
            (when rk
              (for ([d (in-list (keyed-dir-outputs g name env))])
-               (prune-keys! d (cdr rk))))
+               (prune-keys! d (cdr rk)))))
+         ;; A store-keyed 'dir is held to its keyset after every run (st-243's gate,
+         ;; run here since st-6d2.2): its files must be exactly the keys of the
+         ;; input it is keyed on. The key the engine computes and the grouping the
+         ;; task writes by are two copies of one rule, and this is what catches them
+         ;; drifting apart. After a PARTIAL run a mismatch is a failure — the keys
+         ;; the engine named and pruned were the wrong ones, and the directory is now
+         ;; neither the old set nor the new; after a full run the set is at least the
+         ;; task's own, so the mismatch is reported and the run stands.
+         (define unsound
+           (and ok? env
+                (for*/list ([out (in-list (task-outputs t))]
+                            [a (in-value (hash-ref (graph-artifacts g) out #f))]
+                            #:when (and a (eq? 'dir (artifact-kind a)) (store-keyed? (artifact-keyed-by a)))
+                            [dir (in-value (env-resolve env out))]
+                            #:when (and dir (directory-exists? dir))
+                            [v (in-value (verify-store-keyed (artifact-keyed-by a) dir
+                                                             (build-env-resolve-store-keys env)))]
+                            #:unless (fan-out-verdict-sound? v))
+                  (cons out (fan-out-verdict-orphans v)))))
+         (define identity-ok?
+           (cond
+             [(or (not unsound) (null? unsound)) #t]
+             [else
+              (for ([u (in-list unsound)])
+                (printf "  ~a ~a is not the keyset of its store: ~a~a\n"
+                        (if rk "✗" "⚠") (car u)
+                        (string-join (take (cdr u) (min 5 (length (cdr u)))) ", ")
+                        (if (> (length (cdr u)) 5) (format ", …(+~a more)" (- (length (cdr u)) 5)) "")))
+              (when rk (printf "  ✗ a partial rebuild pruned and wrote by a key the task does not group by; failing\n"))
+              (not rk)]))
+         (when (and ok? env identity-ok?)
            (observe-outputs!))
-         (if ok? 'ok 'failed)]))
+         (if (and ok? identity-ok?) 'ok 'failed)]))
     (printf "  ⏱ ~a\n" (timing->string timing))
     ;; Stelis's own lines are block-buffered when the build's output is not a
     ;; terminal (a log), so a line would otherwise surface only when the next task

@@ -22,7 +22,7 @@
          "model.rkt"
          "cache.rkt"        ; decision accessors, artifact-key-parts (the kind dispatch)
          "explain.rkt"      ; decision->string, source-report->string (the pure bases)
-         "history.rkt"      ; history-key-observations, history-last-source-report
+         "history.rkt"      ; history-key-observation-at, history-last-source-report
          "delta.rkt")
 
 (provide input-key-deltas
@@ -36,23 +36,33 @@
   (define art (hash-ref (graph-artifacts g) a #f))
   (and art (artifact-key-parts a (artifact-kind art) env)))
 
-;; input-key-deltas : graph decision? build-env? path-string -> (listof key-delta)
-;; The changed keyed inputs of a task about to run, each as a prospective
+;; input-key-deltas : graph symbol decision? build-env? path-string -> (listof key-delta)
+;; The changed keyed inputs of task `name' about to run, each as a prospective
 ;; key-delta. '() unless the decision is a 'run for 'input-changed — the only
-;; verdict that names changed inputs. For each named input that has both a live
-;; key map and a prior recorded observation, diff the two; inputs without a
-;; per-key layer, or never observed before, drop out (nothing to name yet).
-(define (input-key-deltas g d env state-dir)
+;; verdict that names changed inputs. For each named input that has a live key map
+;; and a recorded map at the digest the task LAST CONSUMED, diff the two; inputs
+;; without a per-key layer, or without such a basis, drop out (nothing to name).
+;;
+;; THE BASIS IS WHAT THE TASK CONSUMED, NOT THE INPUT'S NEWEST MAP (st-6d2.2). The
+;; task's cache entry names, per input, the digest its last clean run read; the
+;; history is asked for the map at that digest (history-key-observation-at). The
+;; newest recorded map is the wrong basis whenever the producer ran and this task
+;; then failed: its entry still names the older digest, and a delta from the newer
+;; map would miss the keys that moved in between — rebuilding too few, green over
+;; stale files. No entry (never run clean), or no recorded map at that digest
+;; (pruned), is no basis, and the caller rebuilds whole.
+(define (input-key-deltas g name d env state-dir)
   (cond
     [(and (eq? (decision-verdict d) 'run)
           (eq? (decision-reason d) 'input-changed))
+     (define entry (read-cache-entry (build-env-cache-dir env) name))
+     (define consumed (make-immutable-hash (if entry (hash-ref entry 'input-hashes '()) '())))
      (filter values
              (for/list ([a (in-list (decision-details d))])
                (define live (live-key-map g a env))
-               (and live
-                    ;; the basis is the newest recorded map; nothing older is read
-                    (prospective-delta
-                     a (history-key-observations state-dir a #:last 1) live))))]
+               (define digest (hash-ref consumed a #f))
+               (define basis (and live digest (history-key-observation-at state-dir a digest)))
+               (and basis (prospective-delta a (list basis) live))))]
     [else '()]))
 
 ;; make-reason->string : graph build-env? path-string -> (symbol decision? -> string)
@@ -78,7 +88,7 @@
            (format "~a; last run: ~a" base (source-report->string sr))
            base)]
       [else
-       (define deltas (input-key-deltas g d env state-dir))
+       (define deltas (input-key-deltas g task d env state-dir))
        (if (null? deltas)
            base
            (string-append

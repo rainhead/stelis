@@ -368,7 +368,7 @@
        (let-values ([(dec _snap) (decision+snapshot G name benv)])
          (and (eq? 'run (decision-verdict dec))
               (eq? 'input-changed (decision-reason dec))
-              (let ([deltas (input-key-deltas G dec benv stelis-state)])
+              (let ([deltas (input-key-deltas G name dec benv stelis-state)])
                 (and (pair? deltas)
                      (deltas->rebuild+prune G name deltas)))))))
 

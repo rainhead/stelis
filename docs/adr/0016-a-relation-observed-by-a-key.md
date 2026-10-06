@@ -67,6 +67,26 @@ one observation.
    days fall in from the day delta without a second map, and the shards wait until
    0.6 s matters.
 
+6. **The basis is what the consumer last consumed.** A fan-out's delta was taken
+   against its input's *newest* recorded map. That is wrong whenever the producer
+   ran and the consumer then failed: the consumer's receipt still names the older
+   digest, and a delta from the newer map misses the keys that moved in between —
+   rebuilding too few, green over stale files. `input-key-deltas` now reads the
+   digest the task's cache entry names for the input and asks the history for the
+   map at that digest (`history-key-observation-at`, matched by the producer's
+   recorded output digest, or for a producerless store by the map's own address).
+   No entry, or no recorded map at that digest, is no basis, and the task rebuilds
+   whole. This was latent for the notes harvest too; the keyed relation made it
+   worth finding.
+
+7. **The identity check runs in the build.** `verify-store-keyed` existed since
+   st-243 and ran only in tests. After every clean run of a task with a
+   store-keyed `'dir`, run-plan checks the directory against the store's keyset:
+   after a partial run a mismatch fails the task — the engine named and pruned
+   keys by a rule the task does not group by, and the directory is now neither
+   set — and after a full run it is reported and the run stands, the set being
+   at least the task's own. This is the drift detector decision 1 leans on.
+
 ## Consequences
 
 - `relation-keys` in relation-digest.rkt; `artifact-key-parts`'s db-relation arm
@@ -75,7 +95,13 @@ one observation.
   a partial task. The map is held per write generation, like the observer's answers.
 - The consumer honours `STELIS_REBUILD_KEYS` by writing only the named days into the
   existing directory, each file atomically, instead of swapping the directory; the
-  engine prunes the days that emptied. A full run keeps the swap.
+  engine prunes the days that emptied. A full run keeps the swap, and so does a
+  partial run told more days than the swap would cost: a basis of the wrong shape
+  (the first build after this lands diffs a per-day map against a per-column one)
+  names every day, and the swap is the honest answer to "everything".
+- beeatlas's `notes/` is now checked against the notes store's keyset after every
+  harvest, as a warning on a full run; a mismatch there is a finding, not a fault
+  of this change.
 - `--history build.occurrences` now shows which days moved at each build, and
   `--history build.occurrences:<day>` why a day last moved.
 - Measurement on the machine follows the consumer's deploy (salish-9uu.8.2); the

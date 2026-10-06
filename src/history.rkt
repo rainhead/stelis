@@ -35,7 +35,7 @@
          "model.rkt"
          "cache.rkt"    ; read-versioned — the shared versioned-file reader
          "blockstore.rkt"
-         (only-in "keyed-block.rkt" keyed-tree-blocks keyed-node? keyed-node-links)
+         (only-in "keyed-block.rkt" keyed-tree-blocks keyed-node? keyed-node-links keyed-block-digest)
          "trace.rkt")
 
 (provide (struct-out build-record)
@@ -53,6 +53,7 @@
          history-last-source-report
          history-observations
          history-key-observations
+         history-key-observation-at
          history-key-fold
          history-graph
          history-foreign-projects
@@ -758,6 +759,40 @@
                     (set! points (cons (key-observation number (cdr pair) rec) points)))))
               (< (length points) n)))
          (if (> (length points) n) (take-right points n) points)))]))
+
+;; history-key-observation-at : path-string symbol string -> (or/c key-observation #f)
+;; The per-key map `artifact' had when its content address was `digest' — the newest
+;; such recorded point, read from the end of the log and no further. THE DELTA'S BASIS
+;; (st-6d2.2): a consumer about to be rebuilt per key must diff the live map against
+;; the map it LAST CONSUMED, which its cache entry names by digest — not against the
+;; input's newest recorded map. The two differ whenever the producer ran and the
+;; consumer then failed: its receipt still names the older digest, and a delta from
+;; the newer map would miss the keys that moved in between, rebuilding too few and
+;; going green over stale files. A produced artifact is matched by the digest its
+;; producer recorded as an output; a producerless keyed store, recorded only on its
+;; consumer's record, by the address of the map itself (keyed-block-digest, which is
+;; how a store input is addressed). #f when no recorded point has that digest
+;; (pruned away, never recorded, or the map unreadable): no basis, rebuild whole.
+(define (history-key-observation-at state-dir artifact digest)
+  (define f (history-file state-dir))
+  (and (file-exists? f)
+       (call-with-load artifact
+         (lambda ()
+           (define found #f)
+           (for-each-entry-backward
+            f (lambda (e number)
+                (define br (entry->build-record e (internalize-keyed state-dir) number))
+                (when br
+                  (for ([rec (in-list (reverse (build-record-records br)))] #:unless found)
+                    (define keys (let ([p (assq artifact (trace-record-keyed rec))]) (and p (cdr p))))
+                    (when (list? keys)
+                      (define out (assq artifact (trace-record-output-hashes rec)))
+                      (when (if out
+                                (equal? (cdr out) digest)
+                                (equal? (keyed-block-digest keys) digest))
+                        (set! found (key-observation number keys rec))))))
+                (not found)))
+           found))))
 
 ;; trace-record-keyed : trace-record -> (listof (cons symbol (listof (cons string string))))
 ;; A record's per-key observations from BOTH sides — outputs the task produced and

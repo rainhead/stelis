@@ -13,6 +13,7 @@
          "history.rkt"
          "trace.rkt"
          "tree-digest.rkt"
+         (only-in "keyed-block.rkt" keyed-block-digest)
          "delta.rkt"
          "delta-explain.rkt")
 
@@ -52,7 +53,10 @@
 ;; the decision `use` would get: run, inputs changed, naming `maps`.
 (define d (decision 'run 'input-changed '(maps)))
 
-(define deltas (input-key-deltas g d env state))
+;; `use' last ran clean against the recorded map: its cache entry names that digest
+;; as what it consumed, which is the delta's basis (st-6d2.2).
+(cache-store! (build-path state "cache") 'use (snapshot "r" (hash 'maps "dir-digest")) '() '())
+(define deltas (input-key-deltas g 'use d env state))
 (check-equal? (length deltas) 1 "one changed keyed input -> one delta")
 (define kd (car deltas))
 (check-equal? (key-delta-artifact kd) 'maps)
@@ -63,10 +67,34 @@
 (check-equal? (key-delta-total kd)   3          "live map has 3 files")
 
 ;; a decision that isn't an 'input-changed run yields no deltas.
-(check-equal? (input-key-deltas g (decision 'skip 'cached '()) env state) '()
+(check-equal? (input-key-deltas g 'use (decision 'skip 'cached '()) env state) '()
               "a cached skip names no changed inputs")
-(check-equal? (input-key-deltas g (decision 'run 'no-cache-entry '()) env state) '()
+(check-equal? (input-key-deltas g 'use (decision 'run 'no-cache-entry '()) env state) '()
               "a non-input-changed run names none either")
+
+;; THE BASIS IS WHAT THE TASK CONSUMED, not the input's newest map (st-6d2.2). The
+;; producer runs again and records a newer map (b edited to "BB", c added — the live
+;; state), but `use' failed that build, so its entry still names the first digest.
+;; Its delta must still be taken from the FIRST map, or the keys that moved in
+;; between would never be rebuilt.
+(void (history-append! state 'maps g "1"
+                       (list (trace-record 'mk #f #f 'ok '() #f
+                                           (list (cons 'maps "dir-digest-2"))
+                                           (list (cons 'maps (tree-hashes live)))
+                                           '()))))
+(let ([again (car (input-key-deltas g 'use d env state))])
+  (check-equal? (key-delta-changed again) '("b.svg") "still diffed against the map `use' consumed")
+  (check-equal? (key-delta-added again)   '("c.svg")))
+;; once `use' has consumed the newer map, that is the basis: nothing moved since
+(cache-store! (build-path state "cache") 'use (snapshot "r" (hash 'maps "dir-digest-2")) '() '())
+(let ([none (car (input-key-deltas g 'use d env state))])
+  (check-equal? (key-delta-count none) 0 "consumed the live map already: no keys moved"))
+;; a digest no recorded map carries (pruned, or never recorded) is no basis at all
+(cache-store! (build-path state "cache") 'use (snapshot "r" (hash 'maps "never-recorded")) '() '())
+(check-equal? (input-key-deltas g 'use d env state) '() "no basis -> no delta -> the caller rebuilds whole")
+;; and a task that never ran clean has none either
+(check-equal? (input-key-deltas g 'mk d env state) '() "no cache entry -> no basis")
+(cache-store! (build-path state "cache") 'use (snapshot "r" (hash 'maps "dir-digest")) '() '())
 
 ;; the decorated renderer appends the subset line to the base reason.
 (define reason->string (make-reason->string g env state))
@@ -102,7 +130,8 @@
                              #:resolve-relation-columns
                              (lambda (a) (if (eq? a 'rel) live-cols #f))))
 
-(define rel-deltas (input-key-deltas g2 (decision 'run 'input-changed '(rel)) env2 state2))
+(cache-store! (build-path state2 "cache") 'use2 (snapshot "r" (hash 'rel "rel-digest")) '() '())
+(define rel-deltas (input-key-deltas g2 'use2 (decision 'run 'input-changed '(rel)) env2 state2))
 (check-equal? (length rel-deltas) 1 "one changed keyed db-relation -> one delta")
 (define rd (car rel-deltas))
 (check-equal? (key-delta-artifact rd) 'rel)
@@ -144,7 +173,10 @@
                              #:resolve-store-keys
                              (lambda (a) (if (eq? a 'store) live-store #f))))
 
-(define store-deltas (input-key-deltas g3 (decision 'run 'input-changed '(store)) env3 state3))
+;; a store has no producer, so no output digest to match: the consumer's entry names
+;; the map's own address (how a store input is addressed), and that is matched
+(cache-store! (build-path state3 "cache") 'harvest (snapshot "r" (hash 'store (keyed-block-digest prev-store))) '() '())
+(define store-deltas (input-key-deltas g3 'harvest (decision 'run 'input-changed '(store)) env3 state3))
 (check-equal? (length store-deltas) 1 "one changed keyed store input -> one delta")
 (define sd (car store-deltas))
 (check-equal? (key-delta-artifact sd) 'store)

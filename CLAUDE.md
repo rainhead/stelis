@@ -311,7 +311,12 @@ the same kind of string — st-1e5 changed the former, not the latter ·
 its files ⊆ the keys (possibly composite) of a declared input relation (JSON or
 parquet), or, when filenames are a transform of the key, against an exporter-emitted
 manifest (soundness gated, completeness reported); a `store-keyed` dir (notes/,
-st-243) gates IDENTITY vs. the store keyset — both strays and gaps fail ·
+st-243; salishsea's days/, ADR 0016) gates IDENTITY vs. the store keyset — both
+strays and gaps fail. run-plan runs that check after every clean run of the dir's
+producer (ADR 0016 D7): after a PARTIAL run a mismatch fails the task, after a full
+run it is reported. And a partial task's delta is taken against the map its cache
+entry says it last consumed (`history-key-observation-at`, D6), never the input's
+newest map — the two differ when the producer ran and the consumer failed ·
 [`trace.rkt`](src/trace.rkt) the per-task build-record shape + its serialization ·
 [`history.rkt`](src/history.rkt) append-only, content-addressed build history under
 `.stelis/` — per-build observation records (artifact→hash, plus a per-PART
