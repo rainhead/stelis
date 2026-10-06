@@ -287,7 +287,9 @@
 ;;   undeclared-writes — files the task WROTE that it declares no output for.
 ;;     Reported separately and NOT part of the exit verdict: this command's name
 ;;     is its contract, and an undeclared output is --verify-edges' question
-;;     (st-6w9). Surfacing it silently would be worse than either.
+;;     (st-6w9) — though only under EXPORT_DIR: a fixed-path write (st-6w9's own
+;;     auto_synonyms.csv, in dbt's seeds/) is visible nowhere but here, which is
+;;     why it is surfaced rather than dropped.
 ;;   unread     — declared inputs no read touched. WEAK (see the header note).
 ;;   counts     — classification -> how many, for the "and the rest looked fine"
 ;;                line, so a clean run shows it observed something rather than
@@ -358,7 +360,7 @@
      (for ([u (in-list (trace-report-undeclared rep))])
        (fprintf out "      ~a  [~a]\n" (path->string (car u)) (cdr u)))])
   (unless (null? (trace-report-undeclared-writes rep))
-    (fprintf out "  · ~a undeclared WRITE(s) — the task wrote these and declares no output for\n    them. Not counted in this command's verdict: an undeclared output is\n    --verify-edges' question (st-6w9), and calling it a dependency would be false.\n"
+    (fprintf out "  · ~a undeclared WRITE(s) — the task wrote these and declares no output for\n    them. Not counted in this command's verdict: calling a write a dependency\n    would be false. --verify-edges asks about outputs, but only under EXPORT_DIR;\n    a write at a fixed path is visible nowhere but here (st-6w9).\n"
              (length (trace-report-undeclared-writes rep)))
     (for ([w (in-list (trace-report-undeclared-writes rep))])
       (fprintf out "      ~a\n" (path->string w))))

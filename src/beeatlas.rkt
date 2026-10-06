@@ -318,6 +318,9 @@
                              ;; five OTHER tasks open the CSV directly, and for
                              ;; those it is data they read, not code they run.
                              'occurrence_synonyms.csv    (seed-file "occurrence_synonyms.csv")
+                             ;; the one seed a graph task WRITES on the pipeline
+                             ;; path (st-6w9): inactive-remap's 1-successor remaps
+                             'auto_synonyms.csv          (seed-file "auto_synonyms.csv")
                              ;; the hand-authored collecting sites (st-eo0)
                              'places.toml (build-path BEEATLAS "content" "places.toml")
                              'notes-store.db notes-store-path
@@ -680,6 +683,16 @@
    ;; each has a producer as 'derived requires.
    (make-artifact 'lineage_unresolved.csv       'file #:provenance 'derived)
    (make-artifact 'inactive_unresolved.csv      'file #:provenance 'derived)
+   ;; A dbt SEED that inactive-remap writes (st-6w9) — the only one a graph task
+   ;; writes on the pipeline path; gbif_checklist_synonyms.csv and
+   ;; curated_taxon_ids.csv are written only by the manual --refresh-checklist,
+   ;; behind a guard the graph never opens. Derived, though git-tracked: every run
+   ;; rewrites it whole from the bridge, taxa.csv.gz and iNat, carrying nothing
+   ;; forward (a taxon skipped on a transient API failure just drops out until the
+   ;; next run), so a rebuild from scratch loses nothing. Undeclared, it was a
+   ;; channel between the graph and dbt that the graph modeled in neither
+   ;; direction — found by --trace-reads' undeclared-WRITE section.
+   (make-artifact 'auto_synonyms.csv            'file #:provenance 'derived)
    ;; topology-postprocess reads each raw region mart @export copy and writes a
    ;; distinctly-named cleaned sibling (beeatlas-hyq made this non-in-place): the
    ;; raw <name>.geojson stays dbt-build's/place-marts' output, .clean.geojson is
@@ -913,7 +926,7 @@
               #:invoke (py "resolve_taxon_ids" "check_resolution_gate"))
    (make-task 'inactive-remap 'transform
               #:inputs '(canonical_to_taxon_id)
-              #:outputs '(inactive_remaps inactive_unresolved.csv)
+              #:outputs '(inactive_remaps inactive_unresolved.csv auto_synonyms.csv)
               #:invoke (py "resolve_taxon_ids" "generate_inactive_remaps"))
    (make-task 'inactive-gate 'gate
               #:inputs '(inactive_remaps inactive_unresolved.csv)
@@ -1013,6 +1026,10 @@
                          corrections-verified
                          canonical_to_taxon_id resolution-verified
                          inactive_remaps inactive-verified
+                         ;; a seed inactive-remap writes (st-6w9): data, so it is
+                         ;; addressed here and NOT also as a seeds/ code file
+                         ;; (cache.rkt drops a declared input from the code side)
+                         auto_synonyms.csv
                          taxon_lineage_extended host_plant_lineage
                          taxa.csv.gz
                          geographies_places geographies_us_counties

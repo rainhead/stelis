@@ -350,10 +350,25 @@
               (cons (format "runtime:~a" (recipe-runtime inv))
                     (and resolve-runtime-identity
                          (resolve-runtime-identity (recipe-runtime inv)))))))
+     ;; A file the task declares as a DATA input is addressed as data, once —
+     ;; even when it also lies inside a code directory the recipe expands (st-6w9:
+     ;; dbt's seeds/ is code, but auto_synonyms.csv in it is written by
+     ;; inactive-remap each build). Hashed on both sides, the code side wins the
+     ;; decision, so a rewrite by its producer would read as 'code-changed — an
+     ;; edit by hand — and provenance would stop there instead of reaching the
+     ;; producer. Derived from the declared inputs, not a list of exclusions.
+     (define data-input-paths
+       (for*/list ([in (in-list data-inputs)]
+                   [p (in-value (resolve in))]
+                   #:when (path? p))
+         (~a (simplify-path (path->complete-path p)))))
+     (define (declared-data? kv)
+       (member (~a (simplify-path (path->complete-path (car kv)))) data-input-paths))
      (define code-pairs
        (append (if runtime-identity-pair (list runtime-identity-pair) '())
-               (append* (for/list ([p (in-list (invoke-code inv))])
-                          (code-path-hashes p)))
+               (filter (lambda (kv) (not (declared-data? kv)))
+                       (append* (for/list ([p (in-list (invoke-code inv))])
+                                  (code-path-hashes p))))
                (filter cdr code-input-pairs)))
      (define unresolvable
        (sort (append (for/list ([kv (in-list pairs)] #:unless (cdr kv)) (car kv))

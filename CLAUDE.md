@@ -218,7 +218,10 @@ would un-name Maplify sightings) reads as a refusal, not as the outage its error
 text contradicted ·
 [`cache.rkt`](src/cache.rkt)
 input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
-addressed by its gate's recorded input address (st-ysf), so dbt-build can skip ·
+addressed by its gate's recorded input address (st-ysf), so dbt-build can skip; a
+file a task declares as a DATA input is addressed as data only, even inside a code
+directory its recipe expands (st-6w9: a seed another task writes would otherwise
+read as a hand edit, `'code-changed`) ·
 [`corrections-drift.rkt`](src/corrections-drift.rkt) the operator gate behind the
 CORRECTION overlay (st-t4t): beeatlas holds local overrides of values an upstream
 source gets wrong (a dbt seed + a precedence arm — a bounded join, so by ADR 0008's
@@ -492,8 +495,10 @@ already names rather than hand-kept, so a new producer widens it automatically
 read is a strong signal, an unread declaration is weak (a data-dependent branch
 makes one run a lower bound), and the report keeps them apart. A WRITE is not a
 read: the probe records the open mode, and an undeclared write is reported in its
-own section and left OUT of the exit verdict — an undeclared output is
-`--verify-edges`' question (st-6w9), and calling it a dependency would be false. KNOWN BLIND SPOT,
+own section and left OUT of the exit verdict — calling it a dependency would be
+false. `--verify-edges` asks about outputs only under EXPORT_DIR, so a FIXED-path
+write is visible nowhere but here (st-6w9: inactive-remap's dbt seed
+auto_synonyms.csv, found this way). KNOWN BLIND SPOT,
 stated in every report rather than left to be discovered: a read inside a C
 extension is invisible — duckdb reading a parquet file emits nothing — so the
 relation-grain half needs its own instrument (st-25h step 1b). Tracing is

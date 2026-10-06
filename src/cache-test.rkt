@@ -359,6 +359,39 @@
               (decision 'run 'inputs-unresolvable (list (path->string code-dir)))
               "a missing code directory is conservative, named as the dir")
 
+;; --- a declared DATA input inside a code directory is data, once (st-6w9) -----
+;; dbt's seeds/ is code, but auto_synonyms.csv in it is written by another task.
+;; Declared as an input, it is addressed on the data side ONLY: hashed on both, the
+;; code side would win the decision, and its producer's rewrite would read as an
+;; edit by hand ('code-changed) rather than an upstream change.
+(define seeds-dir (build-path tmp "seeds"))
+(make-directory seeds-dir)
+(display-to-file "a,b\n" (build-path seeds-dir "authored.csv"))
+(define produced-path (build-path seeds-dir "produced.csv"))
+(display-to-file "synonym\n" produced-path)
+(define (resolve-s a) (if (eq? a 'produced) produced-path (resolve a)))
+(define env-s (make-build-env (lambda (a _export-dir) (resolve-s a)) tmp cache-dir))
+(define gseed
+  (build-graph
+   (list (make-task 'remap 'transform #:inputs '(raw) #:outputs '(produced))
+         (make-task 'seedish 'transform #:inputs '(raw produced) #:outputs '(out)
+                    #:invoke (recipe 'dbt '("build") (list (path->string seeds-dir)))))
+   (list (make-artifact 'raw 'file #:provenance 'upstream)
+         (make-artifact 'produced 'file) (make-artifact 'out 'file))))
+(define snap-s (input-snapshot gseed 'seedish resolve-s))
+(check-equal? (hash-keys (snapshot-code-hashes snap-s))
+              (list (path->string (build-path seeds-dir "authored.csv")))
+              "the declared input is dropped from the code tree's expansion")
+(check-true (hash-has-key? (snapshot-input-hashes snap-s) 'produced)
+            "and addressed as the data input it is declared as")
+(cache-store! cache-dir 'seedish snap-s (list out-path)
+              (output-snapshot gseed 'seedish env-s))
+(display-to-file "synonym\nfoo\n" produced-path #:exists 'replace)
+(check-equal? (task-decision gseed 'seedish env-s)
+              (decision 'run 'input-changed '(produced))
+              "its producer's rewrite reads as an input change, not a code edit")
+(delete-directory/files seeds-dir)
+
 ;; --- an OPTIONAL code entry: absence is a value (st-e4y) ----------------------
 ;; A code path whose absence is a legitimate steady state (Vite's .env.production,
 ;; unwritten here) addresses to a stable sentinel instead of #f. So the task still
