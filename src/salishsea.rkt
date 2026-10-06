@@ -455,7 +455,7 @@
               #:outputs (list* 'snapshot-meta 'snapshot-year 'snapshot-day
                                snapshot-input-relations)
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
-                                 '("scripts/read-path/duckdb-budget.ts")
+                                 '("scripts/read-path/duckdb-budget.ts" "scripts/read-path/pacific-day.ts")
                                  (list SNAPSHOT-DB)))
    ;; The reference tables from their checked-in files (decision 064): a transform, not
    ;; a boundary, since its inputs are declared files. Into the snapshot database, which
@@ -469,7 +469,8 @@
               #:inputs '(build.occurrences)
               #:outputs '(days)
               #:invoke (node-script/code "scripts/read-path/occurrence-days.ts"
-                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts")
+                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/pacific-day.ts")
                                  (list SNAPSHOT-DB)))
    ;; The region boxes are the map's own, so the files they come from are code.
    (make-task 'calendar 'transform
@@ -477,7 +478,7 @@
               #:outputs '(calendar)
               #:invoke (node-script/code "scripts/read-path/calendar.ts"
                                  '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
-                                   "src/constants.ts" "src/extents.ts")
+                                   "scripts/read-path/pacific-day.ts" "src/constants.ts" "src/extents.ts")
                                  (list SNAPSHOT-DB)))
    ;; The shard hash is shared with the browser, so it is code: change it and
    ;; every id moves, which must rebuild the index.
@@ -486,7 +487,7 @@
               #:outputs '(ids)
               #:invoke (node-script/code "scripts/read-path/occurrence-ids.ts"
                                  '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts"
-                                   "scripts/read-path/duckdb-budget.ts")
+                                   "scripts/read-path/duckdb-budget.ts" "scripts/read-path/pacific-day.ts")
                                  (list SNAPSHOT-DB)))
    ;; The profile pages: the shared templates filled from the snapshot, inside
    ;; the shell Vite built (salishsea decision 057).
@@ -597,7 +598,8 @@
               #:inputs '(happywhale.duckdb)
               #:outputs happywhale-relations
               #:invoke (node-script/code "scripts/read-path/happywhale.ts"
-                                 '("scripts/read-path/snapshot.ts" "scripts/read-path/duckdb-budget.ts")
+                                 '("scripts/read-path/snapshot.ts" "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/pacific-day.ts")
                                  (list SNAPSHOT-DB (path->string happywhale-frozen))))
    (make-task 'catalogue 'transform
               ;; types.enums: the vocabularies its files are held to, as Postgres's enum
@@ -720,7 +722,9 @@
                          individual-pages matriline-pages ecotype-pages haulout-pages
                          redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:outputs '(manifest.json)
-              #:invoke (node-script "scripts/read-path/manifest.ts" SNAPSHOT-DB))))
+              #:invoke (node-script/code "scripts/read-path/manifest.ts"
+                                 '("scripts/read-path/pacific-day.ts")
+                                 (list SNAPSHOT-DB)))))
 
 (define salishsea-graph (build-graph tasks artifacts))
 
@@ -815,8 +819,9 @@
 ;; --- Relations observed by a key (ADR 0016) ------------------------------------
 ;; build.occurrences by Pacific day: the grain the day files are written at, so the
 ;; engine can say which days a save moved and occurrence-days can rewrite those
-;; alone. The key expression is a hand copy of occurrence-days.ts's own (its DAY_ZONE
-;; and strftime), and the store-keyed identity check on days/ is what catches the two
+;; alone. The key expression is a hand copy of salishsea's one Pacific day
+;; (scripts/read-path/pacific-day.ts's dayOf('observed_at'), which occurrence-days and
+;; the other day-keyed scripts import, salish-9uu.8.3), and the store-keyed identity check on days/ is what catches the two
 ;; drifting apart. The per-key map is the relation's per-part observation in place of
 ;; its per-column one (cache.rkt's artifact-key-parts), recorded by derive-occurrences
 ;; and read live by occurrence-days's decision; held, like the observer's answers,
