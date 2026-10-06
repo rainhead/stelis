@@ -67,6 +67,13 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   `--moved-keys <artifact>` (which keys moved in the LAST build, machine-readable —
   bare keys on stdout, everything else on stderr; exit 1 = no basis, rebuild in full) ·
   `--run <task>` (execute one task in its hermetic runtime) ·
+  `--downstream <task>` (with `--build`/`--commands`/`--explain`/`--why`: scope the
+  plan to TASK and the tasks that transitively consume its outputs — what a change
+  to its outputs can move. salishsea's save-triggered build is `--all --downstream
+  snapshot`: the store re-read and everything derived from it, 13 tasks, leaving the
+  three ingests to their five-minute schedule (salish-9uu.6). Unlike `--from`, which
+  is the plan's positional SUFFIX from a task on — beeatlas's notes CRUD — and would
+  have kept the two ingests ordered after the snapshot) ·
   `--build --all --export-dir <dir>` (build EVERY target into `<dir>` — the run.py
   replacement: covers all of run.py's steps, but content-addressed-skips current
   work and is partial-success rather than fail-fast). Every task's status is

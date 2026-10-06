@@ -26,6 +26,15 @@
          (make-artifact 'r 'file)          (make-artifact 'out 'file)
          (make-artifact 'sib 'file)        (make-artifact 'config 'external))))
 
+;; downstream-tasks: the mirror image of required-tasks — a task and what consumes
+;; its outputs, transitively; a leaf task is alone; the diamond is counted once
+(check-equal? (downstream-tasks g 'ingest) (set 'ingest 'left 'right 'join 'sibling)
+              "everything reads raw, directly or through l and r")
+(check-equal? (downstream-tasks g 'right) (set 'right 'join)
+              "join reads r; nothing else does, and left is a sibling, not a consumer")
+(check-equal? (downstream-tasks g 'join) (set 'join) "the last task has no consumers")
+(check-equal? (downstream-tasks g 'sibling) (set 'sibling))
+
 ;; producer-of: a real producer, an external leaf, an unknown name
 (check-equal? (producer-of g 'raw) 'ingest "producer-of finds the producing task")
 (check-false  (producer-of g 'config)       "external leaf has no producer")

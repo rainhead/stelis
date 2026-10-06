@@ -33,6 +33,7 @@
          producers-of-inputs
          code-closure
          required-tasks
+         downstream-tasks
          topo-sort
          plan
          GRAPH-SNAPSHOT-VERSION
@@ -441,6 +442,32 @@
        (for/fold ([seen (set-add seen producer)])
                  ([in (in-list (task-inputs t))])
          (loop in seen))])))
+
+;; downstream-tasks : graph symbol -> (setof symbol)
+;; The mirror image of required-tasks: `task' and every task that transitively
+;; consumes an output of it — what a change to `task''s outputs can move, and
+;; nothing else. For a build scoped to one source (st-9uu.6: salishsea's
+;; save-triggered build re-reads the store and re-derives what depends on it,
+;; and leaves the three ingests, which run on their own schedule, alone). Walks
+;; forward over the artifact edges: an output's consumers are the tasks naming
+;; it among their inputs. Not the positional suffix `--from' takes, which is
+;; "this task and everything ordered after it", whatever it depends on.
+(define (downstream-tasks g task)
+  (define consumers
+    (for*/fold ([h (hash)]) ([(name t) (in-hash (graph-tasks g))]
+                             [in (in-list (task-inputs t))])
+      (hash-update h in (lambda (l) (cons name l)) '())))
+  (let loop ([frontier (list task)] [seen (set)])
+    (cond
+      [(null? frontier) seen]
+      [(set-member? seen (car frontier)) (loop (cdr frontier) seen)]
+      [else
+       (define t (hash-ref (graph-tasks g) (car frontier)))
+       (define next
+         (for*/list ([out (in-list (task-outputs t))]
+                     [c (in-list (hash-ref consumers out '()))])
+           c))
+       (loop (append next (cdr frontier)) (set-add seen (car frontier)))])))
 
 ;; topo-sort : graph (setof symbol) -> (listof symbol)
 ;; Orders the given task names so every task follows the tasks producing its

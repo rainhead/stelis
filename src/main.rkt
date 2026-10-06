@@ -51,6 +51,7 @@
 
 (define mode (make-parameter 'plan))      ; 'plan | 'commands | 'explain | 'why | 'run | 'trace-reads | 'build | 'verify | 'verify-edges | 'history | 'moved-keys | 'block
 (define from-task (make-parameter #f))    ; with --build/--verify: bound to a suffix
+(define downstream-task (make-parameter #f)) ; with --build/--commands/--explain/--why: a task and its consumers
 (define last? (make-parameter #f))        ; with --explain: read the last-build trace
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
 (define all? (make-parameter #f))           ; --all: build the whole graph (replaces run.py)
@@ -99,6 +100,8 @@
                   (project-arg (string->symbol proj))]
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
+   [("--downstream") dt "scope --build/--commands/--explain/--why to DT and the tasks that transitively consume its outputs — what a change to DT's outputs can move (a save-triggered build re-reads one source and re-derives from it, leaving the other sources' ingests to their own schedule)"
+                     (downstream-task (string->symbol dt))]
    [("--last") "with --explain: report what the last real --build decided and did"
                (last? #t)]
    [("--export-dir") dir "with --build/--run: write outputs to DIR (an explicit, served destination — e.g. a CRUD rebuild into the site's data dir) instead of the scratch dir"
@@ -405,15 +408,33 @@
               (set))
       (plan G name)))
 
-;; Restrict a plan to the suffix beginning at --from, when given. Used by both
-;; --build (what runs) and --commands (what the dry run previews), so the preview
-;; always mirrors the execution scope.
+;; Restrict a plan to the suffix beginning at --from, or to --downstream's task and
+;; its transitive consumers, when given. Used by --build (what runs), --commands
+;; (what the dry run previews), --explain and --why, so the preview always mirrors
+;; the execution scope. The two differ: --from keeps the plan's ORDER from a task on
+;; (a CRUD rebuild of a known tail, beeatlas's notes), --downstream keeps the
+;; plan's REACH from a task on (salishsea's save-triggered build: the snapshot and
+;; what depends on it, not the ingests that happen to be ordered after it).
 (define (plan-suffix ordered)
   (cond
+    [(and (from-task) (downstream-task))
+     (error 'stelis "--from and --downstream are two scopes; give one")]
     [(from-task)
      (or (member (from-task) ordered)
          (error 'stelis "--from ~a is not in the plan for ~a" (from-task) name))]
+    [(downstream-task)
+     (unless (memq (downstream-task) ordered)
+       (error 'stelis "--downstream ~a is not in the plan for ~a" (downstream-task) name))
+     (define keep (downstream-tasks G (downstream-task)))
+     (filter (lambda (t) (set-member? keep t)) ordered)]
     [else ordered]))
+
+;; The scope clause for a plan's headline: ", from X" or ", downstream of X".
+(define (scope-note)
+  (cond
+    [(from-task) (format ", from ~a" (from-task))]
+    [(downstream-task) (format ", downstream of ~a" (downstream-task))]
+    [else ""]))
 
 ;; --- the operator build log (st-9rf) -----------------------------------------
 ;; Render the history as ONE self-contained HTML page under the state dir. A pure
@@ -892,7 +913,7 @@
    (define out (scratch-out))
    (printf "Building ~a — ~a task(s)~a  (EXPORT_DIR=~a)\n"
            (or name "the whole graph") (length to-run)
-           (if (from-task) (format ", from ~a" (from-task)) "")
+           (scope-note)
            out)
    (define-values (status records)
      (run-plan G to-run RT
@@ -1075,8 +1096,8 @@
        (set-union s (required-tasks G a))))
    (define to-run (plan-suffix (topo-sort G required)))
    (unless (memq subject-task to-run)
-     (error 'stelis "--why ~a: task ~a is not in the --from ~a suffix"
-            name subject-task (from-task)))
+     (error 'stelis "--why ~a: task ~a is not in the scope~a"
+            name subject-task (scope-note)))
    (define exps (plan-explanations G to-run benv))
    (define thy (explanations->theory G exps))
    (define dec-of (for/hash ([e (in-list exps)])
@@ -1099,14 +1120,14 @@
       (print-context-banner!)
       (define to-run (plan-suffix ordered))
       (printf "Explain — ~a task(s)~a, in build order:\n"
-              (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
+              (length to-run) (scope-note))
       (printf "  ≡ skips · ≈ conditional (upstream reruns) · ▶ runs\n\n")
       (print-explanations (plan-explanations G to-run benv)
                           (make-reason->string G benv stelis-state))]
      [(eq? (mode) 'commands)
       (define to-run (plan-suffix ordered))
       (printf "Dry run — ~a command(s)~a, in build order (nothing executed):\n"
-              (length to-run) (if (from-task) (format ", from ~a" (from-task)) ""))
+              (length to-run) (scope-note))
       (printf "  ≡ cached · ≈ conditional (upstream reruns) · ▶ would run\n\n")
       (print-plan-commands G to-run RT #:context benv)]
      [else
