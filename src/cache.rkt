@@ -517,7 +517,13 @@
 ;; (observe-output), the boundary input snapshot (input-store-snapshot) — goes
 ;; through here, so a new keyed kind is added in exactly one place.
 ;;   'dir         (path -> content-hash)     via tree-hashes
-;;   'db-relation (column -> "digest:count") via resolve-relation-columns
+;;   'db-relation (key -> "digest:count")    via resolve-store-keys when the project
+;;                declares the relation KEYED (ADR 0016: salishsea's occurrences by
+;;                Pacific day) — the grain its fan-out consumers are rebuilt at;
+;;                otherwise (column -> "digest:count") via resolve-relation-columns,
+;;                the attribute-level observation. One or the other: a keyed
+;;                relation's per-key map IS its per-part layer, and a map that mixed
+;;                the two keyspaces would read columns as moved keys.
 ;;   'file        (key -> "digest:count")    via resolve-store-keys — a keyed store;
 ;;                #f for a plain file (no per-key layer)
 ;;   else (token/external) -> #f
@@ -525,7 +531,10 @@
   (case kind
     [(dir) (let ([p (env-resolve env a)])
              (and p (tree-hashes p #:exclude (env-dir-exclusions env a))))]
-    [(db-relation) (let ([rrc (build-env-resolve-relation-columns env)]) (and rrc (rrc a)))]
+    [(db-relation)
+     (define rsk (build-env-resolve-store-keys env))
+     (define rrc (build-env-resolve-relation-columns env))
+     (or (and rsk (rsk a)) (and rrc (rrc a)))]
     [(file) (let ([rsk (build-env-resolve-store-keys env)]) (and rsk (rsk a)))]
     [else #f]))
 

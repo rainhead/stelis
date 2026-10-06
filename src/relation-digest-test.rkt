@@ -215,6 +215,29 @@
      (make-relation-observer '(r) (lambda (_) #f) (lambda (_) '("s.r"))))
    (test-false "no database yet: no answer" (none-digest 'r))
 
+   ;; --- A relation observed by a key (ADR 0016) -------------------------------------
+   ;; Rows grouped by an expression, each group a (key -> "digest:count") part: the map a
+   ;; keyed store has, so a fan-out over the relation can be rebuilt per key.
+   (ddl! db (string-append
+             "CREATE TABLE s.ev (id INTEGER, observed_at TIMESTAMPTZ, v VARCHAR);"
+             "INSERT INTO s.ev VALUES (1, '2026-10-05 20:00:00+00', 'a'), (2, '2026-10-06 03:00:00+00', 'b'),"
+             " (3, '2026-10-06 18:00:00+00', 'c');"))
+   (define by-day "strftime(timezone('PST8PDT', observed_at), '%Y-%m-%d')")
+   (define keys0 (relation-keys db "s.ev" by-day))
+   (test-equal? "one part per key, sorted; rows 1 and 2 share a Pacific day"
+                (map car keys0) '("2026-10-05" "2026-10-06"))
+   (test-equal? "a part's count is its rows" (map (lambda (p) (cadr (string-split (cdr p) ":"))) keys0) '("2" "1"))
+   (ddl! db "UPDATE s.ev SET v = 'z' WHERE id = 3;")
+   (define keys1 (relation-keys db "s.ev" by-day))
+   (test-equal? "a changed row moves its key's digest and no other's"
+                (for/list ([a keys0] [b keys1]) (equal? (cdr a) (cdr b))) '(#t #f))
+   (ddl! db "INSERT INTO s.ev VALUES (4, '2026-10-07 20:00:00+00', 'd');")
+   (test-equal? "a new day is a new key" (map car (relation-keys db "s.ev" by-day)) '("2026-10-05" "2026-10-06" "2026-10-07"))
+   (test-equal? "an empty relation has no keys" (relation-keys db "s.ev" "1 = 0 AND " ) #f)
+   (ddl! db "DELETE FROM s.ev;")
+   (test-equal? "no rows, no keys" (relation-keys db "s.ev" by-day) '())
+   (test-false "a malformed table name is refused, not interpolated" (relation-keys db "s.ev; DROP" by-day))
+
    ;; --- Pending relations stay out of a batch they weren't asked about (st-3jv) ---
    ;; `c' and `kw' are about to be rewritten by a task still to run; asking about `r'
    ;; must not digest them along the way, or the answer taken now is held past the

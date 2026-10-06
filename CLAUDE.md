@@ -238,7 +238,13 @@ stale-output question LAZILY (a thunk): only a task every content reason has pas
 pays for the relation digests and tree hashes it is.
 A relation may live in a SQLite file (`sqlite-db`, st-ml9): the file is
 ATTACHed read-only into a transient DuckDB and digested the same row-coherent
-way, which is how salishsea's mirrors are inputs without a second digest ·
+way, which is how salishsea's mirrors are inputs without a second digest. A
+relation the project declares KEYED (`relation-keys`, ADR 0016) is observed per
+key — rows grouped by a SQL expression, each group digested and counted, the shape
+a keyed store has — IN PLACE of its per-column parts (cache.rkt's
+`artifact-key-parts` asks the project's `resolve-store-keys` first), so a fan-out
+'dir `store-keyed` on it rebuilds per key: salishsea's `build.occurrences` by
+Pacific day, and `occurrence-days` a partial task writing only the moved days ·
 [`written.rkt`](src/written.rkt) which artifacts a task has written in this
 process: `run-task` (and a derivation) notes its declared outputs when it finishes,
 so a cached observation is keyed by the artifact's write generation — the same

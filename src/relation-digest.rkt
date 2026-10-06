@@ -52,6 +52,7 @@
 (define ROW-HASH "hash")
 
 (provide relation-digest relation-columns relation-row-count
+         relation-keys
          make-relation-observer
          observe-tables ; for its tests: the observer falls back silently when it fails
          (struct-out sqlite-db))
@@ -116,6 +117,48 @@
        (andmap (lambda (t) (regexp-match? qualified-name? t)) tables)
        (let ([out (query-db db (relation-query tables))])
          (and out (sha1 (open-input-string out))))))
+
+;; --- Per-KEY digests (ADR 0016) ------------------------------------------------
+;; A relation observed by a KEY the project declares: the rows grouped by a SQL
+;; expression over the table's columns, each group's order-independent digest and
+;; row count as ("<key>" -> "<digest>:<count>") — the per-key map a keyed STORE has
+;; (notes-digest.rkt), so a fan-out 'dir declared store-keyed on the relation can be
+;; rebuilt per key (rebuild-policy.rkt), pruned per key, and its identity checked
+;; against the relation's keyset (fan-out-key.rkt). salishsea's build.occurrences by
+;; Pacific day is the first: the day files, one per key, rewrote whole on every save.
+;; The key expression is the project's hand copy of the consumer's own (the script
+;; that writes the files groups the same way); the identity check is what catches
+;; the two drifting apart. Like the per-column digests, this is an OBSERVATION, not
+;; the skip signal: the row-coherent relation-digest stays the identity (st-d5d).
+;; The key is `coalesce(k::VARCHAR, '')`: a NULL key is not a file name, and the
+;; identity check reports the orphan rather than this failing to read.
+
+;; relation-keys : (or/c path-string sqlite-db) string string
+;;   -> (or/c (listof (cons string string)) #f)
+;; Sorted ("<key>" -> "<digest>:<count>") pairs over `qualified' grouped by
+;; `key-expr', or #f when the relation can't be read.
+(define (relation-keys db qualified key-expr)
+  (and (regexp-match? qualified-name? qualified)
+       (let ([out (query-db db (keys-query qualified key-expr))])
+         (and out (parse-tab-lines out)))))
+
+(define (keys-query qualified key-expr)
+  (string-append
+   "SELECT coalesce(k::VARCHAR, '') || chr(9) || "
+   "coalesce(sum(" ROW-HASH "(to_json(x)::VARCHAR))::VARCHAR, '0') || ':' || count(*)::VARCHAR
+"
+   "FROM (SELECT (" key-expr ") AS k, * FROM " qualified ") x GROUP BY k ORDER BY coalesce(k::VARCHAR, '');"))
+
+;; Each line is "<key>\t<value>"; split on the FIRST tab (a key may carry spaces or
+;; colons, never a tab). Blank lines (an empty relation) drop out -> '().
+(define (parse-tab-lines out)
+  (for*/list ([line (in-list (string-split out "\n"))]
+              [trimmed (in-value (string-trim line #:left? #f))]
+              #:unless (string=? "" trimmed)
+              [tab (in-value (for/first ([c (in-string trimmed)] [i (in-naturals)]
+                                         #:when (char=? c #\tab)) i))]
+              #:when tab)
+    (cons (substring trimmed 0 tab) (substring trimmed (add1 tab)))))
 
 ;; --- Per-column digests (st-7vz) ----------------------------------------------
 ;; The ATTRIBUTE-level refinement of relation-digest: each column's own

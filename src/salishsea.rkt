@@ -71,6 +71,7 @@
          "exec.rkt"
          "project.rkt"
          "relation-digest.rkt"
+         (only-in "fan-out-key.rkt" store-keyed)
          (only-in "written.rkt" write-generation))
 
 (provide salishsea-project
@@ -341,8 +342,10 @@
    ;; sidecar and their checksums, at /dwca/ as the nightly workflow published them.
    (make-artifact 'dwca 'dir)
    ;; One JSON array per Pacific day, newest first — what fetchOccurrences gets
-   ;; for that day with no region selected.
-   (make-artifact 'days 'dir)
+   ;; for that day with no region selected. Store-keyed on the occurrences by day
+   ;; (ADR 0016): a file per key of the relation, so a save rewrites the one day it
+   ;; touched (occurrence-days is a partial task) and a day that empties is pruned.
+   (make-artifact 'days 'dir #:keyed-by (store-keyed 'build.occurrences "{}.json"))
    ;; The calendar's day counts, one file per Pacific month, per region — what
    ;; the occurrence_days RPC returns (decision 056).
    (make-artifact 'calendar 'dir)
@@ -809,6 +812,33 @@
    relation-tables
    #:pending? boundary-pending?))
 
+;; --- Relations observed by a key (ADR 0016) ------------------------------------
+;; build.occurrences by Pacific day: the grain the day files are written at, so the
+;; engine can say which days a save moved and occurrence-days can rewrite those
+;; alone. The key expression is a hand copy of occurrence-days.ts's own (its DAY_ZONE
+;; and strftime), and the store-keyed identity check on days/ is what catches the two
+;; drifting apart. The per-key map is the relation's per-part observation in place of
+;; its per-column one (cache.rkt's artifact-key-parts), recorded by derive-occurrences
+;; and read live by occurrence-days's decision; held, like the observer's answers,
+;; until a task writes the relation.
+(define OCCURRENCE-DAY "strftime(timezone('PST8PDT', observed_at), '%Y-%m-%d')")
+(define keyed-relations
+  (hash 'build.occurrences (cons "build.occurrences" OCCURRENCE-DAY)))
+(define keyed-memo (make-hasheq))   ; artifact -> (generation . pairs)
+(define (salishsea-resolve-store-keys artifact)
+  (define spec (hash-ref keyed-relations artifact #f))
+  (and spec
+       (let ([gen (write-generation artifact)]
+             [held (hash-ref keyed-memo artifact #f)])
+         (cond
+           [(and held (= (car held) gen)) (cdr held)]
+           [else
+            (define keys (and (file-exists? snapshot-db)
+                              (relation-keys snapshot-db (car spec) (cdr spec))))
+            ;; an unreadable relation (no snapshot file yet) is asked again next time
+            (when keys (hash-set! keyed-memo artifact (cons gen keys)))
+            keys]))))
+
 ;; --- Build clock (ADR 0004) -------------------------------------------------
 ;; The committer date of the checkout's HEAD, as for beeatlas; an already-set
 ;; SOURCE_DATE_EPOCH wins. Nothing in slice 1 stamps a time, but every task gets
@@ -841,6 +871,10 @@
                 #:path salishsea-path
                 #:resolve-relation resolve-relation
                 #:resolve-relation-columns resolve-relation-columns
+                #:resolve-store-keys salishsea-resolve-store-keys
+                ;; Rebuilt per key (st-pd1 / ADR 0016): occurrence-days writes only the
+                ;; days the occurrences' per-day delta names, and prunes the emptied.
+                #:partial-tasks '(occurrence-days)
                 ;; Told which inputs changed (ADR 0015): the occurrences derivation is
                 ;; one source arm per input group, written one source at a time, so a
                 ;; save — the store's tables — recomputes the native arm alone

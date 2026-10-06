@@ -82,6 +82,19 @@
   (decide snap-a (entry) '() stale)
   (check-equal? asked 1 "only a task that would otherwise skip asks"))
 
+;; artifact-key-parts (ADR 0016): a db-relation the project declares KEYED has its
+;; keys as parts, in place of its columns; one it does not, its columns.
+(let ()
+  (define keyed '(("2026-10-05" . "h1:2") ("2026-10-06" . "h2:1")))
+  (define columns '(("s.ev.*" . "3") ("s.ev.v" . "c:3")))
+  (define env (make-build-env (lambda (a _d) #f) "/nowhere" "/nowhere/cache"
+                              #:resolve-relation-columns (lambda (a) columns)
+                              #:resolve-store-keys (lambda (a) (and (eq? a 'by-day) keyed))))
+  (check-equal? (artifact-key-parts 'by-day 'db-relation env) keyed
+                "a keyed relation's per-part layer is its per-key map")
+  (check-equal? (artifact-key-parts 'plain 'db-relation env) columns
+                "an unkeyed relation keeps its per-column observation"))
+
 ;; stale-relation-outputs: which db-relation outputs no longer match the DuckDB.
 (let* ([dummy (build-path "/tmp/cache-test-x")]
        [g (build-graph (list (make-task 'load 'transform #:outputs '(rel)))
