@@ -104,6 +104,12 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   build records name their project: a state dir holding another project's builds
   is refused rather than read across (st-z1c). salishsea's state defaults into its
   own checkout; beeatlas's stays cwd-relative `.stelis` (st-7f4).
+- **Which database:** every banner names the DuckDB the answers are about, and
+  whether an env var chose it or it is the fallback. beeatlas's is STRICT
+  (st-az9): `--build`/`--run`/`--trace-reads`/`--verify`/`--verify-edges` refuse
+  when `DB_PATH` is unset and the checkout copy exists, so a local build says
+  `DB_PATH=~/dev/beeatlas/data/beeatlas.duckdb` out loud. Its nightly once gated
+  against that stale copy while the pipeline read the serving one.
 - **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner
@@ -523,7 +529,8 @@ reads like "integration-gate", the alarm. One self-reported bit — the first
 deliberate step into st-s8i territory, no destination observation ·
 [`project.rkt`](src/project.rkt) a PROJECT as one value (st-ml9.1): a graph plus
 everything the CLI needs to build it — path resolver, runtimes, relation
-resolvers, build clock, checkout, default state dir. main.rkt is written against
+resolvers, build clock, checkout, default state dir, the databases it reads
+(`db-binding`: env var, fallback, and whether the fallback is refused). main.rkt is written against
 it, so a second graph is a second value, not a second CLI ·
 [`salishsea.rkt`](src/salishsea.rkt) the second project (st-ml9): salishsea.io's
 logged-out reads as static files — and since salishsea's decision 061

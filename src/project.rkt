@@ -52,8 +52,84 @@
 ;;                        salishsea builds every five minutes and publishes nothing
 ;;                        from it, so rendering it each time was ~6 s of every build
 ;;                        for a page nobody opened. --render-log renders it on demand.
+;;   databases          : (listof db-binding) — the database files the project's
+;;                        answers are claims about, each chosen by an env var with a
+;;                        fallback. Named in the context banner, and a STRICT one's
+;;                        fallback is refused by the modes that execute (st-az9).
 (provide (struct-out project)
-         make-project)
+         make-project
+         (struct-out db-binding)
+         env-db-binding
+         db-binding-description
+         db-binding-refusal)
+
+;; --- which database (st-az9) ------------------------------------------------------
+;; A database a project reads is chosen by an env var, falling back to a default
+;; path for local runs. The fallback is a convenience that turns into a wrong answer
+;; the moment two copies exist: beeatlas's nightly ran its publish gate before
+;; exporting DB_PATH, so the gate read the checkout's five-month-stale copy while
+;; the pipeline after it read the serving one, and a fix to the serving database
+;; changed nothing. An unset variable alone is not the hazard (an absent fallback
+;; fails on its own); the hazard is "unset AND the fallback exists" — a confident
+;; answer about the wrong file.
+;;
+;;   label     : string — what the file is, for a reader ("beeatlas DuckDB")
+;;   path      : path — the file chosen
+;;   env       : string — the variable that chooses it
+;;   from-env? : boolean — #t when `env' chose it, #f when it is the fallback
+;;   strict?   : boolean — refuse the fallback in modes that execute tasks. Strict
+;;               where something OUTSIDE this invocation decides which copy is real
+;;               (beeatlas: the nightly's pipeline); not where the build writes the
+;;               file itself and the fallback is simply where it keeps it
+;;               (salishsea's snapshot).
+;; Resolution stays TOTAL — a binding is a module-level value, and raising there
+;; would break planning, the test suite, and CI (which has no checkout). The
+;; refusal lands at the point of use.
+(struct db-binding (label path env from-env? strict?) #:transparent)
+
+;; env-db-binding : string string path #:strict? boolean -> db-binding
+;; An empty value counts as unset, so `VAR= racket ...` cannot name the empty path.
+(define (env-db-binding label env fallback #:strict? [strict? #f])
+  (define v (getenv env))
+  (if (and v (not (string=? v "")))
+      (db-binding label (string->path v) env #t strict?)
+      (db-binding label fallback env #f strict?)))
+
+;; db-binding-description : db-binding boolean -> string
+;; The banner's line for one binding, given whether its file exists now. Says
+;; where the choice came from, because "which file" is only half the question —
+;; the other half is whether anyone MEANT it.
+(define (db-binding-description b exists?)
+  (format "~a: ~a~a~a"
+          (db-binding-label b) (db-binding-path b)
+          (if (db-binding-from-env? b)
+              (format " (from ~a)" (db-binding-env b))
+              ;; Shouted only where the fallback can be the wrong file.
+              (format " — ~a is unset, so this is the ~a" (db-binding-env b)
+                      (if (db-binding-strict? b) "FALLBACK" "default")))
+          (if exists? "" " — no such file")))
+
+;; db-binding-refusal : db-binding boolean string -> (or/c string #f)
+;; Why a mode that executes tasks must not proceed on this binding, or #f. Only
+;; the ambiguous case refuses: strict, the fallback, and the fallback exists.
+;; `mode' is the flag being refused, for the message.
+(define (db-binding-refusal b exists? mode)
+  (and (db-binding-strict? b)
+       (not (db-binding-from-env? b))
+       exists?
+       (format (string-append
+                "~a would read the ~a at
+  ~a
+"
+                "because ~a is unset and that is the fallback. A mode that runs tasks
+"
+                "does not guess which copy you mean: the pipeline you are gating may read
+"
+                "a different one (st-az9). Say which:
+"
+                "  ~a=~a racket src/main.rkt ~a ...")
+               mode (db-binding-label b) (db-binding-path b) (db-binding-env b)
+               (db-binding-env b) (db-binding-path b) mode)))
 
 (struct project (name graph runtimes path
                  resolve-relation resolve-relation-columns resolve-store-keys
@@ -62,7 +138,8 @@
                  checkout checkout-env
                  default-state-dir
                  history-retention
-                 build-log-after-build?))
+                 build-log-after-build?
+                 databases))
 
 (define (make-project name
                       #:graph graph
@@ -79,7 +156,8 @@
                       #:checkout-env checkout-env
                       #:default-state-dir default-state-dir
                       #:history-retention [history-retention #f]
-                      #:build-log-after-build? [build-log-after-build? #t])
+                      #:build-log-after-build? [build-log-after-build? #t]
+                      #:databases [databases '()])
   (project name graph runtimes path
            resolve-relation resolve-relation-columns resolve-store-keys
            partial-tasks incremental-tasks edge-verify-tasks
@@ -87,4 +165,5 @@
            checkout checkout-env
            default-state-dir
            history-retention
-           build-log-after-build?))
+           build-log-after-build?
+           databases))

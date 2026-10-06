@@ -386,13 +386,17 @@
 ;; any change to the table changes all three hashes, so a stale input can never
 ;; read as unchanged — the failure is at worst an over-rebuild, never a false skip.
 ;; The DuckDB Stelis content-addresses (relation digests, the integrity gate).
-;; Honors DB_PATH — the same env var run.py's pipeline reads — so under nightly.sh
-;; (DB_PATH=/tmp/beeatlas.duckdb, pulled from S3) Stelis reads the SAME db the
-;; pipeline writes, not the local-dev checkout copy. Defaults to the checkout db
-;; for local runs (mirrors BEEATLAS_DIR / NOTES_DB_PATH).
-(define beeatlas-db
-  (let ([p (getenv "DB_PATH")])
-    (if p (string->path p) (build-path DATA "beeatlas.duckdb"))))
+;; Chosen by DB_PATH — the env var beeatlas's pipeline reads — with the checkout
+;; copy as the fallback for local runs. Reading the same db as the pipeline is
+;; NOT something this resolution can promise: it holds only when the caller has
+;; exported DB_PATH by the time Stelis starts, and beeatlas's nightly once ran its
+;; gate before doing so, so the gate read the checkout's stale copy (st-az9). So
+;; the binding is STRICT: modes that execute tasks refuse the fallback when it
+;; exists, and every banner names the file (project.rkt's db-binding).
+(define beeatlas-db-binding
+  (env-db-binding "beeatlas DuckDB" "DB_PATH" (build-path DATA "beeatlas.duckdb")
+                  #:strict? #t))
+(define beeatlas-db (db-binding-path beeatlas-db-binding))
 
 ;; beeatlas-relation-tables : symbol -> (or/c (listof string) #f)
 ;; The qualified physical tables a db-relation artifact occupies, or #f for an
@@ -1391,4 +1395,5 @@
                 #:source-date-epoch beeatlas-source-date-epoch
                 #:checkout (string->path BEEATLAS)
                 #:checkout-env "BEEATLAS_DIR"
-                #:default-state-dir (build-path ".stelis")))
+                #:default-state-dir (build-path ".stelis")
+                #:databases (list beeatlas-db-binding)))

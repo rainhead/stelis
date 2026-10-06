@@ -88,9 +88,13 @@
 ;; volume, since the checkout there is the image and does not survive a restart.
 ;; The recipes and the engine read the same absolute path, so the file a task
 ;; writes is the file the engine content-addresses.
-(define snapshot-db
-  (let ([p (getenv "SALISHSEA_SNAPSHOT_DB")])
-    (if (and p (not (string=? p ""))) (string->path p) (in-checkout "data" "read-path.duckdb"))))
+;; Not strict (project.rkt's db-binding): the build writes this file itself, so
+;; the fallback is where a local build keeps it, not a stale copy of someone
+;; else's. Still named in every banner — which file is half of any answer.
+(define snapshot-db-binding
+  (env-db-binding "snapshot DuckDB" "SALISHSEA_SNAPSHOT_DB"
+                  (in-checkout "data" "read-path.duckdb")))
+(define snapshot-db (db-binding-path snapshot-db-binding))
 (define SNAPSHOT-DB (path->string snapshot-db))
 
 ;; Each upstream source's mirror, once the build ingests it itself (salishsea decision
@@ -898,4 +902,5 @@
                 ;; Nothing publishes salishsea's build log, and at a build every five
                 ;; minutes rendering it cost ~6 s of each; --render-log draws it when
                 ;; someone wants to read it.
-                #:build-log-after-build? #f))
+                #:build-log-after-build? #f
+                #:databases (list snapshot-db-binding)))

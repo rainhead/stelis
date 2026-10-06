@@ -282,6 +282,24 @@
 ;; Printed at the top of --why and --explain. Two facts, because two env vars can
 ;; independently send this off the rails and neither failure is visible in the
 ;; output otherwise.
+;; print-databases! : -> void — one line per database the project reads.
+(define (print-databases!)
+  (for ([b (in-list (project-databases P))])
+    (printf "Reading ~a\n"
+            (db-binding-description b (file-exists? (db-binding-path b))))))
+
+;; refuse-ambiguous-databases! : string -> void
+;; The modes that EXECUTE tasks — where a wrong database yields wrong artifacts or
+;; a wrong verdict, not a wrong printout — refuse a strict binding's fallback when
+;; the fallback exists (st-az9). Read-only modes keep it: that is where local-dev
+;; convenience lives, and the banner names the file there instead.
+(define (refuse-ambiguous-databases! flag)
+  (for ([b (in-list (project-databases P))])
+    (define why (db-binding-refusal b (file-exists? (db-binding-path b)) flag))
+    (when why
+      (eprintf "stelis: ~a\n" why)
+      (exit 2))))
+
 (define (print-context-banner!)
   ;; A checkout defaults to the author's laptop path, so on any other host an unset
   ;; BEEATLAS_DIR (or the project's equivalent) makes every code file "missing" and
@@ -320,6 +338,11 @@
   ;; were byte-identical to their recorded digests in the dir I THOUGHT I was asking
   ;; about. (Note $EXPORT_DIR is not consulted here — the flag is, so exporting the
   ;; variable the way the nightly does changes nothing.)
+  ;; And the database(s) every relation digest and record count is a claim about
+  ;; (st-az9). The fourth load-bearing path, and the one beeatlas's nightly got
+  ;; wrong without a word: its gate read the checkout's stale copy while the
+  ;; pipeline after it read the serving one.
+  (print-databases!)
   (cond
     [(export-dir-arg)
      (printf "Resolving outputs in: ~a\n\n" (scratch-out-path))]
@@ -502,6 +525,16 @@
                               o)))
   (printf "build log: ~a (~a build~a)\n"
           out-file recorded (if (= 1 recorded) "" "s")))
+
+;; Before any mode runs a task: refuse an ambiguous database, and say which one
+;; this run reads — a build's log is where the next person will look (st-az9).
+(define EXECUTING-MODES
+  (hash 'build "--build" 'run "--run" 'trace-reads "--trace-reads"
+        'verify "--verify" 'verify-edges "--verify-edges"))
+(let ([flag (hash-ref EXECUTING-MODES (mode) #f)])
+  (when flag
+    (refuse-ambiguous-databases! flag)
+    (print-databases!)))
 
 (cond
   ;; --- what did the last real build decide and do? -----------------------
