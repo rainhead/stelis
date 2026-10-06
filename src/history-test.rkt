@@ -191,10 +191,11 @@
 
 (delete-directory/files kd)
 
-;; --- #:keyed-tail: the maps a recent-builds reader needs, and no others ---------
+;; --- history-tail: the builds a recent-builds reader needs, and no others --------
 ;; The build log shows the last k builds and diffs each production with the one
-;; before it, however old. So: the last k builds' maps, and before them each
-;; artifact's latest map; everything older is marked, never read as an answer.
+;; before it, however old. So: the last k builds, maps read; before them, only the
+;; builds holding each artifact's latest earlier map, that map read and the rest
+;; marked; nothing older is loaded at all.
 (let ([kt (make-temporary-file "stelis-history-tail-~a" 'directory)])
   (define cache-skip
     (trace-record 'maps (decision 'skip 'inputs-unchanged '()) #f 'cached '() #f '() '() '()))
@@ -203,26 +204,66 @@
   (history-append! kt 'species-maps kg "3" (list cache-skip))
   (history-append! kt 'species-maps kg "4" (list (rec-maps "t2" '(("a" . "2")))))
   (define (keys-at builds n)
-    (let ([p (assq 'species-maps
-                   (trace-record-output-key-hashes (first (build-record-records (list-ref builds (sub1 n))))))])
+    (define br (findf (lambda (b) (= n (build-record-number b))) builds))
+    (let ([p (and br (assq 'species-maps
+                           (trace-record-output-key-hashes (first (build-record-records br)))))])
       (and p (cdr p))))
   (define full (history-load kt))
-  (define tail (history-load kt #:keyed-tail 1))
+  (define tail (history-tail kt 1 #:basis? #t))
+  (check-equal? (map build-record-number tail) '(2 4)
+                "the tail, and before it only the build holding the latest earlier map — build 3 didn't produce, so build 2")
   (check-equal? (keys-at tail 4) '(("a" . "2")) "the tail's own map is read")
-  (check-equal? (keys-at tail 2) '(("a" . "1"))
-                "and the latest map before it — build 3 didn't produce, so build 2's — the delta's basis")
-  (check-eq? (keys-at tail 1) 'unresolved "an older map is marked, not read")
-  (check-equal? (map build-record-epoch tail) (map build-record-epoch full) "every build still loads")
+  (check-equal? (keys-at tail 2) '(("a" . "1")) "and the basis map")
+  (check-equal? (map build-record-number (history-tail kt 1)) '(4) "without a basis, the tail alone")
+  (check-equal? (map build-record-number (history-tail kt 10 #:basis? #t)) '(1 2 3 4)
+                "a tail longer than the history is the history")
+  (check-equal? (map build-record-epoch (history-tail kt 10)) (map build-record-epoch full))
   (define (kobs-of builds)
-    (for*/list ([(br i) (in-indexed (in-list builds))]
+    (for*/list ([br (in-list builds)]
                 [r (in-list (build-record-records br))]
                 [p (in-value (assq 'species-maps (trace-record-output-key-hashes r)))]
                 #:when p)
-      (key-observation (add1 i) (cdr p) r)))
+      (key-observation (build-record-number br) (cdr p) r)))
   (check-equal? (build-key-delta 'species-maps (kobs-of tail) 4)
                 (build-key-delta 'species-maps (kobs-of full) 4)
                 "so the newest build's delta is the full load's")
+  ;; the other bounded readers
+  (check-equal? (history-last-number kt) 4)
+  (check-equal? (build-record-epoch (history-last kt)) "4")
+  (check-equal? (keys-at (list (history-last kt #:keyed 'none)) 4) 'unresolved
+                "a reader that wants no maps gets them marked, not decoded")
+  (check-equal? (build-record-epoch (history-find kt 2)) "2")
+  (check-false (history-find kt 9) "a number past the end is not a build")
+  (check-equal? (history-fold kt (lambda (br n) (+ n (length (build-record-records br)))) 0) 4
+                "a fold sees every build without holding them")
   (delete-directory/files kt))
+
+;; --- Build numbers ride the line (st-6gv) -----------------------------------------
+;; A line written before numbering carries none; a reader numbers it from its
+;; neighbours, forward by counting and backward from the next newer build, and the
+;; two agree. Once a numbered line exists, the newest one's number is read, not
+;; counted.
+(let ([nt (make-temporary-file "stelis-history-numbers-~a" 'directory)])
+  (define f (build-path nt "history.rktd"))
+  (define (write-line! e)
+    (call-with-output-file f #:exists 'append (lambda (o) (write e o) (newline o))))
+  (define (legacy epoch)
+    (hash 'version 3 'project 'beeatlas 'target 'all 'graph-hash "g" 'epoch epoch
+          'records (list (list 't (list 'run 'x '()) #f 'ok '() #f '() '() '() #f))))
+  (write-line! (legacy "1"))
+  (write-line! (legacy "2"))
+  (check-equal? (history-last-number nt) 2 "unnumbered lines are counted")
+  (check-false (hash-has-key? (read (open-input-string (car (file->lines f)))) 'number))
+  (history-append! nt 'mid g "3" build1)
+  (check-equal? (hash-ref (read (open-input-string (last (file->lines f)))) 'number) 3
+                "a new line carries the number the count would have given it")
+  (write-line! "{ not a datum")
+  (history-append! nt 'mid g "4" build1)
+  (check-equal? (map build-record-number (history-load nt)) '(1 2 3 4) "forward: counted, then read")
+  (check-equal? (map build-record-number (history-tail nt 10)) '(1 2 3 4) "backward: read, then counted down")
+  (check-equal? (build-record-epoch (history-find nt 2)) "2" "an unnumbered build is found by the number it is given")
+  (check-equal? (build-record-epoch (history-find nt 4)) "4")
+  (delete-directory/files nt))
 
 ;; --- Retention (st-ml9.7): aged builds go, survivors keep their numbers ----------
 (let ([rt (make-temporary-file "stelis-history-retention-~a" 'directory)])

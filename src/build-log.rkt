@@ -108,7 +108,9 @@
 ;; kobs-for : (listof build-record) symbol -> (listof key-observation)
 ;; The artifact's per-key timeline reconstructed from the loaded builds — only
 ;; builds that genuinely re-produced it carry a map (a cached run records none),
-;; which is exactly the timeline shape build-key-delta expects.
+;; which is exactly the timeline shape build-key-delta expects. A map the loader
+;; marked rather than read (history.rkt's `unresolved': outside the window and not
+;; a basis, or a block gone) rides along as a non-list, for keyed-lines to see.
 (define (kobs-for builds artifact)
   (for*/list ([br (in-list builds)]
               [r (in-list (build-record-records br))]
@@ -122,15 +124,28 @@
 ;; (capped), via build-key-delta. Its three answers stay distinct on purpose:
 ;; a delta names the keys; 'no-basis is a first production (every key is new —
 ;; say the count, refuse to pretend a diff); 'not-produced cannot occur here
-;; (we only ask about artifacts this build's records carry a map for).
+;; (we only ask about artifacts this build's records carry a map for). A fourth
+;; answer is this page's own: when the map, or the one it would be diffed against,
+;; could not be read (a block gone), say so rather than fail the page or diff
+;; against an older map as if nothing stood between.
 (define (keyed-lines builds i rewrites)
   (define br (list-ref builds (sub1 i)))
+  (define at (build-record-number br))
   (for*/list ([r (in-list (build-record-records br))]
               [pair (in-list (trace-record-output-key-hashes r))])
     (define a (car pair))
-    (define d (build-key-delta a (kobs-for builds a) (build-record-number br)))
+    (define kobs (kobs-for builds a))
+    (define cur (findf (lambda (o) (= at (key-observation-build o))) kobs))
+    (define prev (let ([p (filter (lambda (o) (< (key-observation-build o) at)) kobs)])
+                   (and (pair? p) (last p))))
+    (define (readable? o) (or (not o) (list? (key-observation-keys o))))
+    (define d (if (and (readable? cur) (readable? prev))
+                  (build-key-delta a kobs at)
+                  'unreadable))
     (define story
       (cond
+        [(eq? d 'unreadable)
+         "an observation of this artifact could not be read (a block is missing) — no basis to diff"]
         [(eq? d 'no-basis)
          (format "first recorded production — ~a key(s), no basis to diff"
                  (length (cdr pair)))]
@@ -257,18 +272,27 @@ END
 ;; build-log-html : (listof build-record)
 ;;                  [#:rewrites (listof (cons string string))]
 ;;                  [#:limit exact-positive-integer]
+;;                  [#:recorded exact-nonnegative-integer]
+;;                  [#:first-number exact-positive-integer]
 ;;                  -> string
-;; The whole page. `builds` oldest-first, exactly as history-load returns them;
-;; rendered newest-first, capped at `limit` builds with the cap reported in the
-;; header. An empty history renders an honest empty page rather than erroring —
-;; the nightly should never fail over its own reporting.
+;; The whole page. `builds` oldest-first, as history returns them; rendered
+;; newest-first, capped at `limit` builds with the cap reported in the header.
+;; `builds' may be a WINDOW rather than the whole history (history-tail, st-6gv):
+;; the last `limit' of them are shown, and any before those are there as a delta's
+;; basis only. `recorded' then says how many builds the history holds and
+;; `first-number' where it starts, since the list no longer says. An empty history
+;; renders an honest empty page rather than erroring — the nightly should never
+;; fail over its own reporting.
 (define (build-log-html builds #:rewrites [rewrites '()] #:limit [limit 30]
-                        #:receipts [receipts '()])
+                        #:receipts [receipts '()]
+                        #:recorded [recorded (length builds)]
+                        #:first-number [first-number (if (pair? builds) (build-record-number (first builds)) 1)])
   (define n (length builds))
   (define shown-count (min n limit))
   ;; the highest-numbered build with a JOINED published receipt — the header
   ;; line that answers "is what I'm reading live?" at a glance. Omitted when no
-  ;; receipt says so (pre-feature histories): absence over accusation.
+  ;; receipt says so (pre-feature histories), and when the last published build
+  ;; is older than the loaded window: absence over accusation, both times.
   (define last-published
     (for/last ([br (in-list builds)]
                #:when (let ([r (receipt-for receipts (build-record-number br) (build-record-epoch br))])
@@ -278,10 +302,9 @@ END
     (if (zero? n)
         "<p class=\"sum\">no builds recorded yet</p>"
         (format "<p class=\"sum\">~a build~a recorded~a · latest #~a, source @ ~a~a~a</p>"
-                n (if (= n 1) "" "s")
+                recorded (if (= recorded 1) "" "s")
                 ;; retention (history-prune!) dropped the ones numbered below these
-                (let ([first-kept (build-record-number (first builds))])
-                  (if (> first-kept 1) (format " (#~a on; earlier ones expired)" first-kept) ""))
+                (if (> first-number 1) (format " (#~a on; earlier ones expired)" first-number) "")
                 (build-record-number (last builds))
                 (html-escape (epoch->utc (build-record-epoch (last builds))))
                 (if last-published
@@ -289,7 +312,7 @@ END
                             (build-record-number last-published)
                             (html-escape (epoch->utc (build-record-epoch last-published))))
                     "")
-                (if (> n limit) (format " · showing the last ~a" limit) ""))))
+                (if (> recorded limit) (format " · showing the last ~a" limit) ""))))
   (string-append
    "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"

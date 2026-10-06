@@ -309,10 +309,18 @@ was written — the file's one clock, housekeeping only — and `history-prune!`
 the aged-out PREFIX, then deletes the blocks no remaining line names. It prunes in
 BATCHES (once the oldest build is a thirtieth of the retention past it, so about
 daily), because a prune rewrites and re-reads the whole log; the check for whether
-one is due reads only the oldest dated line. Nothing a build does every time reads the whole
-log any more — the project check reads its oldest and newest builds only — since
-Racket holds a string at four bytes a character and salishsea's log at retention is
-~200 MB on a 1 GB machine. salishsea also skips the build-log render after each
+one is due reads only the oldest dated line. NOTHING reads the whole log into
+memory any more (st-6gv): Racket holds a string at four bytes a character and
+salishsea's log at retention is ~200 MB on a 1 GB machine. Each line carries its
+build NUMBER (assigned at append from the line before; a line from before that is
+numbered from its neighbours), so a reader working back from the end knows a
+build's number without counting, and every mode reads from the end to what it
+needs — `history-last` / `history-find` / `history-tail` (the last k builds plus
+each keyed artifact's latest earlier map, the build log's basis), the newest N
+points of a per-key timeline (`#:last`, two for `--moved-keys`, one for a gate's
+baseline) — or folds over it one build at a time (`history-fold`, `history-key-fold`;
+`--history` and `--history <artifact>` print as they go). The one whole-timeline
+reader left is key-blame's. salishsea also skips the build-log render after each
 build (`#:build-log-after-build? #f`; nothing publishes it, `--render-log` draws it). The count dropped is a header line, so every survivor keeps its NUMBER
 (`build-record-number`; publish receipts join on number + epoch), and answers that
 reach the horizon say where the record starts ·
@@ -456,9 +464,9 @@ An ENGINE surface, not site content — Model Y untouched, beeatlas's 11ty never
 learns of it — and NOT a graph node: written AFTER the build from the completed
 records (the way the history log line is), so build N's page describes build N
 and the apparent "page about the build, produced by the build" recursion never
-arises. It loads history with `#:keyed-tail` (only the shown builds' maps, plus
-each artifact's map just before them, a delta's basis): a full load decoded every
-build's maps, 528 MB on salishsea's Fly machine at 370 builds. Pure function of the loaded build-records — same history, same bytes;
+arises. It loads `history-tail` (only the shown builds, plus the older build
+holding each artifact's map just before them, a delta's basis): a full load decoded
+every build's maps, 528 MB on salishsea's Fly machine at 370 builds. Pure function of the loaded build-records — same history, same bytes;
 its own stamp is the last build's SOURCE epoch, never wall clock — with absolute
 local paths relativized through caller-supplied rewrites before the page sits at
 a public URL (beeatlas.net/build-log.html: nightly.sh's EXIT trap copies it even

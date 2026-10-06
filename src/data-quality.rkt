@@ -53,7 +53,8 @@
 ;; the st-sds observation history.
 (define (previous-count state-dir relation)
   (and state-dir   ; no state-dir (e.g. --verify's runner) -> no baseline
-       (let ([obs (history-key-observations state-dir relation)])
+       ;; the newest observation only, read from the end of the log (st-6gv)
+       (let ([obs (history-key-observations state-dir relation #:last 1)])
          (and (pair? obs) (parts->rowcount (key-observation-keys (last obs)))))))
 
 ;; integrity-verdict : symbol (or/c integer #f) (or/c integer #f) real

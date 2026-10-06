@@ -50,8 +50,9 @@
              (for/list ([a (in-list (decision-details d))])
                (define live (live-key-map g a env))
                (and live
+                    ;; the basis is the newest recorded map; nothing older is read
                     (prospective-delta
-                     a (history-key-observations state-dir a) live))))]
+                     a (history-key-observations state-dir a #:last 1) live))))]
     [else '()]))
 
 ;; make-reason->string : graph build-env? path-string -> (symbol decision? -> string)

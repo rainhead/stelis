@@ -430,9 +430,6 @@
   (list (cons (dir-prefix (project-checkout P)) (format "~a/" (project-name P)))
         (cons (dir-prefix (simplify-path engine-src-dir)) "stelis/src/")
         (cons (dir-prefix (find-system-path 'home-dir)) "~/")))
-;; The page shows the last BUILD-LOG-SHOWN builds, so only theirs (and each
-;; artifact's map just before them, a delta's basis) are read from their blocks:
-;; a full load held every build's maps at once (history-load's #:keyed-tail).
 ;; What a history-reading answer must add once retention has dropped builds: the
 ;; history starts later than build #1, so "first recorded" means "first since then".
 (define (horizon-note)
@@ -442,23 +439,34 @@
               pruned (add1 pruned))
       ""))
 
-;; A mode that reads build numbers, epochs or records but no build's keyed maps loads
-;; with #:keyed-tail 0: every map is then decoded at most once per artifact rather
-;; than once per build, which on salishsea's Fly state is the difference between a
-;; few MB and an OOM kill (--last-build, 2026-10-02).
+;; No mode here loads the history whole (st-6gv): each reads from the end of the
+;; log to the builds it needs (history-tail, history-last, history-find), or folds
+;; over it one build at a time (history-fold, the timelines). On salishsea's Fly
+;; machine the log at retention is ~200 MB of text, which as Racket strings would
+;; not fit beside the site it serves; a full load was an OOM kill (--last-build,
+;; 2026-10-02; --history days, 2026-10-04).
+;;
+;; The page shows the last BUILD-LOG-SHOWN builds, so only theirs are loaded, plus
+;; the older build holding each keyed artifact's latest earlier map — a delta's
+;; basis (history-tail's #:basis?). How many builds the history holds is the last
+;; one's number less the pruned count: numbers are contiguous by construction.
 (define BUILD-LOG-SHOWN 30)
 (define (write-build-log!)
   (define out-file (build-path stelis-state "build-log.html"))
-  (define builds (history-load stelis-state #:keyed-tail BUILD-LOG-SHOWN))
+  (define pruned (history-pruned-count stelis-state))
+  (define builds (history-tail stelis-state BUILD-LOG-SHOWN #:basis? #t))
+  (define recorded (if (pair? builds) (- (build-record-number (last builds)) pruned) 0))
   (make-directory* stelis-state)
   (call-with-output-file out-file #:exists 'replace
     (lambda (o) (write-string (build-log-html builds
                                               #:limit BUILD-LOG-SHOWN
+                                              #:recorded recorded
+                                              #:first-number (add1 pruned)
                                               #:rewrites (build-log-rewrites)
                                               #:receipts (publish-receipts-load stelis-state))
                               o)))
   (printf "build log: ~a (~a build~a)\n"
-          out-file (length builds) (if (= 1 (length builds)) "" "s")))
+          out-file recorded (if (= 1 recorded) "" "s")))
 
 (cond
   ;; --- what did the last real build decide and do? -----------------------
@@ -542,11 +550,11 @@
   ;; exported for the run — a match proves the tail is this run's build, a
   ;; mismatch means the run died before appending and nothing should be marked.
   [(eq? (mode) 'last-build)
-   (define builds (history-load stelis-state #:keyed-tail 0))
-   (when (null? builds)
+   (define bld (history-last stelis-state #:keyed 'none))
+   (unless bld
      (eprintf "no builds recorded under ~a\n" (path->string stelis-state))
      (exit 1))
-   (printf "~a ~a\n" (build-record-number (last builds)) (build-record-epoch (last builds)))]
+   (printf "~a ~a\n" (build-record-number bld) (build-record-epoch bld))]
 
   ;; --- record a publish receipt (st-8x1) ---------------------------------
   ;; The publish path reporting back. Refusals are LOUD (exit 1): the caller
@@ -566,14 +574,13 @@
             (third args)))
    (unless (memq path '(nightly note))
      (error 'stelis "--mark-publish PATH must be nightly|note, given: ~a" (fifth args)))
-   (define builds (history-load stelis-state #:keyed-tail 0))
-   (define marked (and (exact-positive-integer? b)
-                       (findf (lambda (br) (= b (build-record-number br))) builds)))
+   (define marked (and (exact-positive-integer? b) (history-find stelis-state b)))
    (unless marked
+     (define last-number (history-last-number stelis-state))
+     (define pruned (history-pruned-count stelis-state))
      (error 'stelis "--mark-publish: no build #~a (history has ~a~a)" (first args)
-            (if (null? builds) "none"
-                (format "#~a–#~a" (build-record-number (first builds)) (build-record-number (last builds))))
-            (if (positive? (history-pruned-count stelis-state)) "; earlier ones expired" "")))
+            (if last-number (format "#~a–#~a" (add1 pruned) last-number) "none")
+            (if (positive? pruned) "; earlier ones expired" "")))
    (define actual-epoch (build-record-epoch marked))
    (unless (equal? epoch actual-epoch)
      (error 'stelis
@@ -613,12 +620,12 @@
         (unless (hash-ref (graph-artifacts G) art #f)
           (eprintf "~a — no artifact by that name in the graph.\n" art)
           (exit 1))
-        (when (null? (history-load stelis-state #:keyed-tail 0))
+        (unless (history-last-number stelis-state)
           (eprintf "~a — no build history under ~a/; nothing to explain.\n~a"
                    art (path->string stelis-state) (state-dir-note))
           (exit 1))
         ;; one read per artifact, not one per node: history-key-observations
-        ;; re-parses the whole log, and the chain revisits artifacts.
+        ;; walks the whole log, and the chain revisits artifacts.
         (define cache (make-hash))
         (define (kobs-of a)
           (hash-ref! cache a (lambda () (history-key-observations stelis-state a))))
@@ -644,32 +651,88 @@
   ;; No name: the list of builds (append order — for BROWSING, not freshness).
   ;; A name: that artifact's content-hash timeline, marking where it changed.
   [(eq? (mode) 'history)
-   (define builds (history-load stelis-state #:keyed-tail 0))
    (cond
-     [(null? builds)
+     [(not (history-last-number stelis-state))
       (printf "No build history under ~a/ — run --build first.\n~a"
               (path->string stelis-state) (state-dir-note))
       (exit 1)]
      [(not name)
-      (printf "Build history — ~a build(s), in append order~a:\n\n" (length builds)
+      ;; one line per build, from a fold that keeps the line's facts and lets the
+      ;; build go: number, target, graph, task count, epoch
+      (define lines
+        (reverse
+         (history-fold stelis-state
+                       (lambda (b acc)
+                         (cons (vector (build-record-number b) (build-record-target b)
+                                       (build-record-graph-hash b)
+                                       (length (build-record-records b))
+                                       (build-record-epoch b))
+                               acc))
+                       '())))
+      (printf "Build history — ~a build(s), in append order~a:\n\n" (length lines)
               (let ([pruned (history-pruned-count stelis-state)])
                 (if (positive? pruned)
                     (format " (#1–#~a expired under the project's retention)" pruned)
                     "")))
-      (for* ([(b prev) (in-parallel (in-list builds) (in-list (cons #f builds)))]
-             [i (in-value (build-record-number b))])
-        (define h (build-record-graph-hash b))
+      (for ([b (in-list lines)] [prev (in-list (cons #f lines))])
+        (define i (vector-ref b 0))
+        (define h (vector-ref b 2))
         ;; topology drift: flag a build whose graph differs from the one before
-        (define drift (and prev (not (equal? h (build-record-graph-hash prev)))))
+        (define drift (and prev (not (equal? h (vector-ref prev 2)))))
         (printf "~a~a. ~a   graph ~a~a   ~a task(s)   epoch ~a\n"
                 (if (< i 10) " " "") i
-                (build-record-target b) (short-hash h)
+                (vector-ref b 1) (short-hash h)
                 (if drift " (topology changed)" "")
-                (length (build-record-records b))
-                (build-record-epoch b)))]
+                (vector-ref b 3)
+                (vector-ref b 4)))]
      [else
       (define obs (history-observations stelis-state name))
-      (define kobs (history-key-observations stelis-state name))
+      (define kind (let ([a (hash-ref (graph-artifacts G) name #f)])
+                     (and a (artifact-kind a))))
+      (define noun (if (eq? kind 'db-relation) "column" "key"))
+      ;; The per-key story STREAMS (st-6gv): each map is diffed against the one
+      ;; before it as the log is read, and what is held is a printer per build
+      ;; closing over the moved keys — not the maps. A keyed artifact's whole
+      ;; timeline is every map it ever had, which for salishsea's days/ at
+      ;; retention is thousands of maps of thousands of keys.
+      (define key-story
+        (history-key-fold
+         stelis-state name
+         (lambda (o st)
+           ;; st : (vector prev-keys count printers), prev-keys a list, #f before
+           ;; the first point, or 'unreadable after a point that could not be read
+           (define prev (vector-ref st 0))
+           (define cur (key-observation-keys o))
+           (define b (key-observation-build o))
+           (define printer
+             (cond
+               [(not (list? cur))
+                (lambda () (printf "  build ~a  ? observation unreadable — a block is missing\n" b))]
+               [(not prev)
+                (define n (length cur))
+                (define by (trace-record-task (key-observation-record o)))
+                (lambda () (printf "  build ~a  ✦ ~a ~a(s) first seen   (by ~a)\n" b n noun by))]
+               [(eq? prev 'unreadable)
+                (define n (length cur))
+                (lambda () (printf "  build ~a  ~a ~a(s); the observation before it is unreadable, so no diff\n" b n noun))]
+               [else
+                (define-values (added removed changed) (diff-key-maps prev cur))
+                (define n (length cur))
+                (cond
+                  [(and (null? added) (null? removed) (null? changed))
+                   (lambda () (printf "  build ~a  ≡ rebuilt, all ~a ~a(s) identical\n" b n noun))]
+                  [else
+                   (lambda ()
+                     (printf "  build ~a  ± ~a changed, +~a added, -~a removed\n"
+                             b (length changed) (length added) (length removed))
+                     (show-keys "changed" changed)
+                     (show-keys "added" added)
+                     (show-keys "removed" removed))])]))
+           (vector (if (list? cur) cur 'unreadable)
+                   (add1 (vector-ref st 1))
+                   (cons printer (vector-ref st 2))))
+         (vector #f 0 '())))
+      (define key-count (vector-ref key-story 1))
       (cond
         [(null? obs)
          (printf "~a — no observations in the history.\n" name)
@@ -677,37 +740,14 @@
          (exit 1)]
         ;; a fan-out 'dir OR a db-relation: refine each ± into WHICH parts moved —
         ;; keys (paths) for a dir (st-6dv), columns for a relation (st-7vz)
-        [(pair? kobs)
-         (define kind (let ([a (hash-ref (graph-artifacts G) name #f)])
-                        (and a (artifact-kind a))))
-         (define noun (if (eq? kind 'db-relation) "column" "key"))
+        [(positive? key-count)
          (define source (case kind
                           [(db-relation) "db-relation"]
                           [(file)        "keyed store"]
                           [else          "fan-out 'dir"]))
-         (printf "~a — ~a observation(s), per ~a (~a):\n" name (length kobs) noun source)
+         (printf "~a — ~a observation(s), per ~a (~a):\n" name key-count noun source)
          (printf "  ✦ first seen · ≡ unchanged · ± ~as changed/added/removed\n\n" noun)
-         (for ([o (in-list kobs)] [prev (in-list (cons #f kobs))])
-           (define cur (key-observation-keys o))
-           (cond
-             [(not prev)
-              (printf "  build ~a  ✦ ~a ~a(s) first seen   (by ~a)\n"
-                      (key-observation-build o) (length cur) noun
-                      (trace-record-task (key-observation-record o)))]
-             [else
-              (define-values (added removed changed)
-                (diff-key-maps (key-observation-keys prev) cur))
-              (cond
-                [(and (null? added) (null? removed) (null? changed))
-                 (printf "  build ~a  ≡ rebuilt, all ~a ~a(s) identical\n"
-                         (key-observation-build o) (length cur) noun)]
-                [else
-                 (printf "  build ~a  ± ~a changed, +~a added, -~a removed\n"
-                         (key-observation-build o)
-                         (length changed) (length added) (length removed))
-                 (show-keys "changed" changed)
-                 (show-keys "added" added)
-                 (show-keys "removed" removed)])]))]
+         (for ([print! (in-list (reverse (vector-ref key-story 2)))]) (print!))]
         [else
          (printf "~a — ~a observation(s), in build order:\n" name (length obs))
          (printf "  ✦ first seen · ≡ rebuilt to identical content · ± changed\n\n")
@@ -743,8 +783,8 @@
   ;;   1 + reason — no basis for an answer. The caller must fall back to a FULL
   ;;                rebuild, never to the empty set.
   [(eq? (mode) 'moved-keys)
-   (define builds (history-load stelis-state #:keyed-tail 0))
-   (when (null? builds)
+   (define last-number (history-last-number stelis-state))
+   (unless last-number
      (eprintf "~a — no build history under ~a/; cannot say what moved.\n~a"
               name (path->string stelis-state) (state-dir-note))
      (exit 1))
@@ -754,8 +794,9 @@
    (unless (hash-ref (graph-artifacts G) name #f)
      (eprintf "~a — no artifact by that name in the graph.\n" name)
      (exit 1))
-   (define kobs (history-key-observations stelis-state name))
-   (define last-number (build-record-number (last builds)))
+   ;; the delta at the last build is its map against the one before: two points,
+   ;; read from the end of the log (st-6gv)
+   (define kobs (history-key-observations stelis-state name #:last 2))
    (define d (build-key-delta name kobs last-number))
    (cond
      [(eq? d 'not-produced)

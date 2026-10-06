@@ -21,7 +21,10 @@
 ;;
 ;; STORAGE, not an index: builds are a flat .rktd log, projected into the Datalog
 ;; fact layer (provenance-datalog.rkt) for queries. SQLite waits until a query
-;; outgrows in-memory Datalog (DESIGN: defer it).
+;; outgrows in-memory Datalog (DESIGN: defer it). The log is READ A LINE AT A TIME,
+;; from either end, and never held whole (st-6gv): a project that builds every five
+;; minutes has a log of hundreds of megabytes at its retention, on a machine that
+;; is also serving its site.
 
 (require racket/file
          (only-in racket/port copy-port)
@@ -42,10 +45,15 @@
          history-prune!
          history-pruned-count
          history-load
+         history-fold
+         history-tail
          history-last
+         history-last-number
+         history-find
          history-last-source-report
          history-observations
          history-key-observations
+         history-key-fold
          history-graph
          history-foreign-projects
          LEGACY-PROJECT
@@ -134,7 +142,10 @@
 ;; --- Reading a log without loading it ------------------------------------------
 ;; Racket strings hold four bytes a character, so `file->lines' on a history of N
 ;; bytes costs ~4N of memory: on salishsea's 1 GB machine, a log near its 30-day
-;; retention would not fit. These read a line at a time, from either end.
+;; retention would not fit (st-6gv: ~25 KB a build, 288 builds a day, 30 days —
+;; ~200 MB of text, ~800 MB as strings, beside the site it serves). So nothing here
+;; holds the log: every reader walks it a line at a time, from whichever end its
+;; question is nearer, and keeps only the builds it was asked for.
 
 ;; first-line-where : path (string -> (or/c X #f)) -> (or/c X #f)
 ;; The first non-#f answer of `f' over the file's lines, in order, reading only as
@@ -150,33 +161,122 @@
           [(f line) => values]
           [else (loop)])))))
 
-;; last-line-where : path (string -> (or/c X #f)) -> (or/c X #f)
-;; The first non-#f answer of `f' over the file's lines, from the LAST backwards,
-;; reading the file from its end in blocks and holding at most one line beyond them.
-(define (last-line-where path f)
-  (define size (file-size path))
+;; call-with-backward-lines : path ((-> (or/c string eof)) -> X) -> X
+;; Hands `proc' a reader of the file's non-blank lines from the LAST backwards, one
+;; a call, reading the file from its end in blocks and holding at most one block of
+;; lines plus the partial line before it.
+(define (call-with-backward-lines path proc)
   (define block 65536)
   (call-with-input-file path
     (lambda (in)
-      ;; `tail' is the bytes after the last newline seen so far (a partial line)
-      (let loop ([end size] [tail #""])
+      ;; `ready': complete lines not yet handed out, newest first. `end': where the
+      ;; unread part of the file ends. `tail': the bytes after the last newline of
+      ;; the unread part — the start of a line whose end has been read.
+      (define ready '())
+      (define end (file-size path))
+      (define tail #"")
+      (define (refill!)
+        (let loop ()
+          (define start (max 0 (- end block)))
+          (file-position in start)
+          (define chunk (bytes-append (read-bytes (- end start) in) tail))
+          (define pieces (regexp-split #rx#"\n" chunk))
+          (set! end start)
+          ;; the first piece may be partial unless the chunk starts the file
+          (cond
+            [(zero? start) (set! tail #"") (set! ready (reverse pieces))]
+            [else (set! tail (car pieces)) (set! ready (reverse (cdr pieces)))])
+          (when (and (null? ready) (positive? end)) (loop))))
+      (define (next)
+        (let loop ()
+          (cond
+            [(pair? ready)
+             (define line (bytes->string/utf-8 (car ready) #\?))
+             (set! ready (cdr ready))
+             (if (string=? "" (string-trim line)) (loop) line)]
+            [(zero? end) eof]
+            [else (refill!) (loop)])))
+      (proc next))))
+
+;; last-line-where : path (string -> (or/c X #f)) -> (or/c X #f)
+;; The first non-#f answer of `f' over the file's lines, from the LAST backwards,
+;; reading only as far as it.
+(define (last-line-where path f)
+  (call-with-backward-lines path
+    (lambda (next)
+      (let loop ()
+        (define line (next))
         (cond
-          [(zero? end)
-           (and (positive? (bytes-length tail))
-                (let ([line (bytes->string/utf-8 tail #\?)])
-                  (and (not (string=? "" (string-trim line))) (f line))))]
+          [(eof-object? line) #f]
+          [(f line) => values]
+          [else (loop)])))))
+
+;; --- Build numbers (st-6gv) ----------------------------------------------------
+;; A build's number is its 1-based position among the readable builds of the whole
+;; history, pruned ones included (history-prune! keeps the count it dropped in a
+;; header line). It used to be COUNTED at every read, which meant reading every line
+;; to number the last one. A line written since st-6gv carries its number, assigned
+;; at append as one more than the newest build's, so a reader working back from the
+;; end knows each build's number without counting. A line without one — written
+;; before this — is numbered from its neighbour: one less than the next newer
+;; build's, or, when it is the newest line of all, by the old count. The two rules
+;; agree wherever both apply, so a history that is part numbered and part not reads
+;; the same forward and backward. Additive, like 'project: no version bump.
+
+(define (entry-number e)
+  (define n (hash-ref e 'number #f))
+  (and (exact-positive-integer? n) n))
+
+;; count-builds : path -> exact-nonnegative-integer
+;; The number of the newest build by counting: the header's pruned count plus every
+;; readable build line. Reads the whole log a line at a time; the fallback for a log
+;; whose newest line carries no number.
+(define (count-builds f)
+  (call-with-input-file f
+    (lambda (in)
+      (for/fold ([n (pruned-count-of f)]) ([line (in-lines in 'linefeed)])
+        (if (and (not (string=? "" (string-trim line))) (line->entry line)) (add1 n) n)))))
+
+;; for-each-entry-backward : path (hash exact-positive-integer -> any) -> void
+;; `proc' is handed each readable build's entry and number, newest first, and walks
+;; on while it returns true.
+(define (for-each-entry-backward f proc)
+  (call-with-backward-lines f
+    (lambda (next)
+      (let loop ([newer #f])
+        (define line (next))
+        (unless (eof-object? line)
+          (define e (line->entry line))
+          (cond
+            [(not e) (loop newer)]
+            [else
+             (define n (or (entry-number e)
+                           (if newer (sub1 newer) (count-builds f))))
+             (when (proc e n) (loop n))]))))))
+
+;; for-each-entry-forward : path (hash exact-positive-integer -> any) -> void
+;; Every readable build's entry and number, oldest first.
+(define (for-each-entry-forward f proc)
+  (call-with-input-file f
+    (lambda (in)
+      (for/fold ([n (pruned-count-of f)] #:result (void)) ([line (in-lines in 'linefeed)])
+        (define e (and (not (string=? "" (string-trim line))) (line->entry line)))
+        (cond
+          [(not e) n]
           [else
-           (define start (max 0 (- end block)))
-           (file-position in start)
-           (define chunk (bytes-append (read-bytes (- end start) in) tail))
-           ;; the complete lines in this chunk, last first; the first piece may be
-           ;; partial unless the chunk starts the file
-           (define pieces (regexp-split #rx#"\n" chunk))
-           (define complete (if (zero? start) pieces (cdr pieces)))
-           (or (for/or ([b (in-list (reverse complete))])
-                 (define line (bytes->string/utf-8 b #\?))
-                 (and (not (string=? "" (string-trim line))) (f line)))
-               (if (zero? start) #f (loop start (car pieces))))])))))
+           (define number (or (entry-number e) (add1 n)))
+           (proc e number)
+           number])))))
+
+;; history-last-number : path-string -> (or/c exact-positive-integer #f)
+;; The newest readable build's number; #f for an empty or missing history. Reads the
+;; log's end, and all of it only when that line predates numbering.
+(define (history-last-number state-dir)
+  (define f (history-file state-dir))
+  (and (file-exists? f)
+       (let ([found #f])
+         (for-each-entry-backward f (lambda (_e n) (set! found n) #f))
+         found)))
 
 ;; history-append! : path-string symbol graph string (listof trace-record)
 ;;                   [#:project symbol] -> string
@@ -193,6 +293,7 @@
                          #:recorded-at [recorded-at (current-seconds)])
   (define h (block-put! state-dir (graph->drisl g)))
   (make-directory* state-dir)
+  (define number (add1 (or (history-last-number state-dir) (history-pruned-count state-dir))))
   (call-with-output-file (history-file state-dir) #:exists 'append
     (lambda (o)
       ;; one build per line: `write' emits no interior newlines for these
@@ -200,6 +301,7 @@
       ;; corrupt build without losing the rest.
       (write (hash 'version HISTORY-VERSION
                    'project project
+                   'number number
                    'target target
                    'graph-hash h
                    'epoch epoch
@@ -263,18 +365,27 @@
 ;; caller that rebuilds per key would publish stale output. That is precisely the
 ;; failure delta.rkt's 'no-basis exists to prevent. `unresolved-keys` says "there was
 ;; an observation here and we cannot read it", which history-key-observations turns
-;; into a refusal.
+;; into a refusal. A map a reader chose NOT to read (see `current-keyed') carries the
+;; same mark: observed, not read, never an answer.
 (define unresolved-keys 'unresolved)
 
-(define (internalize-keyed state-dir datum)
-  (define only (current-keyed-for))
+;; Which maps a load reads: 'all, 'none, or one artifact's. The rest are marked.
+(define current-keyed (make-parameter 'all))
+(define (read-keyed? artifact)
+  (define k (current-keyed))
+  (or (eq? k 'all) (eq? k artifact)))
+
+;; internalize-keyed : path-string (symbol -> boolean) -> (datum -> datum)
+;; The reader for one record datum: each keyed entry's map is read from its block
+;; when `read?' says so, and marked otherwise.
+(define ((internalize-keyed state-dir [read? read-keyed?]) datum)
   (update-positions datum KEYED-DATUM-POSITIONS
                     (lambda (entries)
                       (for/list ([e (in-list entries)])
                         (cons (car e)
-                              (if (and only (not (eq? (car e) only)))
-                                  unresolved-keys
-                                  (or (resolve-keyed state-dir (cdr e)) unresolved-keys)))))))
+                              (if (read? (car e))
+                                  (or (resolve-keyed state-dir (cdr e)) unresolved-keys)
+                                  unresolved-keys))))))
 
 ;; resolve-keyed : path-string any -> (or/c (listof (cons string string)) #f)
 (define (resolve-keyed state-dir v)
@@ -308,11 +419,15 @@
 ;; and an OOM kill on Fly; interning brought it to ~540 MB while those maps are still
 ;; the flat blocks written before chunking (st-ml9.7), which share nothing by CID and
 ;; age out under retention. One timeline query also reads only its artifact's maps
-;; (#:keyed-for).
+;; (history-fold's #:keyed).
 (define current-decoded (make-parameter #f))
 (define current-interned (make-parameter #f))
+;; the blocks the build being read has reached, for history-fold to keep
+(define current-touched (make-parameter #f))
 (define (decode state-dir cid)
   (define memo (current-decoded))
+  (define touched (current-touched))
+  (when touched (set-add! touched cid))
   (if memo
       (hash-ref! memo cid (lambda () (block-ref state-dir cid)))
       (block-ref state-dir cid)))
@@ -320,80 +435,137 @@
   (define table (current-interned))
   (if (and table (string? s)) (hash-ref! table s s) s))
 
-;; history-load : path-string [#:keyed-tail (or/c #f exact-nonnegative-integer)]
+;; One load's scope: the block memo, the string table, and which maps it reads.
+(define (call-with-load keyed thunk)
+  (parameterize ([current-decoded (make-hash)] [current-interned (make-hash)]
+                 [current-keyed keyed] [current-touched #f])
+    (thunk)))
+
+;; --- Loading builds, bounded ---------------------------------------------------
+;; Each reader below holds what it answers with and nothing more. The log is never
+;; read whole into memory; the one reader that walks all of it (history-fold) hands
+;; each build to its caller and lets go of it.
+
+;; history-fold : path-string (build-record X -> X) X [#:keyed (or/c 'all 'none symbol)]
+;;                -> X
+;; Fold `proc' over every readable build, oldest first, holding one at a time. A
+;; line that fails to parse or carries a wrong version is dropped; the surrounding
+;; builds still load. Missing history ⇒ `init'. #:keyed says which keyed maps are
+;; read from their blocks (default none — a caller wanting an artifact's per-key
+;; timeline names it, and nothing else's maps are decoded to look at it).
+(define (history-fold state-dir proc init #:keyed [keyed 'none])
+  (define f (history-file state-dir))
+  (cond
+    [(not (file-exists? f)) init]
+    [else
+     (call-with-load keyed
+       (lambda ()
+         (define acc init)
+         ;; The block memo is trimmed as the fold goes: after each build, the
+         ;; blocks it did not reach are dropped. Consecutive maps of one artifact
+         ;; share nearly every bucket (keyed-block.rkt's tree), which is the
+         ;; sharing the memo exists for; a block no recent build names is one
+         ;; the stream has moved past. Unbounded, the memo held every map ever
+         ;; decoded, and a streamed timeline cost what the list did.
+         (define memo (current-decoded))
+         (define touched (mutable-set))
+         (parameterize ([current-touched touched])
+           (for-each-entry-forward
+            f (lambda (e n)
+                (define br (entry->build-record e (internalize-keyed state-dir) n))
+                (when br (set! acc (proc br acc)))
+                (for ([cid (in-list (hash-keys memo))] #:unless (set-member? touched cid))
+                  (hash-remove! memo cid))
+                (set-clear! touched))))
+         acc))]))
+
+;; history-load : path-string [#:keyed-for symbol] -> (listof build-record)
+;; Every readable build, in append (build) order, keyed maps read — the whole
+;; history as a list, for a reader that genuinely needs all of it (tests; a small
+;; project's state). A reader of one artifact's timeline passes #:keyed-for, so only
+;; that artifact's maps are decoded; a reader of recent builds wants history-tail.
+(define (history-load state-dir #:keyed-for [keyed-for #f])
+  (reverse (history-fold state-dir cons '() #:keyed (or keyed-for 'all))))
+
+;; history-last : path-string [#:keyed (or/c 'all 'none symbol)] -> (or/c build-record #f)
+;; The most recent readable build — "what did the last build do?". #f when the
+;; history is empty or wholly unreadable. Reads from the end, one build.
+(define (history-last state-dir #:keyed [keyed 'all])
+  (define f (history-file state-dir))
+  (and (file-exists? f)
+       (call-with-load keyed
+         (lambda ()
+           (define found #f)
+           (for-each-entry-backward
+            f (lambda (e n)
+                (set! found (entry->build-record e (internalize-keyed state-dir) n))
+                (not found)))
+           found))))
+
+;; history-find : path-string exact-positive-integer [#:keyed ...] -> (or/c build-record #f)
+;; The build numbered `number', or #f when the history has no readable build by it
+;; (expired, never reached, or unreadable). Reads from the end down to it.
+(define (history-find state-dir number #:keyed [keyed 'none])
+  (define f (history-file state-dir))
+  (and (file-exists? f)
+       (call-with-load keyed
+         (lambda ()
+           (define found #f)
+           (for-each-entry-backward
+            f (lambda (e n)
+                (cond
+                  [(= n number) (set! found (entry->build-record e (internalize-keyed state-dir) n)) #f]
+                  [(< n number) #f]
+                  [else #t])))
+           found))))
+
+;; history-tail : path-string exact-nonnegative-integer [#:basis? boolean]
 ;;                -> (listof build-record)
-;; Every readable build, in append (build) order. Missing history ⇒ '(). A line
-;; that fails to parse or carries a wrong version is dropped; the surrounding
-;; builds still load.
-;;
-;; #:keyed-tail k reads keyed maps from their blocks for the last k builds only,
-;; and before them, for each artifact in each keyed position, only its LATEST map:
-;; the basis a delta at the oldest of the k is taken against (delta.rkt diffs a
-;; production with the previous one, however long ago that was). Every older map
-;; is marked unresolved — observed, not read — so nothing can mistake it for an
-;; answer. For a reader that shows only recent builds, the operator build log: a
-;; full load decodes every build's maps, and on salishsea's Fly machine, 370
-;; builds of a 4,400-key days/ map took the engine from 136 MB to 528 MB after
-;; every build.
-;;
-;; #:keyed-for a reads keyed maps for artifact `a' only, leaving every other artifact's
-;; marked unresolved: for a reader of one artifact's timeline, which would otherwise
-;; decode every artifact's maps in every build to look at one.
-(define (history-load state-dir #:keyed-tail [keyed-tail #f] #:keyed-for [keyed-for #f])
-  (parameterize ([current-decoded (make-hash)] [current-interned (make-hash)] [current-keyed-for keyed-for])
-    (history-load* state-dir keyed-tail)))
-
-;; The one artifact whose maps a load reads, or #f for all.
-(define current-keyed-for (make-parameter #f))
-
-(define (history-load* state-dir keyed-tail)
+;; The last k readable builds, oldest first, keyed maps read. With #:basis?, before
+;; them, the older builds that hold each of those maps' artifacts' LATEST earlier
+;; map — the basis a delta at the oldest of the k is taken against (delta.rkt diffs
+;; a production with the previous one, however long ago that was) — with that map
+;; read and every other map of theirs marked. The walk back stops as soon as every
+;; artifact has its basis, or at the start of the log for one first produced within
+;; the k. For a reader that shows only recent builds, the operator build log: a full
+;; load decoded every build's maps, and on salishsea's Fly machine, 370 builds of a
+;; 4,400-key days/ map took the engine from 136 MB to 528 MB after every build.
+(define (history-tail state-dir k #:basis? [basis? #f])
   (define f (history-file state-dir))
   (cond
     [(not (file-exists? f)) '()]
     [else
-     (define lines (file->lines f))
-     (define pruned (lines-pruned-count lines))
-     (define entries
-       (for*/list ([line (in-list lines)]
-                   #:unless (string=? "" (string-trim line))
-                   [e (in-value (line->entry line))]
-                   #:when e)
-         e))
-     (define cutoff (if keyed-tail (max 0 (- (length entries) keyed-tail)) 0))
-     ;; newest first, so the first map met for an (artifact, position) before the
-     ;; tail is its latest one
-     (define seen (make-hash))
-     (define (internalize-older r)
-       (for/fold ([r r]) ([pos (in-list KEYED-DATUM-POSITIONS)])
-         (update-positions
-          r (list pos)
-          (lambda (keyed)
-            (for/list ([e (in-list keyed)])
-              (define key (cons pos (car e)))
-              (define only (current-keyed-for))
+     (call-with-load 'all
+       (lambda ()
+         (define tail '())
+         (define prior '())
+         (define taken 0)
+         ;; the artifacts whose basis is still wanted
+         (define needed (mutable-seteq))
+         (for-each-entry-backward
+          f (lambda (e n)
               (cond
-                [(or (hash-ref seen key #f) (and only (not (eq? (car e) only)))) (cons (car e) unresolved-keys)]
-                [else (hash-set! seen key #t)
-                      (cons (car e) (or (resolve-keyed state-dir (cdr e)) unresolved-keys))]))))))
-     (define n (length entries))
-     (reverse
-      (for*/list ([(e i) (in-indexed (in-list (reverse entries)))]
-                  [br (in-value
-                       (entry->build-record
-                        e
-                        (if (>= (- n 1 i) cutoff)
-                            (lambda (r) (internalize-keyed state-dir r))
-                            internalize-older)
-                        (+ pruned (- n i))))]
-                  #:when br)
-        br))]))
-
-;; history-last : path-string -> (or/c build-record #f)
-;; The most recent readable build — "what did the last build do?". #f when the
-;; history is empty or wholly unreadable.
-(define (history-last state-dir)
-  (define builds (history-load state-dir))
-  (and (pair? builds) (last builds)))
+                [(< taken k)
+                 (define br (entry->build-record e (internalize-keyed state-dir) n))
+                 (when br
+                   (set! taken (add1 taken))
+                   (set! tail (cons br tail))
+                   (when basis?
+                     (for* ([rec (in-list (build-record-records br))]
+                            [pair (in-list (trace-record-keyed rec))])
+                       (set-add! needed (car pair)))))
+                 #t]
+                [(set-empty? needed) #f]
+                [else
+                 ;; an older build: read the maps still wanted, mark the rest
+                 (define hit? #f)
+                 (define (wanted? a)
+                   (and (set-member? needed a)
+                        (begin (set-remove! needed a) (set! hit? #t) #t)))
+                 (define br (entry->build-record e (internalize-keyed state-dir wanted?) n))
+                 (when (and br hit?) (set! prior (cons br prior)))
+                 (not (set-empty? needed))])))
+         (append prior tail)))]))
 
 ;; --- Publish receipts (st-8x1) ------------------------------------------------
 ;; What the engine cannot know: whether a build's data actually went LIVE. The
@@ -467,44 +639,85 @@
 ;; none (re-ingested, or not a probing boundary) or the task has never run.
 ;; Deliberately that run's report, not the last NON-#f one anywhere: if the most
 ;; recent RUN re-ingested, a stale "unchanged" from before would misreport the
-;; current source state.
+;; current source state. Reads from the end, stopping at that run.
 (define (history-last-source-report state-dir task)
-  (let loop ([brs (reverse (history-load state-dir))])
-    (cond
-      [(null? brs) #f]
-      [(findf (lambda (rec) (and (eq? (trace-record-task rec) task)
-                                 (eq? (trace-record-outcome rec) 'ok)))
-              (build-record-records (car brs)))
-       => trace-record-source-report]
-      [else (loop (cdr brs))])))
+  (define f (history-file state-dir))
+  (and (file-exists? f)
+       (call-with-load 'none
+         (lambda ()
+           (define found #f)
+           (for-each-entry-backward
+            f (lambda (e n)
+                (define br (entry->build-record e (internalize-keyed state-dir) n))
+                (define rec
+                  (and br (findf (lambda (rec) (and (eq? (trace-record-task rec) task)
+                                                    (eq? (trace-record-outcome rec) 'ok)))
+                                 (build-record-records br))))
+                (cond
+                  [rec (set! found (trace-record-source-report rec)) #f]
+                  [else #t])))
+           found))))
 
 ;; observe-timeline : path-string symbol (trace-record -> alist) (nat any trace-record -> X)
-;;                    -> (listof X)
-;; The shared walk behind both timelines: over the loaded history (by build
-;; number), pull `artifact's entry from each record via `field', and build a point
-;; with `make' from (build-index, that entry's value, the producing record). A
-;; build whose producer cache-skipped carries no entry, so it contributes no
-;; point — which is what makes consecutive points genuine re-productions.
-(define (observe-timeline state-dir artifact field make)
-  (for*/list ([br (in-list (history-load state-dir #:keyed-for artifact))]
-              [rec (in-list (build-record-records br))]
-              [pair (in-value (assq artifact (field rec)))]
-              #:when pair)
-    (make (build-record-number br) (cdr pair) rec)))
+;;                    (or/c 'none symbol) -> (listof X)
+;; The shared walk behind both timelines: over the history (by build number), pull
+;; `artifact's entry from each record via `field', and build a point with `make'
+;; from (build-index, that entry's value, the producing record). A build whose
+;; producer cache-skipped carries no entry, so it contributes no point — which is
+;; what makes consecutive points genuine re-productions. Streams: only the points
+;; are held, and only the maps `keyed' names are read — none for a hash timeline,
+;; which never looks inside a map.
+(define (observe-timeline state-dir artifact field make keyed)
+  (reverse
+   (history-fold state-dir
+                 (lambda (br acc)
+                   (for/fold ([acc acc]) ([rec (in-list (build-record-records br))])
+                     (define pair (assq artifact (field rec)))
+                     (if pair
+                         (cons (make (build-record-number br) (cdr pair) rec) acc)
+                         acc)))
+                 '()
+                 #:keyed keyed)))
 
 ;; history-observations : path-string symbol -> (listof observation)
 ;; Every point at which `artifact' was (re)produced, in build order — its
 ;; content-hash timeline. Consecutive points with the same hash mark genuine
 ;; re-productions to identical content; a differing hash marks a change.
 (define (history-observations state-dir artifact)
-  (observe-timeline state-dir artifact trace-record-output-hashes observation))
+  (observe-timeline state-dir artifact trace-record-output-hashes observation 'none))
 
-;; history-key-observations : path-string symbol -> (listof key-observation)
+;; history-key-fold : path-string symbol (key-observation X -> X) X -> X
+;; The per-key timeline as a STREAM: `proc' is handed each point — the artifact's
+;; full (part -> hash) map at a build that observed it, with the producing or
+;; consuming record — oldest first, and only the fold's accumulator is held. A
+;; point whose map could not be read carries history's mark (a non-list) in place
+;; of the map; the printer says so for that build and the list-building reader
+;; below refuses the whole timeline. For a reader that needs each map only against
+;; the one before it (`--history <artifact>`), so a timeline of thousands of maps of
+;; thousands of keys costs two maps at a time rather than all of them.
+(define (history-key-fold state-dir artifact proc init)
+  (history-fold state-dir
+                (lambda (br acc)
+                  (for/fold ([acc acc]) ([rec (in-list (build-record-records br))])
+                    (define pair (assq artifact (trace-record-keyed rec)))
+                    (if pair
+                        (proc (key-observation (build-record-number br) (cdr pair) rec) acc)
+                        acc)))
+                init
+                #:keyed artifact))
+
+;; history-key-observations : path-string symbol [#:last exact-positive-integer]
+;;                            -> (listof key-observation)
 ;; The per-KEY timeline for a keyed artifact — per-path for a 'dir output, per-
 ;; column for a db-relation output, or per-key for a keyed STORE input (the notes
 ;; store, st-2k9): its full (part -> hash) map at each build that observed it, in
 ;; build order. Diffing consecutive maps yields exactly the parts that changed. '()
 ;; for an artifact that never recorded a per-part layer.
+;;
+;; #:last n reads only the NEWEST n points, from the end of the log, stopping
+;; there (st-6gv): a delta at the last build is two maps, a baseline is one, and
+;; neither needs the thousands before them read. The whole timeline is for a
+;; reader that walks it (key-blame).
 ;;
 ;; ONE LOST OBSERVATION POISONS THE WHOLE TIMELINE, deliberately. If any recorded
 ;; point cannot be read back (its block is missing, damaged, or mis-addressed), this
@@ -514,11 +727,37 @@
 ;; needed to do. '() instead yields 'no-basis, which refuses and makes the caller
 ;; rebuild in full. Losing precision is recoverable; answering "nothing moved" when
 ;; something did is not, and the next build re-records the timeline anyway.
-(define (history-key-observations state-dir artifact)
-  (define points (observe-timeline state-dir artifact trace-record-keyed key-observation))
+(define (history-key-observations state-dir artifact #:last [n #f])
+  (define points
+    (if n
+        (last-key-observations state-dir artifact n)
+        (reverse (history-key-fold state-dir artifact cons '()))))
   (if (for/or ([p (in-list points)]) (not (list? (key-observation-keys p))))
       '()
       points))
+
+;; last-key-observations : path-string symbol exact-positive-integer -> (listof key-observation)
+;; The newest n points of the artifact's per-key timeline, oldest first, read from
+;; the end of the log and no further.
+(define (last-key-observations state-dir artifact n)
+  (define f (history-file state-dir))
+  (cond
+    [(not (file-exists? f)) '()]
+    [else
+     (call-with-load artifact
+       (lambda ()
+         (define points '())
+         (for-each-entry-backward
+          f (lambda (e number)
+              (define br (entry->build-record e (internalize-keyed state-dir) number))
+              (when br
+                ;; a build's records in reverse, so consing restores build order
+                (for ([rec (in-list (reverse (build-record-records br)))])
+                  (define pair (assq artifact (trace-record-keyed rec)))
+                  (when pair
+                    (set! points (cons (key-observation number (cdr pair) rec) points)))))
+              (< (length points) n)))
+         (if (> (length points) n) (take-right points n) points)))]))
 
 ;; trace-record-keyed : trace-record -> (listof (cons symbol (listof (cons string string))))
 ;; A record's per-key observations from BOTH sides — outputs the task produced and
@@ -598,10 +837,13 @@
 ;; numbers below the first remaining one.
 (define (history-pruned-count state-dir)
   (define f (history-file state-dir))
-  ;; the header, when there is one, is the first line: history-prune! writes it there
-  (if (file-exists? f)
-      (or (first-line-where f (lambda (line) (lines-pruned-count (list line)))) 0)
-      0))
+  (if (file-exists? f) (pruned-count-of f) 0))
+
+;; pruned-count-of : path -> exact-nonnegative-integer
+;; The header's count. The header, when there is one, is the first line:
+;; history-prune! writes it there.
+(define (pruned-count-of f)
+  (or (first-line-where f (lambda (line) (lines-pruned-count (list line)))) 0))
 
 ;; history-prune! : path-string exact-nonnegative-integer [#:now exact-integer]
 ;;                  -> (values exact-nonnegative-integer exact-nonnegative-integer)
