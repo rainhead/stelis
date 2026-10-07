@@ -398,6 +398,9 @@
    (make-artifact 'animal-names.json 'file)
    ;; Every cetacean species with its reports and a small map (salishsea salish-nkbq).
    (make-artifact 'whales.html 'file)
+   ;; What the site's search field finds (salishsea GH #640): every animal, matriline,
+   ;; population and haul-out site with a page, and each animal's newest report.
+   (make-artifact 'search-index.json 'file)
    ;; What the profile pages show of the catalogue (salishsea decision 057). All of
    ;; what the snapshot writes is declared, including the relations no page reads yet.
    (append
@@ -533,8 +536,25 @@
                                  '("scripts/read-path/duckdb-budget.ts" "scripts/read-path/profile-document.ts"
                                    "src/catalog.ts" "src/date-format.ts" "src/ecotype-profile.ts" "src/fold.ts"
                                    "src/profile-shared.ts" "src/site-nav.ts" "src/small-multiples.ts"
-                                   "src/supabase.ts" "src/whales.ts" "dist/whales.html")
+                                   "src/supabase.ts" "src/whales.ts" "dist/whales.html"
+                                   ;; which names the search field's island, the page's one script
+                                   "dist/.vite/manifest.json")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
+   ;; The search field's index (salishsea GH #640). Its own task, not the profile
+   ;; index's: it carries each animal's newest report, so it moves with every build
+   ;; that brings one, while the profile index cuts off when the catalogue holds still.
+   ;; Not a manifest input: a failed index leaves search a build behind, and must not
+   ;; hold the map's files back.
+   (make-task 'search-index 'transform
+              #:inputs (append (map snapshot-relation '("individuals" "designations" "nicknames" "social_groups"
+                                                        "group_parents" "matriline_members" "haulouts"))
+                               '(register.names register.ancestor
+                                 build.individual_occurrences build.group_occurrences build.ecotype_occurrences))
+              #:outputs '(search-index.json)
+              #:invoke (node-script/code "scripts/read-path/search-index.ts"
+                                 '("scripts/read-path/duckdb-budget.ts" "src/catalog.ts" "src/constants.ts"
+                                   "src/extents.ts" "src/fold.ts" "src/search.ts" "src/supabase.ts")
+                                 (list SNAPSHOT-DB)))
    ;; No snapshot-meta: nothing here depends on when the snapshot was taken, so
    ;; unlike the pages this cuts off whenever the catalogue holds still. Vite's
    ;; sitemap is code, like the pages' shells, for the same reason.
@@ -786,6 +806,7 @@
     [(catalog-codes.json) (build-path export-dir "catalog-codes.json")]
     [(animal-names.json) (build-path export-dir "animal-names.json")]
     [(whales.html) (build-path export-dir "whales.html")]
+    [(search-index.json) (build-path export-dir "search-index.json")]
     [(dwca) (build-path export-dir "dwca")]
     [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(happywhale.duckdb) happywhale-frozen]

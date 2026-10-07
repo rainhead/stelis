@@ -25,10 +25,10 @@
                              "files, the snapshot, the register, the name guard and the derivation; the register follows "
                              "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
                              "which names the taxa it fetches"))
-(check-equal? (set-count pruned) 14
+(check-equal? (set-count pruned) 15
               (string-append "the calendar, the id index, the candidates and links, the catalogue and its "
-                             "register views, the pages, the whales page, the profile index, the manifest and "
-                             "the Darwin Core archive are off the path to days"))
+                             "register views, the pages, the whales page, the profile index, the search index, "
+                             "the manifest and the Darwin Core archive are off the path to days"))
 
 ;; The catalogue's views over the register are the build's (salishsea decision 064,
 ;; salish-9uu.2.3): derive-catalogue produces them under the snapshot's names, from the
@@ -223,3 +223,12 @@
               "one kind of profile per dir, so the other kinds land beside it, not inside it")
 (check-equal? ((project-path salishsea-project) 'matriline-pages (string->path "/x"))
               (string->path "/x/profiles/matrilines"))
+
+;; The search field's index (salishsea GH #640): its own task, reading each subject's
+;; reports for its newest, and kept off the manifest's inputs so a failure can't hold
+;; the map's files back.
+(check-eq? (producer-of salishsea-graph 'search-index.json) 'search-index)
+(for ([r (in-list '(build.individual_occurrences build.group_occurrences build.ecotype_occurrences
+                    register.names individuals-snapshot nicknames-snapshot))])
+  (check-not-false (memq r (inputs-of 'search-index)) (format "the search index reads ~a" r)))
+(check-false (memq 'search-index.json (inputs-of 'manifest)))
