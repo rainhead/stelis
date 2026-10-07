@@ -40,7 +40,7 @@
 ;;       │                         ▼    animal_names), under the snapshot's names
 ;;       ├──────▶ the catalogue ──────▶ individual-pages ▶ profiles/individuals/
 ;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
-;;       │         table) + the links   ecotype-pages ───▶ profiles/ecotypes/
+;;       │         table) + the links   ecotype-pages ───▶ profiles/populations/
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
 ;;       │                              whales-page ─────▶ whales.html
 ;;       │                              profile-index ───▶ redirects.json,
@@ -518,7 +518,9 @@
                        individual-page-relations 'individual-pages)
    (profile-pages-task 'matriline-pages "matrilines" "matriline.html"
                        matriline-page-relations 'matriline-pages)
-   (profile-pages-task 'ecotype-pages "ecotypes" "ecotype.html"
+   ;; Population pages, at /populations/ since salishsea decision 070 (they were
+   ;; /ecotypes/); the task keeps its name.
+   (profile-pages-task 'ecotype-pages "populations" "ecotype.html"
                        ecotype-page-relations 'ecotype-pages)
    (profile-pages-task 'haulout-pages "haulouts" "haulout.html"
                        haulout-page-relations 'haulout-pages)
@@ -772,7 +774,7 @@
     [(ids) (build-path export-dir "ids")]
     [(individual-pages) (build-path export-dir "profiles" "individuals")]
     [(matriline-pages) (build-path export-dir "profiles" "matrilines")]
-    [(ecotype-pages) (build-path export-dir "profiles" "ecotypes")]
+    [(ecotype-pages) (build-path export-dir "profiles" "populations")]
     [(haulout-pages) (build-path export-dir "profiles" "haulouts")]
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]
