@@ -640,7 +640,12 @@
    (make-task 'catalogue 'transform
               ;; types.enums: the vocabularies its files are held to, as Postgres's enum
               ;; types held its columns (with its NOT NULLs, uniques, foreign keys, CHECKs)
-              #:inputs (append catalogue-files '(register.vitals register.current_status types.enums))
+              ;; and the register's entities, ancestry, deprecations, group ranks, mothers
+              ;; and matriarchs: what the Southern Residents' rows are generated from
+              ;; (salishsea decision 070, salish-lzi.3)
+              #:inputs (append catalogue-files '(register.vitals register.current_status types.enums
+                                                 register.entities register.ancestor register.deprecations
+                                                 register.group_ranks register.parentage register.matriarchs))
               #:outputs catalogue-file-relations
               #:invoke (node-script/code "scripts/read-path/catalogue.ts"
                                  '("scripts/read-path/reference.ts" "src/fold.ts"

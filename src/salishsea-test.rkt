@@ -51,6 +51,10 @@
 (check-false (producer-of salishsea-graph 'happywhale.duckdb))
 (check-not-false (memq 'register.vitals (inputs-of 'catalogue))
                  "an individual's vitals are the register's")
+;; The Southern Residents' rows are generated from the register (salishsea decision 070).
+(for ([t (in-list '(register.entities register.ancestor register.deprecations
+                    register.group_ranks register.parentage register.matriarchs))])
+  (check-not-false (memq t (inputs-of 'catalogue)) (format "the catalogue generates rows from ~a" t)))
 (check-false (for/or ([o (in-list (task-outputs (hash-ref (graph-tasks salishsea-graph) 'snapshot)))])
                (regexp-match? #rx"-snapshot$" (symbol->string o)))
              "the snapshot copies none of the catalogue")
