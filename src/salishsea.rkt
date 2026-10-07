@@ -229,7 +229,11 @@
     "register.vitals" "register.current_status"
     ;; each taxon's lineage to its kingdom: what makes a species a cetacean, for the
     ;; whales page (salish-nkbq)
-    "register.taxon_ancestor"))
+    "register.taxon_ancestor"
+    ;; each group's rank, each animal's mother, and the matriarch each matriline is
+    ;; named for: what the catalogue generates the Southern Residents' rows from
+    ;; (salishsea decision 070, salish-lzi.2)
+    "register.group_ranks" "register.parentage" "register.matriarchs"))
 (define register-relations (map string->symbol register-tables))
 
 ;; The reference tables (salishsea decision 064, salish-9uu.2.1): providers,
