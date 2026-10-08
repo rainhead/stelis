@@ -41,6 +41,7 @@
 ;;       ├──────▶ the catalogue ──────▶ individual-pages ▶ profiles/individuals/
 ;;       │        (a relation per       matriline-pages ─▶ profiles/matrilines/
 ;;       │         table) + the links   ecotype-pages ───▶ profiles/populations/
+;;       │                              pod-pages ───────▶ profiles/pods/
 ;;       │                              haulout-pages ───▶ profiles/haulouts/
 ;;       │                              whales-page ─────▶ whales.html
 ;;       │                              profile-index ───▶ redirects.json,
@@ -383,6 +384,7 @@
    (make-artifact 'individual-pages 'dir)
    (make-artifact 'matriline-pages 'dir)
    (make-artifact 'ecotype-pages 'dir)
+   (make-artifact 'pod-pages 'dir)
    (make-artifact 'haulout-pages 'dir)
    ;; Where the profiles live, for what finds them rather than renders them
    ;; (salishsea decision 057, step 5): each designation, folded, to its page —
@@ -525,6 +527,10 @@
    ;; /ecotypes/); the task keeps its name.
    (profile-pages-task 'ecotype-pages "populations" "ecotype.html"
                        ecotype-page-relations 'ecotype-pages)
+   ;; A Southern Resident pod's page (salishsea decision 070): a population's a level
+   ;; down, from the same tables and in the same shell.
+   (profile-pages-task 'pod-pages "pods" "ecotype.html"
+                       ecotype-page-relations 'pod-pages)
    (profile-pages-task 'haulout-pages "haulouts" "haulout.html"
                        haulout-page-relations 'haulout-pages)
    ;; The whales page: its code is whales.ts's import closure and its Vite-built shell, as
@@ -780,7 +786,7 @@
    ;; failed export must leave the last manifest standing. It reads none of them.
    (make-task 'manifest 'transform
               #:inputs '(snapshot-meta days calendar ids
-                         individual-pages matriline-pages ecotype-pages haulout-pages whales.html
+                         individual-pages matriline-pages ecotype-pages pod-pages haulout-pages whales.html
                          redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:outputs '(manifest.json)
               #:invoke (node-script/code "scripts/read-path/manifest.ts"
@@ -800,6 +806,7 @@
     [(individual-pages) (build-path export-dir "profiles" "individuals")]
     [(matriline-pages) (build-path export-dir "profiles" "matrilines")]
     [(ecotype-pages) (build-path export-dir "profiles" "populations")]
+    [(pod-pages) (build-path export-dir "profiles" "pods")]
     [(haulout-pages) (build-path export-dir "profiles" "haulouts")]
     [(redirects.json) (build-path export-dir "redirects.json")]
     [(sitemap.xml) (build-path export-dir "sitemap.xml")]

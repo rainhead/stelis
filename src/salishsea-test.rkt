@@ -25,7 +25,7 @@
                              "files, the snapshot, the register, the name guard and the derivation; the register follows "
                              "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
                              "which names the taxa it fetches"))
-(check-equal? (set-count pruned) 15
+(check-equal? (set-count pruned) 16
               (string-append "the calendar, the id index, the candidates and links, the catalogue and its "
                              "register views, the pages, the whales page, the profile index, the search index, "
                              "the manifest and the Darwin Core archive are off the path to days"))
@@ -170,11 +170,11 @@
 
 (check-equal? (last manifest-plan) 'manifest
               "the manifest comes after every export, so it never claims a build whose files aren't in place")
-(for ([export (in-list '(calendar ecotype-pages haulout-pages individual-pages matriline-pages
+(for ([export (in-list '(calendar ecotype-pages haulout-pages individual-pages matriline-pages pod-pages
                          occurrence-days occurrence-ids profile-index whales-page))])
   (check-not-false (memq export manifest-plan) (format "the manifest waits on ~a" export)))
 
-(for ([pages (in-list '(individual-pages matriline-pages ecotype-pages haulout-pages))])
+(for ([pages (in-list '(individual-pages matriline-pages ecotype-pages pod-pages haulout-pages))])
   (check-not-false (memq 'snapshot-year (inputs-of pages))
                    "the presence table's newest year is the snapshot's, so that year is an input")
   (check-false (memq 'snapshot-meta (inputs-of pages))
@@ -191,6 +191,8 @@
               '(build.ecotype_occurrences build.group_occurrences group-parents-snapshot snapshot-year
                 social-groups-snapshot)
               "a kind's inputs are the tables profiles.ts loads for it, its links the build's own")
+(check-equal? (inputs-of 'pod-pages) (inputs-of 'ecotype-pages)
+              "a pod's page is a population's a level down, read from the same tables")
 (check-equal? (sort (inputs-of 'haulout-pages) symbol<?)
               '(build.haulout_occurrences haulouts-snapshot snapshot-year)
               "a haul-out page reads the sites and their reports: the register holds no places")
