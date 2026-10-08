@@ -51,6 +51,9 @@
 ;;       ├──────▶ snapshot-year ──────▶ (the pages)
 ;;       └──────▶ snapshot-meta ──────▶ manifest ──▶ manifest.json
 ;;                (when it was taken)   (after every published file)
+;;                       │
+;;                       └──▶ quiet-days ▶ quiet-days/ (with build.occurrences:
+;;                                         [] for each recent day with none)
 ;;
 ;; salishsea.io itself reads these files (salish-xv35.16). Postgres stopped ingesting
 ;; all three sources (salish-xv35.9: iNaturalist and Orcasound on 2026-10-04, Maplify
@@ -368,6 +371,10 @@
    ;; (ADR 0016): a file per key of the relation, so a save rewrites the one day it
    ;; touched (occurrence-days is a partial task) and a day that empties is pruned.
    (make-artifact 'days 'dir #:keyed-by (store-keyed 'build.occurrences "{}.json"))
+   ;; An empty day file, [], for each recent day with no occurrences (salishsea
+   ;; salish-518u): the Fly app serves one when days/ has none, so a quiet morning is
+   ;; not a 404. Beside days/ rather than in it, which holds exactly its keys.
+   (make-artifact 'quiet-days 'dir)
    ;; The calendar's day counts, one file per Pacific month, per region — what
    ;; the occurrence_days RPC returns (decision 056).
    (make-artifact 'calendar 'dir)
@@ -497,6 +504,17 @@
               #:inputs '(build.occurrences)
               #:outputs '(days)
               #:invoke (node-script/code "scripts/read-path/occurrence-days.ts"
+                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
+                                   "scripts/read-path/pacific-day.ts")
+                                 (list SNAPSHOT-DB)))
+   ;; Reads the snapshot's moment for the day it covers through, so it runs every
+   ;; build; a query over one column and at most thirty tiny files. Not a manifest
+   ;; input: the frontend reads a missing covered day as empty anyway, so a failure
+   ;; here must not hold the map's files back.
+   (make-task 'quiet-days 'transform
+              #:inputs '(build.occurrences snapshot-meta)
+              #:outputs '(quiet-days)
+              #:invoke (node-script/code "scripts/read-path/quiet-days.ts"
                                  '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/pacific-day.ts")
                                  (list SNAPSHOT-DB)))
@@ -800,6 +818,7 @@
 (define (salishsea-path artifact export-dir)
   (case artifact
     [(days) (build-path export-dir "days")]
+    [(quiet-days) (build-path export-dir "quiet-days")]
     [(manifest.json) (build-path export-dir "manifest.json")]
     [(calendar) (build-path export-dir "calendar")]
     [(ids) (build-path export-dir "ids")]

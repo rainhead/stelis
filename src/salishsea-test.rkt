@@ -25,10 +25,10 @@
                              "files, the snapshot, the register, the name guard and the derivation; the register follows "
                              "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
                              "which names the taxa it fetches"))
-(check-equal? (set-count pruned) 16
+(check-equal? (set-count pruned) 17
               (string-append "the calendar, the id index, the candidates and links, the catalogue and its "
                              "register views, the pages, the whales page, the profile index, the search index, "
-                             "the manifest and the Darwin Core archive are off the path to days"))
+                             "the quiet days, the manifest and the Darwin Core archive are off the path to days"))
 
 ;; The catalogue's views over the register are the build's (salishsea decision 064,
 ;; salish-9uu.2.3): derive-catalogue produces them under the snapshot's names, from the
@@ -234,3 +234,7 @@
                     register.names individuals-snapshot nicknames-snapshot))])
   (check-not-false (memq r (inputs-of 'search-index)) (format "the search index reads ~a" r)))
 (check-false (memq 'search-index.json (inputs-of 'manifest)))
+(check-equal? (sort (inputs-of 'quiet-days) symbol<?) '(build.occurrences snapshot-meta)
+              "the quiet days are the covered day's window less the days with occurrences")
+(check-false (memq 'quiet-days (inputs-of 'manifest))
+             "a missing covered day already reads as empty, so the quiet days don't hold the manifest back")
