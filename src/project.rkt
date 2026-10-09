@@ -103,17 +103,43 @@
   (format "~a: ~a~a~a"
           (db-binding-label b) (db-binding-path b)
           (if (db-binding-from-env? b)
-              (format " (from ~a)" (db-binding-env b))
+              (format " (from ~a~a)" (db-binding-env b)
+                      ;; Only a chosen path can be relative; the fallbacks are built
+                      ;; absolute. Flagged here, refused in executing modes (st-hs7).
+                      (if (relative-path? (db-binding-path b))
+                          (format ", relative to ~a" (current-directory))
+                          ""))
               ;; Shouted only where the fallback can be the wrong file.
               (format " — ~a is unset, so this is the ~a" (db-binding-env b)
                       (if (db-binding-strict? b) "FALLBACK" "default")))
           (if exists? "" " — no such file")))
 
 ;; db-binding-refusal : db-binding boolean string -> (or/c string #f)
-;; Why a mode that executes tasks must not proceed on this binding, or #f. Only
-;; the ambiguous case refuses: strict, the fallback, and the fallback exists.
+;; Why a mode that executes tasks must not proceed on this binding, or #f. Two
+;; ambiguous cases refuse, and nothing else:
+;;   - a RELATIVE chosen path, strict or not (st-hs7). The engine resolves it from
+;;     its own cwd, but the tasks get the raw string and resolve it from THEIRS (a
+;;     runtime's directory in the project's checkout), so the engine would content-
+;;     address one file while the tasks write another, without an error. Making it
+;;     absolute here would silently pick one of the two meanings; the caller says
+;;     which.
+;;   - strict, the fallback, and the fallback exists (st-az9).
 ;; `mode' is the flag being refused, for the message.
 (define (db-binding-refusal b exists? mode)
+  (cond
+    [(and (db-binding-from-env? b) (relative-path? (db-binding-path b)))
+     (define abs (path->complete-path (db-binding-path b)))
+     (format (string-append
+              "~a is a relative path (~a), which names two files: the engine reads it\n"
+              "from ~a, so\n  ~a\n"
+              "while the tasks resolve it from their own working directory. A mode that\n"
+              "runs tasks does not guess which you mean (st-hs7). Say it absolutely:\n"
+              "  ~a=~a racket src/main.rkt ~a ...")
+             (db-binding-env b) (db-binding-path b) (current-directory) abs
+             (db-binding-env b) abs mode)]
+    [else (fallback-refusal b exists? mode)]))
+
+(define (fallback-refusal b exists? mode)
   (and (db-binding-strict? b)
        (not (db-binding-from-env? b))
        exists?

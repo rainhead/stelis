@@ -109,7 +109,9 @@ CI installs it explicitly). No build step — Racket compiles on demand.
   (st-az9): `--build`/`--run`/`--trace-reads`/`--verify`/`--verify-edges` refuse
   when `DB_PATH` is unset and the checkout copy exists, so a local build says
   `DB_PATH=~/dev/beeatlas/data/beeatlas.duckdb` out loud. Its nightly once gated
-  against that stale copy while the pipeline read the serving one.
+  against that stale copy while the pipeline read the serving one. Every
+  project's executing modes also refuse a RELATIVE database path (st-hs7): the
+  engine resolves it from its cwd, the tasks from theirs, so it names two files.
 - **Test:** `raco test src/*-test.rkt`.
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner

@@ -58,3 +58,22 @@
 (check-equal? (db-binding-description (bind "/nowhere.duckdb") #f)
               "beeatlas DuckDB: /nowhere.duckdb (from DB_PATH) — no such file"
               "a chosen file that is not there is said, not silently accepted")
+
+;; --- a RELATIVE chosen path names two files (st-hs7) ---------------------------
+;; The engine resolves it from its cwd; the tasks get the raw string and resolve it
+;; from theirs. Executing modes refuse it, strict or not; read-only banners flag it.
+
+(parameterize ([current-directory (string->path "/stelis/")])
+  (let ([why (db-binding-refusal (bind "data/beeatlas.duckdb") #t "--build")])
+    (check-true (string? why) "a relative DB_PATH is refused")
+    (check-true (string-contains? why "/stelis/data/beeatlas.duckdb")
+                "naming the absolute path the ENGINE would read")
+    (check-true (string-contains? why "DB_PATH=/stelis/data/beeatlas.duckdb racket src/main.rkt --build")
+                "and how to say it absolutely"))
+  (check-true (string? (db-binding-refusal (bind "data/beeatlas.duckdb") #f "--build"))
+              "refused whether or not the file exists: either way two files are meant")
+  (check-true (string? (db-binding-refusal (bind "read-path.duckdb" #:strict? #f) #t "--build"))
+              "non-strict too: salishsea's tasks take the snapshot path as argv, from their own cwd")
+  (check-equal? (db-binding-description (bind "data/beeatlas.duckdb") #t)
+                "beeatlas DuckDB: data/beeatlas.duckdb (from DB_PATH, relative to /stelis/)"
+                "read-only modes still run, and the banner says what it is relative to"))
