@@ -147,12 +147,11 @@ would show as gaps swallowing the set")
    ;; Structural claims only, no drift-sensitive ratios (the st-36e lesson):
    ;; membership, proof shape, grounding marks, and atlas scoping — the numbers
    ;; themselves are printed for the operator, never asserted.
-   (define parasite-csv (beeatlas-path 'bee_parasite_hosts.csv #f))
    (define specialist-csv (beeatlas-path 'bee_specialist_hosts.csv #f))
-   (when (and (file-exists? parasite-csv) (file-exists? specialist-csv))
+   (when (and (file-exists? traits-parquet) (file-exists? specialist-csv))
      (define atlas (for/set ([r (in-list rows)]) (species-row-canonical r)))
      (define hosts
-       (host-dependencies (read-host-edges parasite-csv)
+       (host-dependencies (read-host-edges traits-parquet)
                           (nesting-index derived index) atlas))
      (define forage
        (forage-dependencies (read-forage-edges specialist-csv)

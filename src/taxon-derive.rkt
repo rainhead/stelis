@@ -234,17 +234,26 @@
 ;; --- Edge typing inputs (st-an7) ----------------------------------------------------
 
 ;; read-host-edges : path-string -> (listof (cons string string))
-;; The bee_parasite_hosts seed: (parasite canonical . host display name), one
-;; per record. Refuses an empty read for read-lineages*'s reason: the seed has
-;; hundreds of rows, so zero means the read matched nothing (renamed column,
-;; format change) and publishing "no parasites depend on anything" on a green
-;; build is exactly the silent wrong answer this family of guards exists for.
-(define (read-host-edges csv)
+;; Each cuckoo's recorded hosts, (parasite canonical . host display name), one per
+;; host, off the species_traits mart's host_bee_list. NOT off the bee_parasite_hosts
+;; seed, which this once read directly (st-an7): the seed is Bee-Gap verbatim, and
+;; the mart is where beeatlas's corrections overlay and synonymy apply. Reading the
+;; seed routed around a curator's retraction, so B. vosnesenskii, which Bee-Gap
+;; wrongly lists as a cuckoo of Bombus, was published as depending on Bombus after
+;; the correction had withdrawn the claim (st-tse). The mart's join scopes it to the
+;; atlas's species, which host-dependencies does anyway.
+;; Refuses an empty read for read-lineages*'s reason: the mart carries dozens of
+;; cuckoos, so zero means the read matched nothing (renamed column, format change)
+;; and publishing "no parasites depend on anything" on a green build is exactly the
+;; silent wrong answer this family of guards exists for.
+(define (read-host-edges traits-parquet)
   (define out
     (duckdb-query #f (string-append
-                      "SELECT coalesce(parasite,''), coalesce(host_taxon,'')"
-                      " FROM read_csv('" (~a csv) "') ORDER BY 1, 2")))
-  (unless out (error 'taxon-reasoning "could not read ~a via duckdb" csv))
+                      "SELECT canonical_name, host FROM ("
+                      " SELECT canonical_name, unnest(host_bee_list) AS host"
+                      " FROM read_parquet('" (~a traits-parquet) "')"
+                      " WHERE host_bee_list IS NOT NULL) ORDER BY 1, 2")))
+  (unless out (error 'taxon-reasoning "could not read ~a via duckdb" traits-parquet))
   (define rows
     (for*/list ([line (in-list (string-split out "\n"))]
                 [tup (in-value (string-split line "|" #:trim? #f))]
@@ -254,7 +263,7 @@
       (cons (first tup) (second tup))))
   (when (null? rows)
     (error 'taxon-reasoning
-           "~a yielded no parasite-host rows — the read matched nothing; refusing to publish an empty dependence set" csv))
+           "~a yielded no parasite-host rows — the read matched nothing; refusing to publish an empty dependence set" traits-parquet))
   rows)
 
 ;; read-forage-edges : path-string -> (listof (list string (or/c string #f) string))
@@ -393,7 +402,7 @@
 ;; curator's editing mistake.
 (define (make-taxon-reasoning species-artifact traits-artifact
                               facts-artifact output-artifact
-                              parasite-artifact specialist-artifact
+                              specialist-artifact
                               beegap-seed-artifact deps-output-artifact)
   (lambda (ctx)
     (with-handlers ([exn:fail? (lambda (e) (values #f (exn-message e)))])
@@ -441,7 +450,7 @@
          ;; the same node, consuming its own inheritance in-process.
          (define atlas (for/set ([r (in-list rows)]) (species-row-canonical r)))
          (define hosts
-           (host-dependencies (read-host-edges (path-of parasite-artifact))
+           (host-dependencies (read-host-edges (path-of traits-artifact))
                               (nesting-index derived index) atlas))
          (define forage
            (forage-dependencies (read-forage-edges (path-of specialist-artifact))

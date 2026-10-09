@@ -439,7 +439,7 @@ truer reading of what an assertion does. Theory answers structure; the curator's
 learner-facing note stays beside it, as in provenance-datalog ·
 [`taxon-edges.rkt`](src/taxon-edges.rkt) edge TYPING, the arc's step 2 (st-an7,
 pure core; the ratified design lives in that bead's design field): the
-bee_parasite_hosts / bee_specialist_hosts seeds typed obligate WITH provenance +
+cuckoo-host (bee_parasite_hosts, read through the traits mart) / bee_specialist_hosts edges typed obligate WITH provenance +
 grounding, so the at-risk closure (st-6x9) can propagate necessity through
 obligate edges only (ADR 0008 D4). Parasite edges type via the bee's INHERITED
 cleptoparasitic characterization (proof = the chain; a parasite no assertion
@@ -467,14 +467,19 @@ chain without a fact vouching for more than the data says. The 'disputed flag
 COMPOSES up the chain. Deliberately NOT the datalog library: necessity through
 an any-of set is a FORALL, and positive reachability would derive exactly the
 over-claim — a monotone fixpoint in plain Racket, unbounded depth intact
-(host-of-a-host resolves next round). On today's data: 147 base facts, 0
-derived — the one candidate chain (stelis montana → three Osmia) fails the
-forall on a generalist host, the any-of semantics doing its job ·
+(host-of-a-host resolves next round). On today's data (2026-10-09): 148 base
+facts, 1 derived — Coelioxys alternatus through its one host, the Cirsium
+specialist Megachile pugnata, reachable only once the host edges came off the
+mart rather than the raw seed (st-tse: Bee-Gap spells six cuckoos with
+feminine endings the checklist does not use). Stelis montana → three Osmia
+still fails the forall on a generalist host, the any-of semantics doing its
+job ·
 [`taxon-derive.rkt`](src/taxon-derive.rkt) its IO seam (the delta/delta-explain
 idiom): lineages off the species mart via DuckDB, assertions off the checked-in
 [`data/taxon-traits.rktd`](data/taxon-traits.rktd) (an input ARTIFACT, so a curator
-edit reads as `'input-changed`), the edge seeds + independent foraging read the
-same way, out to `species_reasoning.json` + `species_dependencies.json`; refuses
+edit reads as `'input-changed`), the specialist seed + independent foraging read
+the same way, the HOST edges off the traits mart's `host_bee_list` (where the
+corrections overlay and synonymy apply — the raw seed routed around both, st-tse), out to `species_reasoning.json` + `species_dependencies.json`; refuses
 to publish a conflicted result and cross-checks coverage against Bee-Gap ·
 [`provenance-datalog.rkt`](src/provenance-datalog.rkt) staleness as Datalog rules,
 plus the history projection (observed/ran/derived-from facts) ·

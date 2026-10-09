@@ -1324,21 +1324,23 @@
    ;; --- taxon reasoning: the first transform INSIDE the engine (st-ozp) ---
    ;; Reads the rank tree off the species mart and the curated assertions off the
    ;; fact artifact; writes species_reasoning.json. species_traits.parquet is read
-   ;; only to CROSS-CHECK the result against Bee-Gap's independent per-species
-   ;; values (reported in the node's note, never published) — an honest input, and
-   ;; a degrading one: losing it costs the report, not the reasoning.
+   ;; twice: to CROSS-CHECK the result against Bee-Gap's independent per-species
+   ;; values (reported in the node's note, never published), and for each cuckoo's
+   ;; host list, which is load-bearing — the mart is where the corrections overlay
+   ;; applies, so the typed host edges must come from it, not the raw seed (st-tse).
    ;; Deliberately crosses "transformations stay external" (ADR 0008 decision 5):
    ;; what earns Stelis-side is unbounded-depth closure with a native why. A
    ;; bounded join or a bulk aggregation would still belong in dbt.
    (make-task 'taxon-reasoning 'transform
-              ;; st-an7: the two seed CSVs are the RELATIONAL edges the node
-              ;; types — read directly (they are curated leaves; dbt's loaded
-              ;; copy is beside the point), so a host-list edit reads as
-              ;; 'input-changed naming the seed. species_dependencies.json is
-              ;; the typed-edge sibling artifact (keyed by depending species;
+              ;; st-an7: the relational edges the node types. The specialist
+              ;; seed is read directly (a curated leaf no correction touches);
+              ;; the HOST edges come off species_traits.parquet, because
+              ;; bee_parasite_hosts.csv is Bee-Gap verbatim and the corrections
+              ;; overlay applies in the mart (st-tse). species_dependencies.json
+              ;; is the typed-edge sibling artifact (keyed by depending species;
               ;; species_reasoning stays characterizations-only).
               #:inputs '(species.parquet species_traits.parquet taxon-traits.rktd
-                         bee_parasite_hosts.csv bee_specialist_hosts.csv
+                         bee_specialist_hosts.csv
                          ;; the INDEPENDENT Bee-Gap foraging column, for the
                          ;; 'disputed flag — the mart's diet_breadth already
                          ;; merges Fowler in, so it cannot disagree
@@ -1348,7 +1350,6 @@
                         "taxon-traits"
                         (make-taxon-reasoning 'species.parquet 'species_traits.parquet
                                               'taxon-traits.rktd 'species_reasoning.json
-                                              'bee_parasite_hosts.csv
                                               'bee_specialist_hosts.csv
                                               'bee_traits_beegap.csv
                                               'species_dependencies.json)
