@@ -13,12 +13,23 @@
 ;; GATED, like fan-out-key-integration-test: absent a beeatlas checkout with built
 ;; marts, or DuckDB, it prints a skip note and passes, keeping the suite green in
 ;; CI (which has neither).
+;;
+;; It also skips when a mart lacks a column this code reads (st-bx1). The marts
+;; are the PREVIOUS build's, and beeatlas's nightly runs this suite BEFORE its
+;; build: when one release adds a mart column and a Stelis change reads it, the
+;; test failed on the stale mart, the gate aborted, and the build that would have
+;; added the column never ran — every night. A mart older than the code is not a
+;; fixture for it. Nothing is lost by skipping: the taxon-reasoning node reads the
+;; freshly built mart and raises on a missing column, so a column beeatlas really
+;; dropped still fails the nightly, at the build rather than at the gate.
 
 (require rackunit
          racket/system
          racket/list
          racket/set
          racket/string
+         racket/path
+         "duckdb.rkt"
          "beeatlas.rkt"
          "taxon-inherit.rkt"
          "taxon-edges.rkt"
@@ -38,9 +49,26 @@
        (file-exists? traits-parquet)
        (file-exists? facts)))
 
+;; The columns this code reads that a mart on disk doesn't carry, as
+;; "mart.column" strings. An UNREADABLE mart reports nothing here, so it still
+;; reaches the reads below and fails them: unreadable is broken, not stale.
+(define (missing-columns)
+  (for*/list ([pair (in-list (list (cons species-parquet SPECIES-MART-COLUMNS)
+                                   (cons traits-parquet TRAITS-MART-COLUMNS)))]
+              [have (in-value (parquet-columns (car pair)))]
+              #:when have
+              [c (in-list (cdr pair))]
+              #:unless (member c have))
+    (format "~a.~a" (path->string (file-name-from-path (car pair))) c)))
+
+(define missing (if (usable?) (missing-columns) '()))
+
 (cond
   [(not (usable?))
    (printf "taxon-derive-integration-test: SKIPPED — needs a beeatlas checkout with built marts + duckdb\n")]
+  [(pair? missing)
+   (printf "taxon-derive-integration-test: SKIPPED — the marts predate this code, missing ~a; the next build adds them\n"
+           (string-join missing ", "))]
   [else
    (define rows (read-lineages species-parquet))
    (define taxa (lineages->taxonomy rows))

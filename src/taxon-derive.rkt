@@ -35,6 +35,8 @@
          beegap-nesting
          beegap-agreement
          BEEGAP-NESTING
+         SPECIES-MART-COLUMNS
+         TRAITS-MART-COLUMNS
          read-host-edges
          read-forage-edges
          species-diet
@@ -54,6 +56,17 @@
 ;; which the row supplies as its canonical_name.
 (define LINEAGE-RANKS (reverse (cdr (reverse RANKS))))
 
+;; The columns this module reads from each beeatlas mart, named once so a caller
+;; can ask whether a mart on disk is new enough for this code (st-bx1). A mart is
+;; built by the PREVIOUS build, so when a beeatlas release adds a column and a
+;; Stelis change reads it, the two land together but the mart on disk lags by one
+;; build. read-lineages builds its SELECT from SPECIES-MART-COLUMNS; the traits
+;; columns are read by beegap-nesting and read-host-edges below, and an edit to
+;; either read belongs here too.
+(define SPECIES-MART-COLUMNS
+  (append '("canonical_name" "scientificName") (map symbol->string LINEAGE-RANKS)))
+(define TRAITS-MART-COLUMNS '("canonical_name" "nesting" "host_bee_list"))
+
 ;; --- Reading the taxonomy ---------------------------------------------------------
 
 ;; read-lineages : path-string -> (listof species-row)
@@ -67,8 +80,7 @@
 ;; rank. Raises if the mart can't be read: a derivation with no taxonomy has
 ;; nothing to say, and silence would publish an empty artifact.
 (define (read-lineages parquet)
-  (define cols (append '("canonical_name" "scientificName")
-                       (map symbol->string LINEAGE-RANKS)))
+  (define cols SPECIES-MART-COLUMNS)
   (define sql
     (string-append
      "SELECT " (string-join (for/list ([c (in-list cols)])

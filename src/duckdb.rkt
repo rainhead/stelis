@@ -14,7 +14,7 @@
 (require racket/port
          racket/system)
 
-(provide duckdb-query sql-identifier? sql-qualified-name?)
+(provide duckdb-query parquet-columns sql-identifier? sql-qualified-name?)
 
 ;; Shapes a name must match before we interpolate it into SQL. The names come from
 ;; hand-authored, trusted mappings (no external input), but gating on a strict shape
@@ -44,3 +44,17 @@
          (port->string err) ; drain so the child can't block on a full stderr pipe
          (subprocess-wait sp)
          (and (eqv? 0 (subprocess-status sp)) text))))
+
+;; parquet-columns : path-string -> (or/c (listof string) #f)
+;; The column names a parquet file carries, in file order, or #f when it can't be
+;; read (same contract as duckdb-query). For a caller that must tell "this file
+;; predates a column I read" apart from "this file is broken".
+(define (parquet-columns parquet)
+  (define out
+    (duckdb-query #f (string-append
+                      "SELECT column_name FROM (DESCRIBE SELECT * FROM read_parquet('"
+                      (if (path? parquet) (path->string parquet) parquet) "'))")))
+  (and out
+       (for/list ([line (in-list (regexp-split #rx"\n" out))]
+                  #:unless (string=? line ""))
+         line)))
