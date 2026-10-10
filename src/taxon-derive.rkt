@@ -61,11 +61,13 @@
 ;; built by the PREVIOUS build, so when a beeatlas release adds a column and a
 ;; Stelis change reads it, the two land together but the mart on disk lags by one
 ;; build. read-lineages builds its SELECT from SPECIES-MART-COLUMNS; the traits
-;; columns are read by beegap-nesting and read-host-edges below, and an edit to
-;; either read belongs here too.
+;; columns are read by beegap-nesting, read-host-edges, read-forage-edges and
+;; species-diet below, and an edit to any of those reads belongs here too.
 (define SPECIES-MART-COLUMNS
   (append '("canonical_name" "scientificName") (map symbol->string LINEAGE-RANKS)))
-(define TRAITS-MART-COLUMNS '("canonical_name" "nesting" "host_bee_list"))
+(define TRAITS-MART-COLUMNS
+  '("canonical_name" "nesting" "host_bee_list"
+    "host_plant_family" "host_plant_detail" "beegap_foraging"))
 
 ;; --- Reading the taxonomy ---------------------------------------------------------
 
@@ -278,17 +280,23 @@
   rows)
 
 ;; read-forage-edges : path-string -> (listof (list string (or/c string #f) string))
-;; The bee_specialist_hosts seed: (canonical family-or-#f detail). The family is
-;; legitimately absent where Fowler gives only a genus ("Larrea Cav."), so only
-;; a blank canonical or detail drops a row; a blank family becomes #f, the same
+;; Fowler & Droege's specialist rows, (canonical family-or-#f detail), off the
+;; species_traits mart's host_plant_* columns, which carry exactly one Fowler row
+;; per atlas species. NOT off the bee_specialist_hosts seed, for read-host-edges'
+;; reason (st-osy): the mart is where synonymy applies, and the seed's spellings
+;; are Fowler's. Melissodes pallidisignatus is in the seed as "pallidisignata", so
+;; reading the seed dropped its edge as out-of-atlas, and its cuckoo Triepeolus
+;; argyreus lost the at-risk fact its one host's specialism supports. The family
+;; is legitimately absent where Fowler gives only a genus ("Larrea Cav."), so only
+;; a blank detail drops a row; a blank family becomes #f, the same
 ;; absence-made-unambiguous move read-lineages makes.
-(define (read-forage-edges csv)
+(define (read-forage-edges traits-parquet)
   (define out
     (duckdb-query #f (string-append
-                      "SELECT coalesce(canonical_name,''), coalesce(host_plant_family,''),"
-                      " coalesce(host_plant_detail,'')"
-                      " FROM read_csv('" (~a csv) "') ORDER BY 1, 3")))
-  (unless out (error 'taxon-reasoning "could not read ~a via duckdb" csv))
+                      "SELECT canonical_name, coalesce(host_plant_family,''), host_plant_detail"
+                      " FROM read_parquet('" (~a traits-parquet) "')"
+                      " WHERE host_plant_detail IS NOT NULL ORDER BY 1, 3")))
+  (unless out (error 'taxon-reasoning "could not read ~a via duckdb" traits-parquet))
   (define rows
     (for*/list ([line (in-list (string-split out "\n"))]
                 [tup (in-value (string-split line "|" #:trim? #f))]
@@ -298,28 +306,29 @@
       (list (first tup) (blank->false (second tup)) (third tup))))
   (when (null? rows)
     (error 'taxon-reasoning
-           "~a yielded no specialist rows — the read matched nothing; refusing to publish an empty dependence set" csv))
+           "~a yielded no specialist rows — the read matched nothing; refusing to publish an empty dependence set" traits-parquet))
   rows)
 
 ;; species-diet : path-string -> hash
 ;; canonical_name -> Bee-Gap's INDEPENDENT foraging value, lowercase ("" where
-;; absent), read from the bee_traits_beegap SEED — deliberately NOT the mart's
-;; diet_breadth, which already merges the sources with Fowler winning ties
-;; (species_traits.sql: membership in bee_specialist_hosts IS 'specialist'), so
-;; flagging Fowler edges against it can only ever say 'agrees. The mart merges
-;; the disagreement away silently; this flag is what makes it visible as
-;; editorial content (st-an7 D2).
+;; absent), off the mart's beegap_foraging — deliberately NOT its diet_breadth,
+;; which already merges the sources with Fowler winning ties (species_traits.sql:
+;; membership in bee_specialist_hosts IS 'specialist'), so flagging Fowler edges
+;; against it can only ever say 'agrees. The mart merges the disagreement away
+;; silently; this flag is what makes it visible as editorial content (st-an7 D2).
+;; The mart rather than the bee_traits_beegap seed so the two sides compared are
+;; keyed by the same synonymy (st-osy).
 ;; STRICT where beegap-nesting is tolerant, on purpose: the nesting read feeds a
 ;; report, so losing it costs a note; this feeds the PUBLISHED 'disputed /
-;; 'no-value flag on every forage edge, and an unreadable seed silently
+;; 'no-value flag on every forage edge, and an unreadable mart silently
 ;; publishing "no-value" everywhere would erase the dispute record on a green
 ;; build. Raising lands in the node's handler and fails just this node.
-(define (species-diet csv)
+(define (species-diet traits-parquet)
   (define out
     (duckdb-query #f (string-append
-                      "SELECT coalesce(canonical_name,''), lower(coalesce(foraging,''))"
-                      " FROM read_csv('" (~a csv) "')")))
-  (unless out (error 'taxon-reasoning "could not read foraging from ~a via duckdb" csv))
+                      "SELECT canonical_name, lower(coalesce(beegap_foraging,''))"
+                      " FROM read_parquet('" (~a traits-parquet) "')")))
+  (unless out (error 'taxon-reasoning "could not read foraging from ~a via duckdb" traits-parquet))
   (for*/hash ([line (in-list (string-split out "\n"))]
               [tup (in-value (string-split line "|" #:trim? #f))]
               #:when (and (= 2 (length tup)) (not (string=? (first tup) ""))))
@@ -402,7 +411,7 @@
 
 ;; --- The node ------------------------------------------------------------------------
 
-;; make-taxon-reasoning : symbol symbol symbol symbol
+;; make-taxon-reasoning : symbol symbol symbol symbol symbol
 ;;                        -> (check-context -> (values boolean string))
 ;; The `derivation' run body, given the ARTIFACT NAMES it reads and writes; every
 ;; path is resolved through the build-env, so the node carries no hardcoded
@@ -415,8 +424,7 @@
 ;; curator's editing mistake.
 (define (make-taxon-reasoning species-artifact traits-artifact
                               facts-artifact output-artifact
-                              specialist-artifact
-                              beegap-seed-artifact deps-output-artifact)
+                              deps-output-artifact)
   (lambda (ctx)
     (with-handlers ([exn:fail? (lambda (e) (values #f (exn-message e)))])
       (define env (check-context-env ctx))
@@ -466,8 +474,8 @@
            (host-dependencies (read-host-edges (path-of traits-artifact))
                               (nesting-index derived index) atlas))
          (define forage
-           (forage-dependencies (read-forage-edges (path-of specialist-artifact))
-                                (species-diet (path-of beegap-seed-artifact)) atlas))
+           (forage-dependencies (read-forage-edges (path-of traits-artifact))
+                                (species-diet (path-of traits-artifact)) atlas))
          ;; the at-risk closure (st-6x9): strict necessity only — every any-of
          ;; node on the chain collapsed, every host grounded (see taxon-risk.rkt)
          (define risk-base (base-necessities forage))
@@ -508,7 +516,7 @@
       (if (for/or ([t (in-list (host-dependence-targets h))]) (cdr t)) 0 1)))
   (define (flag f) (for/sum ([d (in-list forage)])
                      (if (eq? f (forage-dependence-beegap d)) 1 0)))
-  (format "; deps: ~a parasite(s) typed (~a source-proof-only, ~a with no in-atlas host), ~a specialist(s) typed (diet_breadth: ~a agree, ~a no value, ~a disputed)"
+  (format "; deps: ~a parasite(s) typed (~a source-proof-only, ~a with no in-atlas host), ~a specialist(s) typed (Bee-Gap foraging: ~a agree, ~a no value, ~a disputed)"
           (length hosts) recorded ungrounded
           (length forage) (flag 'agrees) (flag 'no-value) (flag 'disputed)))
 

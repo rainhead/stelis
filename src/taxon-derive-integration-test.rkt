@@ -175,15 +175,14 @@ would show as gaps swallowing the set")
    ;; Structural claims only, no drift-sensitive ratios (the st-36e lesson):
    ;; membership, proof shape, grounding marks, and atlas scoping — the numbers
    ;; themselves are printed for the operator, never asserted.
-   (define specialist-csv (beeatlas-path 'bee_specialist_hosts.csv #f))
-   (when (file-exists? specialist-csv)
+   (let ()
      (define atlas (for/set ([r (in-list rows)]) (species-row-canonical r)))
      (define hosts
        (host-dependencies (read-host-edges traits-parquet)
                           (nesting-index derived index) atlas))
      (define forage
-       (forage-dependencies (read-forage-edges specialist-csv)
-                            (species-diet (beeatlas-path 'bee_traits_beegap.csv #f)) atlas))
+       (forage-dependencies (read-forage-edges traits-parquet)
+                            (species-diet traits-parquet) atlas))
      (check-true (pair? hosts) "some checklist parasites carry typed host edges")
      (check-true (pair? forage) "some checklist specialists carry typed forage edges")
      (check-true (for/and ([h (in-list hosts)])
@@ -214,7 +213,7 @@ would show as gaps swallowing the set")
                         (if (eq? f (forage-dependence-beegap d)) 1 0)))
      (define recorded (for/sum ([h (in-list hosts)])
                         (if (eq? 'recorded (host-dependence-proof h)) 1 0)))
-     (printf "taxon-edges: ~a parasites typed (~a source-proof-only) · ~a specialists typed (diet_breadth: ~a agree, ~a no value, ~a disputed)\n"
+     (printf "taxon-edges: ~a parasites typed (~a source-proof-only) · ~a specialists typed (Bee-Gap foraging: ~a agree, ~a no value, ~a disputed)\n"
              (length hosts) recorded (length forage)
              (flag 'agrees) (flag 'no-value) (flag 'disputed))
 

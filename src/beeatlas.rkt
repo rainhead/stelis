@@ -310,9 +310,6 @@
                              'bee_traits_corrections.csv (seed-file "bee_traits_corrections.csv")
                              'bee_traits_beegap.csv      (seed-file "bee_traits_beegap.csv")
                              'bee_parasite_hosts.csv     (seed-file "bee_parasite_hosts.csv")
-                             ;; the Fowler & Droege specialist list (st-an7):
-                             ;; the forage edges the reasoning node types
-                             'bee_specialist_hosts.csv   (seed-file "bee_specialist_hosts.csv")
                              ;; the curated synonymy seed (st-eo0). dbt reaches it
                              ;; through the seeds/ dir its recipe hashes as code;
                              ;; five OTHER tasks open the CSV directly, and for
@@ -644,7 +641,6 @@
    (make-artifact 'bee_traits_corrections.csv 'file #:provenance 'authoritative)
    (make-artifact 'bee_traits_beegap.csv      'file #:provenance 'upstream)
    (make-artifact 'bee_parasite_hosts.csv     'file #:provenance 'upstream)
-   (make-artifact 'bee_specialist_hosts.csv   'file #:provenance 'upstream)
    (make-artifact 'corrections-verified       'token)
    ;; Curated beeatlas content read as DATA by tasks outside dbt (st-eo0, found by
    ;; --trace-reads). Both are authored and forward-only — git is the store — so
@@ -1324,34 +1320,30 @@
    ;; --- taxon reasoning: the first transform INSIDE the engine (st-ozp) ---
    ;; Reads the rank tree off the species mart and the curated assertions off the
    ;; fact artifact; writes species_reasoning.json. species_traits.parquet is read
-   ;; twice: to CROSS-CHECK the result against Bee-Gap's independent per-species
-   ;; values (reported in the node's note, never published), and for each cuckoo's
-   ;; host list, which is load-bearing — the mart is where the corrections overlay
-   ;; applies, so the typed host edges must come from it, not the raw seed (st-tse).
+   ;; to CROSS-CHECK the result against Bee-Gap's independent per-species values
+   ;; (reported in the node's note, never published), and for the edges the node
+   ;; types, which are load-bearing — the mart is where the corrections overlay and
+   ;; synonymy apply, so the edges must come from it, not the raw seeds (st-tse,
+   ;; st-osy).
    ;; Deliberately crosses "transformations stay external" (ADR 0008 decision 5):
    ;; what earns Stelis-side is unbounded-depth closure with a native why. A
    ;; bounded join or a bulk aggregation would still belong in dbt.
    (make-task 'taxon-reasoning 'transform
-              ;; st-an7: the relational edges the node types. The specialist
-              ;; seed is read directly (a curated leaf no correction touches);
-              ;; the HOST edges come off species_traits.parquet, because
-              ;; bee_parasite_hosts.csv is Bee-Gap verbatim and the corrections
-              ;; overlay applies in the mart (st-tse). species_dependencies.json
-              ;; is the typed-edge sibling artifact (keyed by depending species;
-              ;; species_reasoning stays characterizations-only).
-              #:inputs '(species.parquet species_traits.parquet taxon-traits.rktd
-                         bee_specialist_hosts.csv
-                         ;; the INDEPENDENT Bee-Gap foraging column, for the
-                         ;; 'disputed flag — the mart's diet_breadth already
-                         ;; merges Fowler in, so it cannot disagree
-                         bee_traits_beegap.csv)
+              ;; st-an7: the relational edges the node types, all off
+              ;; species_traits.parquet: the host edges because the corrections
+              ;; overlay applies there (st-tse), the specialist rows and Bee-Gap's
+              ;; independent foraging value because synonymy does (st-osy) — the
+              ;; seeds carry their sources' spellings, so a Fowler name the
+              ;; checklist spells differently dropped out as out-of-atlas.
+              ;; species_dependencies.json is the typed-edge sibling artifact
+              ;; (keyed by depending species; species_reasoning stays
+              ;; characterizations-only).
+              #:inputs '(species.parquet species_traits.parquet taxon-traits.rktd)
               #:outputs '(species_reasoning.json species_dependencies.json)
               #:invoke (derivation
                         "taxon-traits"
                         (make-taxon-reasoning 'species.parquet 'species_traits.parquet
                                               'taxon-traits.rktd 'species_reasoning.json
-                                              'bee_specialist_hosts.csv
-                                              'bee_traits_beegap.csv
                                               'species_dependencies.json)
                         (rkt-import-closure taxon-seam-source taxon-rules-source)))))
 

@@ -3,8 +3,8 @@
 ;; Edge TYPING (st-an7, ADR 0008 step 2) — the pure core.
 ;;
 ;; Characterizations say what a bee IS (taxon-inherit.rkt, inheritable with
-;; proofs); edges say what a bee DEPENDS ON (Bee-Gap's cuckoo hosts, read
-;; through beeatlas's traits mart, and the bee_specialist_hosts seed). Typing an edge attaches its OBLIGATE-ness, with
+;; proofs); edges say what a bee DEPENDS ON (Bee-Gap's cuckoo hosts and Fowler &
+;; Droege's specialist list, both read through beeatlas's traits mart). Typing an edge attaches its OBLIGATE-ness, with
 ;; provenance, and its GROUNDING — whether the depended-on thing is in this
 ;; atlas at all. The at-risk closure (st-6x9) may propagate necessity only
 ;; through obligate edges (ADR 0008 D4); this module is what makes that rule
@@ -28,25 +28,25 @@
 ;;   the source as proof. No generalist forage edges exist, so D4's over-claim
 ;;   scenario (cuckoo -> generalist host -> every flower it visits) is
 ;;   structurally impossible: the closure stops at a generalist for lack of an
-;;   edge, not by policy. Where the mart's diet_breadth (Bee-Gap-derived)
-;;   DISAGREES — 41 species nationally at last count — the edge carries a
+;;   edge, not by policy. Where Bee-Gap's own foraging value (the mart's
+;;   beegap_foraging, never its diet_breadth, which merges Fowler in and so can
+;;   only agree) DISAGREES — 41 species nationally at last count — the edge carries a
 ;;   'disputed flag rather than failing anything: two respectable sources
 ;;   disagreeing is editorial content (ADR 0006's flag side), not an operator
 ;;   alarm, and neither source outranks the other the way expected_upstream
-;;   does. A diet_breadth of no value is the same coverage win the nesting
+;;   does. A Bee-Gap foraging of no value is the same coverage win the nesting
 ;;   cross-check counts as "gaps filled".
 ;;
 ;;   GROUNDING — out-of-atlas hosts are KEPT, marked (D4 of the ratified set):
 ;;   only 57 of the 456 recorded parasites are on the checklist, and a local
 ;;   cuckoo can have European recorded hosts. The dependence is real biology
 ;;   the atlas just can't see; dropping it would make silence look like safety.
-;;   Resolution is exact canonical-name matching on what the seam hands in.
-;;   Host names arrive through the mart's synonymy (beeatlas-k0md); forage rows
-;;   still come straight off the seed, so a Fowler spelling the checklist does
-;;   not use stays unresolved (st-osy).
+;;   Resolution is exact canonical-name matching on what the seam hands in,
+;;   which arrives through the mart's synonymy (beeatlas-k0md, st-osy) — so a
+;;   source spelling the synonym map does not cover stays unresolved.
 ;;
 ;; Pure over plain data: edge rows in, typed dependence structs out. IO — the
-;; seed CSVs, the marts, the artifact write — lives in taxon-derive.rkt, the
+;; marts, the artifact write — lives in taxon-derive.rkt, the
 ;; same seam split st-ozp used.
 
 (require racket/list
@@ -70,7 +70,7 @@
 
 ;; One specialist's obligate dependence on its recorded plant taxa.
 ;;   species : string — canonical_name (in-atlas)
-;;   beegap  : 'agrees | 'no-value | 'disputed — the mart's diet_breadth beside
+;;   beegap  : 'agrees | 'no-value | 'disputed — Bee-Gap's own foraging beside
 ;;             Fowler's membership claim (see the module essay; a flag, never a gate)
 ;;   plants  : (listof (cons (or/c string #f) string)) — (family . detail), the
 ;;             family #f where Fowler gives only a genus ("Larrea Cav."), sorted
@@ -112,7 +112,7 @@
 ;; forage-dependencies : (listof (list string (or/c string #f) string)) hash
 ;;                       set-of-string -> (listof forage-dependence)
 ;; `rows` — (canonical_name family-or-#f detail), one per Fowler record
-;; `diet` — canonical_name -> the mart's diet_breadth, lowercase ("" = no value)
+;; `diet` — canonical_name -> Bee-Gap's own foraging, lowercase ("" = no value)
 ;; Membership is the obligate claim; `diet` only names how Bee-Gap's independent
 ;; column sits beside it.
 (define (forage-dependencies rows diet atlas)
