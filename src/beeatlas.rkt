@@ -422,6 +422,7 @@
      '("inaturalist_data.canonical_to_taxon_id")] ; shared table — see note above
     [(taxon_lineage_extended) '("inaturalist_data.taxon_lineage_extended")]
     [(host_plant_lineage)     '("inaturalist_data.host_plant_lineage")]
+    [(plant_genus_families)   '("inaturalist_data.plant_genus_families")]
     [(dem_elevations)         '("dem_data.elevations")]
     [(geographies_places)     '("geographies.places")]
     ;; county GEOMETRY species_maps reads straight from the duckdb (st-4cm edge fix)
@@ -594,6 +595,7 @@
    (make-artifact 'inactive_remaps          'db-relation)
    (make-artifact 'taxon_lineage_extended   'db-relation)
    (make-artifact 'host_plant_lineage       'db-relation)
+   (make-artifact 'plant_genus_families     'db-relation)
    ;; coordinate -> DEM elevation lookup (beeatlas-sn8). A CACHE that only grows:
    ;; dem_elevation.py samples a coordinate once and never re-reads it, so this
    ;; relation's digest changes exactly when new coordinates enter the sources.
@@ -934,6 +936,13 @@
    (make-task 'host-plant-lineage 'transform
               #:inputs '(taxa.csv.gz) #:outputs '(host_plant_lineage)
               #:invoke (py "host_plant_lineage" "load_host_plant_lineage"))
+   ;; Every plant genus NAME in the same archive, with its one family (st-d64):
+   ;; Fowler's specialist lists name host genera by text and often give no
+   ;; family, or an older system's, so the mart files each genus by iNat's.
+   ;; Unlike host_plant_lineage it walks all of Plantae, not the observed hosts.
+   (make-task 'plant-genus-families 'transform
+              #:inputs '(taxa.csv.gz) #:outputs '(plant_genus_families)
+              #:invoke (py "host_plant_lineage" "load_plant_genus_families"))
    ;; The gate VALIDATES content/places.toml, so the file is its subject, not just
    ;; ambient context — an edit to it is exactly when this must re-run (st-eo0).
    (make-task 'places-validation 'gate
@@ -1027,6 +1036,7 @@
                          ;; (cache.rkt drops a declared input from the code side)
                          auto_synonyms.csv
                          taxon_lineage_extended host_plant_lineage
+                         plant_genus_families
                          taxa.csv.gz
                          geographies_places geographies_us_counties
                          geographies_ecoregions geographies_us_states

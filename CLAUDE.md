@@ -469,7 +469,10 @@ grain; a host Fowler gives without a family blocks the claim — unknown is not
 uniform, and so does a doubtful bracketed alternative). The hosts are Fowler's
 one text field split per genus by beeatlas's `int_specialist_host_plants`
 (st-7dm): read whole, the field made every specialist look single-plant, so
-every one got a plant-level claim naming its entire list,
+every one got a plant-level claim naming its entire list. Each genus's family
+is iNaturalist's (beeatlas's `plant_genus_families`, the `plant-genus-families`
+task, st-d64), not Fowler's heading: Fowler omits it on over half its rows,
+uses an older system for some, and once files a buckwheat under Asteraceae,
 and through hosts only when EVERY host is grounded AND needs the same target
 (the forall, materialized as one via per host). Anything looser is D4's
 over-claim; the broader exposure surface is not derived because it is already
@@ -478,8 +481,8 @@ chain without a fact vouching for more than the data says. The 'disputed flag
 COMPOSES up the chain. Deliberately NOT the datalog library: necessity through
 an any-of set is a FORALL, and positive reachability would derive exactly the
 over-claim — a monotone fixpoint in plain Racket, unbounded depth intact
-(host-of-a-host resolves next round). On today's data (2026-10-10): 140 base
-facts (66 genus-level, 74 family-level), 2 derived: Coelioxys alternatus through its one host, the Cirsium
+(host-of-a-host resolves next round). On today's data (2026-10-10): 144 base
+facts (66 genus-level, 78 family-level), 2 derived: Coelioxys alternatus through its one host, the Cirsium
 specialist Megachile pugnata, reachable only once the host edges came off the
 mart rather than the raw seed (st-tse: Bee-Gap spells six cuckoos with
 feminine endings the checklist does not use), and Triepeolus argyreus through
