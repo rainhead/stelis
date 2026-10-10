@@ -176,7 +176,7 @@ would show as gaps swallowing the set")
    ;; membership, proof shape, grounding marks, and atlas scoping — the numbers
    ;; themselves are printed for the operator, never asserted.
    (define specialist-csv (beeatlas-path 'bee_specialist_hosts.csv #f))
-   (when (and (file-exists? traits-parquet) (file-exists? specialist-csv))
+   (when (file-exists? specialist-csv)
      (define atlas (for/set ([r (in-list rows)]) (species-row-canonical r)))
      (define hosts
        (host-dependencies (read-host-edges traits-parquet)

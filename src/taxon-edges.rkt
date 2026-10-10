@@ -3,8 +3,8 @@
 ;; Edge TYPING (st-an7, ADR 0008 step 2) — the pure core.
 ;;
 ;; Characterizations say what a bee IS (taxon-inherit.rkt, inheritable with
-;; proofs); edges say what a bee DEPENDS ON (the bee_parasite_hosts and
-;; bee_specialist_hosts seeds). Typing an edge attaches its OBLIGATE-ness, with
+;; proofs); edges say what a bee DEPENDS ON (Bee-Gap's cuckoo hosts, read
+;; through beeatlas's traits mart, and the bee_specialist_hosts seed). Typing an edge attaches its OBLIGATE-ness, with
 ;; provenance, and its GROUNDING — whether the depended-on thing is in this
 ;; atlas at all. The at-risk closure (st-6x9) may propagate necessity only
 ;; through obligate edges (ADR 0008 D4); this module is what makes that rule
@@ -40,8 +40,10 @@
 ;;   only 57 of the 456 recorded parasites are on the checklist, and a local
 ;;   cuckoo can have European recorded hosts. The dependence is real biology
 ;;   the atlas just can't see; dropping it would make silence look like safety.
-;;   Resolution is exact canonical-name matching — Bee-Gap spellings that are
-;;   synonyms of checklist names stay unresolved, a recorded limitation.
+;;   Resolution is exact canonical-name matching on what the seam hands in.
+;;   Host names arrive through the mart's synonymy (beeatlas-k0md); forage rows
+;;   still come straight off the seed, so a Fowler spelling the checklist does
+;;   not use stays unresolved (st-osy).
 ;;
 ;; Pure over plain data: edge rows in, typed dependence structs out. IO — the
 ;; seed CSVs, the marts, the artifact write — lives in taxon-derive.rkt, the
@@ -77,7 +79,9 @@
 
 ;; host-dependencies : (listof (cons string string)) hash set-of-string
 ;;   -> (listof host-dependence)
-;; `edges`   — (parasite canonical_name . host display name), one row per record
+;; `edges`   — (parasite canonical_name . host display name), one row per pair
+;;             as the traits mart lists them: corrected, synonym-normalized, and
+;;             already deduplicated
 ;; `nesting` — canonical_name -> the species' inherited NESTING fact (built by
 ;;             the seam from the closure's own output; this is why typing lives
 ;;             beside the inheritance rather than in dbt)

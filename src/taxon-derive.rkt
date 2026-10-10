@@ -261,10 +261,9 @@
 (define (read-host-edges traits-parquet)
   (define out
     (duckdb-query #f (string-append
-                      "SELECT canonical_name, host FROM ("
-                      " SELECT canonical_name, unnest(host_bee_list) AS host"
+                      "SELECT canonical_name, unnest(host_bee_list) AS host"
                       " FROM read_parquet('" (~a traits-parquet) "')"
-                      " WHERE host_bee_list IS NOT NULL) ORDER BY 1, 2")))
+                      " WHERE host_bee_list IS NOT NULL ORDER BY 1, 2")))
   (unless out (error 'taxon-reasoning "could not read ~a via duckdb" traits-parquet))
   (define rows
     (for*/list ([line (in-list (string-split out "\n"))]
@@ -387,7 +386,9 @@
                      'trait "nesting" 'value "cleptoparasitic"
                      'rank (symbol->string (host-dependence-source-rank h))
                      'taxon (host-dependence-source-name h))]
-            [else (hasheq 'kind "recorded" 'source "bee_parasite_hosts")])
+            ;; the publication, as forage-jsexpr names Fowler & Droege: the rows
+            ;; are Bee-Gap's even though they now arrive through the mart (st-2bt)
+            [else (hasheq 'kind "recorded" 'source "bee-gap")])
           'targets
           (for/list ([t (in-list (host-dependence-targets h))])
             (hasheq 'name (car t) 'in_atlas (cdr t)))))

@@ -443,7 +443,10 @@ truer reading of what an assertion does. Theory answers structure; the curator's
 learner-facing note stays beside it, as in provenance-datalog ·
 [`taxon-edges.rkt`](src/taxon-edges.rkt) edge TYPING, the arc's step 2 (st-an7,
 pure core; the ratified design lives in that bead's design field): the
-cuckoo-host (bee_parasite_hosts, read through the traits mart) / bee_specialist_hosts edges typed obligate WITH provenance +
+cuckoo-host (bee_parasite_hosts, read through the traits mart, so corrections and
+synonymy reach parasite AND host — beeatlas-k0md) / bee_specialist_hosts (still read
+raw off the seed, so a Fowler spelling the checklist lacks drops out — st-osy)
+edges typed obligate WITH provenance +
 grounding, so the at-risk closure (st-6x9) can propagate necessity through
 obligate edges only (ADR 0008 D4). Parasite edges type via the bee's INHERITED
 cleptoparasitic characterization (proof = the chain; a parasite no assertion
