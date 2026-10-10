@@ -59,11 +59,12 @@
 
 ;; forage: membership is the claim; diet_breadth only sets the flag
 (define forage-rows
-  (list (list "andrena prunorum" "Rosaceae" "Rosaceae : Prunus L.")
-        (list "andrena prunorum" #f "Larrea Cav.")
-        (list "epeolus minimus" "Asteraceae" "Asteraceae : Solidago L.")
-        (list "stelis montana" "Fabaceae" "Fabaceae : Lupinus L.")
-        (list "megachile fortis" "Asteraceae" "Asteraceae : Helianthus L.")))
+  (list (list "andrena prunorum" "Rosaceae" "Prunus")
+        (list "andrena prunorum" #f "Larrea")
+        (list "andrena prunorum" "Rosaceae" #f)
+        (list "epeolus minimus" "Asteraceae" "Solidago")
+        (list "stelis montana" "Fabaceae" "Lupinus")
+        (list "megachile fortis" "Asteraceae" "Helianthus")))
 (define diet (hash "andrena prunorum" "specialist"
                    "epeolus minimus"  "generalist"))
 
@@ -77,8 +78,8 @@
 (check-equal? (forage-dependence-beegap (caddr fd)) 'no-value
               "no diet_breadth = the coverage-win arm, distinct from dispute")
 (check-equal? (forage-dependence-plants (car fd))
-              '((#f . "Larrea Cav.") ("Rosaceae" . "Rosaceae : Prunus L."))
-              "family-less rows survive as (#f . detail), sorted by detail")
+              '((#f . "Larrea") ("Rosaceae" . #f) ("Rosaceae" . "Prunus"))
+              "a genus with no family and a family with no genus both survive, unknowns first")
 
 ;; determinism: same inputs, same value (the artifact must be byte-stable)
 (check-equal? hd (host-dependencies host-edges nesting atlas))

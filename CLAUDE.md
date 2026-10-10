@@ -464,8 +464,12 @@ consuming its own closure (D5 needs no fresh argument), emitting the sibling
 (st-6x9, ADR 0008 step 3): strict "imperilled if X declines" facts over the
 typed edges, proof trees and learner-facing sentences included. The one rule:
 a typed dependence is ANY-OF, so necessity holds only where every any-of node
-COLLAPSES — a singleton plant set (plant grain), a family-uniform set (family
-grain; a family-less Fowler row blocks the claim — unknown is not uniform),
+COLLAPSES — a single host genus (plant grain), hosts all in one family (family
+grain; a host Fowler gives without a family blocks the claim — unknown is not
+uniform, and so does a doubtful bracketed alternative). The hosts are Fowler's
+one text field split per genus by beeatlas's `int_specialist_host_plants`
+(st-7dm): read whole, the field made every specialist look single-plant, so
+every one got a plant-level claim naming its entire list,
 and through hosts only when EVERY host is grounded AND needs the same target
 (the forall, materialized as one via per host). Anything looser is D4's
 over-claim; the broader exposure surface is not derived because it is already
@@ -474,12 +478,13 @@ chain without a fact vouching for more than the data says. The 'disputed flag
 COMPOSES up the chain. Deliberately NOT the datalog library: necessity through
 an any-of set is a FORALL, and positive reachability would derive exactly the
 over-claim — a monotone fixpoint in plain Racket, unbounded depth intact
-(host-of-a-host resolves next round). On today's data (2026-10-10): 149 base
-facts, 2 derived: Coelioxys alternatus through its one host, the Cirsium
+(host-of-a-host resolves next round). On today's data (2026-10-10): 140 base
+facts (66 genus-level, 74 family-level), 2 derived: Coelioxys alternatus through its one host, the Cirsium
 specialist Megachile pugnata, reachable only once the host edges came off the
 mart rather than the raw seed (st-tse: Bee-Gap spells six cuckoos with
 feminine endings the checklist does not use), and Triepeolus argyreus through
-Melissodes pallidisignatus, an Asteraceae specialist, once both its host's name
+Melissodes pallidisignatus, which collects from eleven Asteraceae genera and so
+needs the family, once both its host's name
 and Fowler's row for that host came through synonymy (beeatlas-k0md, st-osy).
 Stelis montana → three Osmia
 still fails the forall on a generalist host, the any-of semantics doing its

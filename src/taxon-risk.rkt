@@ -10,7 +10,7 @@
 ;; any listed plant survives. So the strict, publishable claim "imperilled if X
 ;; declines" is true only where every any-of node on the chain COLLAPSES:
 ;;
-;;   plant grain  — a specialist whose plant set is a SINGLETON needs that plant.
+;;   plant grain  — a specialist whose plant set is ONE genus needs that genus.
 ;;   family grain — a specialist whose plants all share ONE family needs that
 ;;                  family (a coarser event, but strictly true: lose the family,
 ;;                  lose every member). A row Fowler gives without a family
@@ -57,7 +57,7 @@
 ;; One strict claim: `species` is imperilled if `target` declines.
 ;;   species  : string — canonical_name (in-atlas)
 ;;   grain    : 'plant | 'family — what kind of thing `target` names
-;;   target   : string — the plant detail ("Fabaceae : Lupinus L.") or family
+;;   target   : string — a plant genus ("Lupinus") or a family ("Fabaceae")
 ;;   flagged? : boolean — a disputed forage edge somewhere on the chain
 ;;   via      : (or/c #f (listof (cons string necessity))) — #f for the BASE
 ;;              fact (the species' own oligolecty); for a derived fact, one
@@ -75,7 +75,10 @@
               [claim (in-value
                       (cond
                         [(null? plants) #f]
-                        [(null? (cdr plants)) (cons 'plant (cdr (car plants)))]
+                        ;; a lone GENUS; a lone family (Fowler named no genus)
+                        ;; falls through to the family arm
+                        [(and (null? (cdr plants)) (cdr (car plants)))
+                         => (lambda (genus) (cons 'plant genus))]
                         [(let ([fams (remove-duplicates (map car plants))])
                            (and (null? (cdr fams)) (car fams)))
                          => (lambda (fam) (cons 'family fam))]

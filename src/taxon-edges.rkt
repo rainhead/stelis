@@ -72,9 +72,10 @@
 ;;   species : string — canonical_name (in-atlas)
 ;;   beegap  : 'agrees | 'no-value | 'disputed — Bee-Gap's own foraging beside
 ;;             Fowler's membership claim (see the module essay; a flag, never a gate)
-;;   plants  : (listof (cons (or/c string #f) string)) — (family . detail), the
-;;             family #f where Fowler gives only a genus ("Larrea Cav."), sorted
-;;             by detail
+;;   plants  : (listof (cons (or/c string #f) (or/c string #f))) — (family .
+;;             genus), one per host the source names: the family #f where Fowler
+;;             gives only a genus ("Larrea"), the genus #f where it names only a
+;;             family ("Fabaceae"). Sorted, families first, unknowns first.
 (struct forage-dependence (species beegap plants) #:transparent)
 
 ;; host-dependencies : (listof (cons string string)) hash set-of-string
@@ -111,7 +112,7 @@
 
 ;; forage-dependencies : (listof (list string (or/c string #f) string)) hash
 ;;                       set-of-string -> (listof forage-dependence)
-;; `rows` — (canonical_name family-or-#f detail), one per Fowler record
+;; `rows` — (canonical_name family-or-#f genus-or-#f), one per host Fowler names
 ;; `diet` — canonical_name -> Bee-Gap's own foraging, lowercase ("" = no value)
 ;; Membership is the obligate claim; `diet` only names how Bee-Gap's independent
 ;; column sits beside it.
@@ -129,5 +130,12 @@
       (cond [(string=? d "") 'no-value]
             [(string-ci=? d "specialist") 'agrees]
             [else 'disputed])
-      (sort (remove-duplicates plants) string<? #:key cdr)))
+      (sort (remove-duplicates plants) plant<?)))
    string<? #:key forage-dependence-species))
+
+;; (family . genus) order, #f before any name on each side: the artifact must be
+;; byte-stable, and either side may be unknown.
+(define (plant<? a b)
+  (define (name<? x y) (and (not (equal? x y)) (or (not x) (and y (string<? x y)))))
+  (or (name<? (car a) (car b))
+      (and (equal? (car a) (car b)) (name<? (cdr a) (cdr b)))))

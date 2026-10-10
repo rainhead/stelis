@@ -35,7 +35,12 @@
                       '(("Liliaceae" . "Calochortus")))
    ;; a second family-uniform Rosaceae specialist, for the multi-host forall
    (forage-dependence "panurginus rosae" 'agrees
-                      '(("Rosaceae" . "Crataegus L.") ("Rosaceae" . "Rosa L.")))))
+                      '(("Rosaceae" . "Crataegus L.") ("Rosaceae" . "Rosa L.")))
+   ;; Fowler names only the family: a family claim, never a plant claim whose
+   ;; target is missing (st-7dm)
+   (forage-dependence "osmia fabacea" 'agrees '(("Fabaceae" . #f)))
+   ;; a host Fowler could not name at all blocks every claim
+   (forage-dependence "perdita incognita" 'agrees '((#f . #f)))))
 
 (define base (base-necessities forage))
 
@@ -44,7 +49,8 @@
               '(("andrena astragali" plant "Toxicoscordion")
                 ("andrena prunorum" family "Rosaceae")
                 ("dufourea calochorti" plant "Calochortus")
-                ("panurginus rosae" family "Rosaceae"))
+                ("panurginus rosae" family "Rosaceae")
+                ("osmia fabacea" family "Fabaceae"))
               "only collapsed any-of sets yield claims; grain follows the collapse")
 (check-false (necessity-flagged? (first base)))
 (check-true (necessity-flagged? (third base))

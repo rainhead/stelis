@@ -66,8 +66,7 @@
 (define SPECIES-MART-COLUMNS
   (append '("canonical_name" "scientificName") (map symbol->string LINEAGE-RANKS)))
 (define TRAITS-MART-COLUMNS
-  '("canonical_name" "nesting" "host_bee_list"
-    "host_plant_family" "host_plant_detail" "beegap_foraging"))
+  '("canonical_name" "nesting" "host_bee_list" "host_plants" "beegap_foraging"))
 
 ;; --- Reading the taxonomy ---------------------------------------------------------
 
@@ -279,31 +278,37 @@
            "~a yielded no parasite-host rows — the read matched nothing; refusing to publish an empty dependence set" traits-parquet))
   rows)
 
-;; read-forage-edges : path-string -> (listof (list string (or/c string #f) string))
-;; Fowler & Droege's specialist rows, (canonical family-or-#f detail), off the
-;; species_traits mart's host_plant_* columns, which carry exactly one Fowler row
-;; per atlas species. NOT off the bee_specialist_hosts seed, for read-host-edges'
-;; reason (st-osy): the mart is where synonymy applies, and the seed's spellings
-;; are Fowler's. Melissodes pallidisignatus is in the seed as "pallidisignata", so
-;; reading the seed dropped its edge as out-of-atlas, and its cuckoo Triepeolus
-;; argyreus lost the at-risk fact its one host's specialism supports. The family
-;; is legitimately absent where Fowler gives only a genus ("Larrea Cav."), so only
-;; a blank detail drops a row; a blank family becomes #f, the same
+;; read-forage-edges : path-string
+;;   -> (listof (list string (or/c string #f) (or/c string #f)))
+;; Fowler & Droege's specialist hosts, (canonical family-or-#f genus-or-#f), one
+;; row per host, off the species_traits mart's host_plants list. NOT off the
+;; bee_specialist_hosts seed, for read-host-edges' reason (st-osy): the mart is
+;; where synonymy applies, and the seed's spellings are Fowler's. And NOT off the
+;; mart's host_plant_detail either (st-7dm): Fowler packs all of a bee's hosts
+;; into that one text field, and read whole it made every specialist look like it
+;; depended on a single plant, so every one got a strict plant-level claim naming
+;; the entire list. host_plants is that field split into hosts by beeatlas's
+;; int_specialist_host_plants, whose header gives the field's grammar. Either side
+;; of a pair may be absent: Fowler names some hosts by genus only ("Larrea") and
+;; some by family only ("Fabaceae"); blank becomes #f, the same
 ;; absence-made-unambiguous move read-lineages makes.
 (define (read-forage-edges traits-parquet)
   (define out
     (duckdb-query #f (string-append
-                      "SELECT canonical_name, coalesce(host_plant_family,''), host_plant_detail"
+                      "SELECT canonical_name, coalesce(p.family,''), coalesce(p.genus,'') FROM ("
+                      " SELECT canonical_name, unnest(host_plants) AS p"
                       " FROM read_parquet('" (~a traits-parquet) "')"
-                      " WHERE host_plant_detail IS NOT NULL ORDER BY 1, 3")))
+                      " WHERE host_plants IS NOT NULL) ORDER BY 1, 2, 3")))
   (unless out (error 'taxon-reasoning "could not read ~a via duckdb" traits-parquet))
   (define rows
     (for*/list ([line (in-list (string-split out "\n"))]
                 [tup (in-value (string-split line "|" #:trim? #f))]
+                ;; a pair with neither side is a host Fowler could not name; it
+                ;; stays, as (#f . #f), because dropping a member of an any-of
+                ;; set could manufacture a strict claim
                 #:when (and (= 3 (length tup))
-                            (not (string=? (first tup) ""))
-                            (not (string=? (third tup) ""))))
-      (list (first tup) (blank->false (second tup)) (third tup))))
+                            (not (string=? (first tup) ""))))
+      (list (first tup) (blank->false (second tup)) (blank->false (third tup)))))
   (when (null? rows)
     (error 'taxon-reasoning
            "~a yielded no specialist rows — the read matched nothing; refusing to publish an empty dependence set" traits-parquet))
@@ -407,7 +412,8 @@
           'beegap (case (forage-dependence-beegap f)
                     [(agrees) "agrees"] [(no-value) "no-value"] [else "disputed"])
           'plants (for/list ([p (in-list (forage-dependence-plants f))])
-                    (hasheq 'family (or (car p) (json-null)) 'detail (cdr p)))))
+                    (hasheq 'family (or (car p) (json-null))
+                            'genus (or (cdr p) (json-null))))))
 
 ;; --- The node ------------------------------------------------------------------------
 

@@ -234,9 +234,14 @@ would show as gaps swallowing the set")
         (let* ([f (hash-ref forage-of (necessity-species n))]
                [plants (remove-duplicates (forage-dependence-plants f))])
           (case (necessity-grain n)
-            [(plant) (= 1 (length plants))]
-            [(family) (and (> (length plants) 1)
-                           (= 1 (length (remove-duplicates (map car plants)))))]
+            ;; one host, a named genus, and the claim names it
+            [(plant) (and (= 1 (length plants))
+                          (equal? (cdr (car plants)) (necessity-target n)))]
+            ;; every host in the one named family — several genera, or the
+            ;; family alone where Fowler named no genus
+            [(family) (and (not (and (= 1 (length plants)) (cdr (car plants))))
+                           (equal? (remove-duplicates (map car plants))
+                                   (list (necessity-target n))))]
             [else #f])))
       "every base fact is a genuinely collapsed any-of set, at the right grain")
      (check-not-false
