@@ -275,7 +275,11 @@ live in the -wal); the per-key pairs are also recorded across builds as a trace
 `input-key-hashes` snapshot, so `--why notes-harvest` names the changed
 species ·
 [`duckdb.rkt`](src/duckdb.rkt) the shared read-only DuckDB CLI runner (relation
-digests + parquet key extraction + the notes-store SQLite scan) ·
+digests + parquet key extraction + the notes-store SQLite scan), plus
+`parquet-columns`: taxon-derive's integration test skips a mart that predates a
+column the code reads (st-bx1) — beeatlas's nightly runs the suite BEFORE its
+build, so a column added in the same release would otherwise fail the gate and
+block the build that adds it ·
 [`rkt-imports.rkt`](src/rkt-imports.rkt) the same idea for RACKET (st-egh): the
 transitive closure of a module's local (string) requires, so a `derivation` node's
 code covers what its modules actually depend on. Hand-listing missed duckdb.rkt —
