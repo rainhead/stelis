@@ -241,18 +241,18 @@
 (define register-relations (map string->symbol register-tables))
 
 ;; The reference tables (salishsea decision 064, salish-9uu.2.1): providers,
-;; organizations, collections, Maplify's collection rules and the enums' declared
-;; orders. Migrations wrote them and nothing in the app does, so they are checked-in
+;; organizations, collections, Maplify's collection rules, the enums' declared
+;; orders, and how far each Orcasound hydrophone can hear (decision 077). Migrations wrote them and nothing in the app does, so they are checked-in
 ;; files under data/reference/ now, loaded into the snapshot database under the same
 ;; Postgres names by the reference task, and the derivation reads them unchanged.
 (define reference-tables
   '("public.providers" "public.organizations" "public.collections"
-    "maplify.collection_rule" "types.enums"))
+    "maplify.collection_rule" "types.enums" "public.hydrophones"))
 (define reference-relations (map string->symbol reference-tables))
 ;; Each table's file, as a declared input nobody in the graph writes.
 (define reference-files
   '(reference/providers.tsv reference/organizations.tsv reference/collections.tsv
-    reference/maplify-collection-rules.tsv reference/enums.tsv))
+    reference/maplify-collection-rules.tsv reference/enums.tsv reference/hydrophones.tsv))
 
 (define snapshot-input-relations (map string->symbol snapshot-input-tables))
 ;; Everything the derivations read besides the mirrors: what the snapshot copies from
@@ -458,6 +458,7 @@
      (make-artifact 'reference/collections.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/maplify-collection-rules.tsv 'file #:provenance 'authoritative)
      (make-artifact 'reference/enums.tsv 'file #:provenance 'authoritative)
+     (make-artifact 'reference/hydrophones.tsv 'file #:provenance 'authoritative)
      ;; Which register release the build holds (salish-9uu.2.2).
      (make-artifact 'register.edition 'db-relation)
      ;; Orcasound's bouts as the build fetches them itself (salish-xv35.6).
@@ -848,6 +849,7 @@
     [(reference/collections.tsv) (build-path SALISHSEA "data" "reference" "collections.tsv")]
     [(reference/maplify-collection-rules.tsv) (build-path SALISHSEA "data" "reference" "maplify-collection-rules.tsv")]
     [(reference/enums.tsv) (build-path SALISHSEA "data" "reference" "enums.tsv")]
+    [(reference/hydrophones.tsv) (build-path SALISHSEA "data" "reference" "hydrophones.tsv")]
     [else #f]))
 
 (define (relation-tables artifact)
