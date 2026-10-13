@@ -86,7 +86,7 @@
 ;; produces them, from declared files nobody in the graph writes, and the snapshot no longer
 ;; reads them from Postgres.
 (for ([table (in-list '(public.providers public.organizations public.collections
-                        maplify.collection_rule types.enums))])
+                        maplify.collection_rule types.enums public.hydrophones))])
   (check-eq? (producer-of salishsea-graph table) 'reference
              (format "~a comes from its checked-in file" table))
   (check-not-false (memq table (inputs-of 'derive-occurrences))
@@ -95,7 +95,7 @@
   (check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) file)) 'authoritative
              (format "~a is ours and forward-only" file))
   (check-false (producer-of salishsea-graph file) (format "~a is written by a curator with git" file)))
-(check-equal? (length (inputs-of 'reference)) 5)
+(check-equal? (length (inputs-of 'reference)) 6)
 (check-false (memq 'public.identifications (inputs-of 'derive-occurrences))
              "the occurrences don't read the identifications; only the links do")
 
