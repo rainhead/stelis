@@ -576,9 +576,12 @@
                                '(register.names register.ancestor
                                  build.individual_occurrences build.group_occurrences build.ecotype_occurrences))
               #:outputs '(search-index.json)
+              ;; The map's hydrophones are found too, read from the checked-in asset, so a
+              ;; regenerated asset reruns the task as a code change would.
               #:invoke (node-script/code "scripts/read-path/search-index.ts"
                                  '("scripts/read-path/duckdb-budget.ts" "src/catalog.ts" "src/constants.ts"
-                                   "src/extents.ts" "src/fold.ts" "src/search.ts" "src/supabase.ts")
+                                   "src/extents.ts" "src/fold.ts" "src/map-view.ts" "src/search.ts" "src/supabase.ts"
+                                   "src/assets/orcasound-hydrophones.geojson")
                                  (list SNAPSHOT-DB)))
    ;; No snapshot-meta: nothing here depends on when the snapshot was taken, so
    ;; unlike the pages this cuts off whenever the catalogue holds still. Vite's
