@@ -177,10 +177,10 @@ gate; probe failure = conservative forced run. uv and dbt are probed too
 launch prefix SYNCS the venv, which planning must never trigger, and the safety
 flag goes mid-launch where an appended probe can't reach; `standalone-probe` in
 model.rkt is the declared shape for exactly this), dbt via run.sh's `--identity`
-branch (uvx `--offline`, cache-only — cold cache fails the probe, conservative
-run; observes ONLY what run.sh's exact pins leave free, the CPython patch and
-the floating transitive duckdb engine — never `dbt --version`, whose "latest:
-X" moves on upstream releases). uv INTENT rides as `uv-runtime-code`
+branch (`uv run --offline --no-sync` in beeatlas's data/ environment, which is
+where dbt runs; it prints the CPython build and the dbt-core, dbt-duckdb and
+duckdb versions — never `dbt --version`, whose "latest: X" moves on upstream
+releases). dbt-build also carries `uv-runtime-code`, since its pins are in uv.lock. uv INTENT rides as `uv-runtime-code`
 (pyproject/uv.lock/.python-version on every uv recipe): the venv only moves
 when a launch syncs it, so an un-hashed pin edit would rerun nothing and sit
 unapplied forever — intent triggers the change, reality addresses it ·

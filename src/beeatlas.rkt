@@ -17,7 +17,7 @@
 ;; Slice 2 (st-d44.2): each task's `invoke' slot holds its hermetic recipe,
 ;; transcribed from run.py's imports. Two runtimes cover the pipeline: `uv'
 ;; (beeatlas's uv project, Python 3.14, where dlt/exporters run) and `dbt'
-;; (data/dbt/run.sh, which uvx-pins Python 3.13). Recipes are dry-run only so far.
+;; (data/dbt/run.sh, which runs dbt from that same uv project). Recipes are dry-run only so far.
 ;;
 ;; --- Provenance / drift detection -------------------------------------------
 ;; This graph was transcribed by hand from the beeatlas files below, at the
@@ -68,8 +68,8 @@
 
 ;; --- Hermetic runtimes ------------------------------------------------------
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
-;; data/dbt/run.sh, which uvx-pins Python 3.13. Stelis delegates hermeticity to
-;; those existing pins — it just launches the right command per task.
+;; data/dbt/run.sh, which runs it from that project's uv.lock. Stelis delegates
+;; hermeticity to those existing pins — it just launches the right command per task.
 ;; Where the beeatlas case-study repo lives. Defaults to the author's checkout;
 ;; override with BEEATLAS_DIR to run this graph on another host (maderas, CI).
 (define BEEATLAS (or (getenv "BEEATLAS_DIR") "/Users/rainhead/dev/beeatlas"))
@@ -124,14 +124,15 @@
   ;; one line up is the declared, visible cost. `-VV' over `--version': the build
   ;; string moves with a rebuilt interpreter even inside one version.
   ;;
-  ;; `dbt': probe rides the launch — run.sh owns the uvx pins, and its
-  ;; `--identity' branch re-invokes them with `--offline' (cache-only: a cold
-  ;; cache fails the probe rather than reaching the network at plan time). The
-  ;; pin never leaves run.sh, which the dbt recipe already hashes as code.
+  ;; `dbt': probe rides the launch — run.sh's `--identity' branch runs Python
+  ;; in data/'s uv environment with `--offline --no-sync' (it never syncs or
+  ;; reaches the network at plan time; no venv yet -> probe fails -> conservative
+  ;; run) and prints the dbt-core, dbt-duckdb and duckdb versions uv.lock
+  ;; installed, so a lockfile bump of any of them reaches the dbt task's address.
   (hash 'uv  (runtime 'uv  (list "uv" "run" "--directory" DATA "python") "uv/3.14"
                       (standalone-probe
                        (list "uv" "run" "--no-sync" "--directory" DATA "python" "-VV")))
-        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uvx/3.13"
+        'dbt (runtime 'dbt (list "bash" (string-append DATA "/dbt/run.sh")) "uv/3.14"
                       (list "--identity"))
         ;; `sh': a bare shell for file PLACEMENT (not transformation) — used by
         ;; place-marts to copy derived dbt outputs to their export destination.
@@ -140,12 +141,12 @@
         ;; `node': the site repo's npm scripts, at beeatlas's PINNED node (st-hdm).
         ;;
         ;; The pin is the whole reason this is a runtime rather than a bare
-        ;; command. beeatlas pins node in .nvmrc (24.18) and its own callers —
+        ;; command. beeatlas pins node in .nvmrc and its own callers —
         ;; data/nightly.sh and data/publish-notes.sh — establish it by sourcing nvm
         ;; and running `nvm use` before any npm call. Nothing about `npm` itself
         ;; carries the pin, so an engine that shelled out directly would build the
-        ;; bundle under whatever node happened to be on PATH; on this machine that
-        ;; is 26, not 24.18. Same job as `uv run --directory` for the Python tasks:
+        ;; bundle under whatever node happened to be on PATH, which need not be the
+        ;; pinned one. Same job as `uv run --directory` for the Python tasks:
         ;; declare the interpreter once, by name (ADR 0002).
         ;;
         ;; cwd matters too and is not negotiable — vite.config.ts resolves
@@ -186,7 +187,7 @@
 ;; hashes .nvmrc.
 ;;
 ;; This file states INTENT; the runtime's identity probe states REALITY (st-jkl).
-;; .nvmrc holds `24.18', a RANGE — installing 24.18.1 changes the interpreter with
+;; .nvmrc holds major.minor (`26.12'), a RANGE — installing 26.12.1 changes the interpreter with
 ;; the file unmoved — and on a host with no nvm the runtime warns and uses whatever
 ;; `node' is on PATH (see the runtime above). Both holes are closed by the probe:
 ;; the RESOLVED `node --version', observed through the launch prefix at snapshot
@@ -1056,11 +1057,14 @@
               ;; logs/, and .user.yml are deliberately ABSENT: they are dbt's
               ;; own outputs/mutable state, and hashing them into the input
               ;; address would self-invalidate every build.
+              ;; uv-runtime-code too: dbt runs from data/'s uv environment, so its
+              ;; version pins live in uv.lock, and an edit there must rerun this.
               #:invoke (recipe 'dbt (list "build")
-                               (map data-file
-                                    '("dbt/run.sh" "dbt/dbt_project.yml"
-                                      "dbt/profiles.yml" "dbt/models"
-                                      "dbt/macros" "dbt/seeds" "dbt/tests"))))
+                               (append uv-runtime-code
+                                       (map data-file
+                                            '("dbt/run.sh" "dbt/dbt_project.yml"
+                                              "dbt/profiles.yml" "dbt/models"
+                                              "dbt/macros" "dbt/seeds" "dbt/tests")))))
 
    ;; --- the target producer (has a __main__; run as a script) ---
    (make-task 'generate-sqlite 'transform
