@@ -5,8 +5,8 @@
 ;; A task's reserved `invoke' slot (model.rkt) holds a `recipe': which hermetic
 ;; runtime to launch it in, plus the task-specific argv tail. The runtime itself
 ;; (the interpreter/env pin) is declared once and referenced by name, so the
-;; dual-interpreter split (uv/3.14 vs uvx/3.13) is explicit metadata rather than
-;; buried in a command string.
+;; interpreter pin (uv/3.14, beeatlas's .nvmrc node) is explicit metadata rather
+;; than buried in a command string.
 ;;
 ;; 2a resolves recipes to commands and PRINTs them (a dry run); 2b (`run-task',
 ;; below) executes a recipe as a subprocess.

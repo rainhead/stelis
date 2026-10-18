@@ -89,3 +89,12 @@ Two revisions to this ADR's allocations:
    behavior-in-exec: `exec.rkt` keeps subprocess execution, the dry-run
    printer, and `rule-check`, and re-provides the moved names so callers are
    unchanged. `model.rkt`'s *planner* still never inspects `invoke`.
+
+## Update, 2026-10-17
+
+beeatlas's dbt no longer runs through uvx on Python 3.13. dbt-core 1.12 imports on
+Python 3.14, so `data/dbt/run.sh` now runs `uv run --frozen dbt` in the same uv
+project as every other Python task, with dbt's versions in `data/uv.lock`. The two
+runtimes therefore share an interpreter. They stay separate runtimes because their
+launch commands and identity probes still differ, and the `dbt` runtime's label is
+now `uv/3.14`. `dbt-build` hashes `uv-runtime-code` like the `uv` tasks do.
