@@ -55,8 +55,19 @@ different days). Every installer, salishsea's Dockerfile included, takes the
 source from that file — through [`scripts/install-racket.sh`](scripts/install-racket.sh)
 (st-2t1), which installs the pinned minimal build from
 [`racket-downloads.tsv`](racket-downloads.tsv) plus the packages into a prefix,
-mirror first (`STELIS_DOWNLOAD_MIRROR`), checksum deciding; CI and the container
-images get their Racket that way, so no host carries its own copy of the steps.
+mirror first (`STELIS_DOWNLOAD_MIRROR`), checksum deciding; CI gets its Racket
+that way, so no host carries its own copy of the steps. Container hosts get the
+IMAGE (st-9ov, [ADR 0017](docs/adr/0017-stelis-ships-as-an-image-per-commit.md)):
+the image workflow builds the [`Dockerfile`](Dockerfile) on every push to main and
+publishes `ghcr.io/rainhead/stelis:<commit>` — the install script's Racket at
+`/opt/racket` and the engine compiled at `/opt/stelis`, with the commit written to
+`/opt/stelis/commit` — and a consumer's Dockerfile copies those two trees by DIGEST
+([`scripts/image-digest.sh`](scripts/image-digest.sh) resolves the commit's tag and
+refuses unless the image's revision label is that commit). The suite runs INSIDE the
+image, as a non-root user on a read-only root, before anything is pushed; that gate
+is what found the `sha` package's FFI need for libcrypto, which the build stage and
+every curl-carrying host had by accident. Not in the image, on purpose: the DuckDB
+CLI (a project's pin, coupled to its DuckDB library) and git (pin `SOURCE_DATE_EPOCH`).
 No build step — Racket compiles on demand.
 
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·

@@ -1,0 +1,89 @@
+name: image
+
+# The Stelis image (ADR 0017, st-9ov): Racket, the engine's packages and the
+# compiled engine, built from the Dockerfile once per commit. A pull request builds
+# it and runs the test suite inside it, so a change to the install script, the pins
+# or the Dockerfile is proved on the pull request; a push to main does the same and
+# then publishes it as ghcr.io/rainhead/stelis:<commit>, which the projects that
+# build with Stelis pin by digest (scripts/image-digest.sh).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-26.04
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Build into the runner's Docker, where the test step can run it. The Racket
+      # layer is cached between runs, keyed by the five files the install reads, so
+      # an engine-only commit skips the download.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          build-args: STELIS_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The image is what the deploy hosts run, so the gate is the suite run INSIDE
+      # it, as a non-root user on a read-only filesystem: the way a consumer's machine
+      # runs the engine (salishsea's `app`), which also proves the bytecode compiled
+      # at build time is what runs, since a stale .zo would have to be rewritten.
+      # The DuckDB CLI is not in the image (ADR 0017: it is a project's pin), so the
+      # four suites that need it self-skip here; tests.yml runs them. /var/tmp is
+      # where raco test keeps its scratch file, and SOURCE_DATE_EPOCH is tests.yml's
+      # pin for the build clock, which would otherwise shell a git the image has not
+      # got. The first run of this gate found libcrypto missing from the image,
+      # which no preflight in the build stage could see (see the Dockerfile).
+      - name: Test inside the image
+        run: |
+          docker run --rm --read-only --user 1000:1000 --tmpfs /tmp --tmpfs /var/tmp \
+            -e HOME=/tmp -e SOURCE_DATE_EPOCH=1700000000 \
+            --entrypoint bash "$IMAGE:$GITHUB_SHA" -c '
+              set -euo pipefail
+              test "$(cat /opt/stelis/commit)" = "'"$GITHUB_SHA"'"
+              bash /opt/stelis/scripts/preflight.sh
+              cd /opt/stelis && raco test src/*-test.rkt'
+
+      - name: Log in to ghcr.io
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag is the commit and nothing else: no `latest`, no branch tag, so the
+      # only way to name an image is by the commit it was built from, and the digest
+      # a consumer pins is checked against that commit by scripts/image-digest.sh.
+      - name: Push
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          build-args: STELIS_COMMIT=${{ github.sha }}
+          cache-from: type=gha
+
+      - name: Digest
+        if: github.event_name == 'push'
+        run: |
+          echo "Published $IMAGE:$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/image-digest.sh "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
