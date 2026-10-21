@@ -34,14 +34,17 @@ fi
 # NAME the missing one, and a combined form stops at the first failure with a
 # message about a module path rather than about provisioning.
 missing=()
+sources=()
 checked=0
-while read -r dep; do
-    dep="${dep%%#*}"                       # strip comments
-    dep="$(echo "$dep" | tr -d '[:space:]')"
+while read -r line; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue   # a comment line
+    line="${line%%[[:space:]]#*}"          # a trailing comment; a '#' inside a source is a commit
+    read -r dep source <<< "$line"         # the collection, then its pinned source if any
     [[ -z "$dep" ]] && continue
     checked=$(( checked + 1 ))
     if ! racket -l racket/base -e "(require $dep)" > /dev/null 2>&1; then
         missing+=("$dep")
+        sources+=("${source:-$dep}")       # unpinned: install by name, from the catalog
     fi
 done < "$DEPS_FILE"
 
@@ -50,8 +53,9 @@ if (( ${#missing[@]} > 0 )); then
     for m in "${missing[@]}"; do echo "  - $m" >&2; done
     echo "" >&2
     echo "Install them (user scope — an installation-wide install needs root and" >&2
-    echo "fights the system package manager when racket came from a distro package):" >&2
-    echo "  raco pkg install --auto --batch ${missing[*]}" >&2
+    echo "fights the system package manager when racket came from a distro package)," >&2
+    echo "from the sources $DEPS_FILE pins:" >&2
+    echo "  raco pkg install --auto --batch ${sources[*]}" >&2
     echo "" >&2
     echo "NOTE: a collection that ships in the full distribution is already present" >&2
     echo "at installation scope and must NOT be re-requested as a user package." >&2

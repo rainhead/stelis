@@ -1,4 +1,5 @@
-# Racket collections the engine requires at RUNTIME, one per line.
+# Racket collections the engine requires at RUNTIME, one per line: the collection,
+# then (optionally) the pinned source to install it from.
 #
 # This declares what must be LOADABLE, not what must be installed — how a host
 # satisfies each one differs, and that is fine. The full Racket distribution ships
@@ -14,6 +15,19 @@
 # reachable from every stelis invocation, `sha` was absent on maderas, and the
 # nightly's fetch-data leg was simply dead — a module-resolution stack trace with
 # nothing naming the fix (st-7lm).
+#
+# Why the source is pinned (st-8u3): `raco pkg install sha` asks pkgs.racket-lang.org,
+# which points at the package's git branch and moves whenever its author pushes —
+# so two hosts set up a week apart could run different code with nothing saying so,
+# and a third-party host's outage or certificate (salishsea-io#727) is a failed
+# install. A git source with a commit is content-addressed: it installs that commit
+# or fails loudly. Racket fetches it over HTTPS itself; no git binary is needed.
+# Every installer (CI, salishsea's fly/Dockerfile, a new host) takes the source from
+# this line rather than copying it. `datalog` needs no pin: a minimal Racket takes it
+# from the 9.3 release catalog, which names one zip and its checksum for good.
+#
+# To move the pin: pick the commit, change it here, and let CI's preflight prove it
+# installs and loads.
 
-sha
+sha      https://github.com/greghendershott/sha.git#f9472bea67e05e8c11dc915e943038d3a7276a9b
 datalog

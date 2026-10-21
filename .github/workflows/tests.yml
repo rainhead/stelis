@@ -30,9 +30,10 @@ jobs:
 
       # `sha` (sha-256, for the DASL CIDs in dasl.rkt) is NOT in the full
       # distribution — unlike datalog above — so it does install as a user package,
-      # with no wider-scope conflict to avoid.
+      # with no wider-scope conflict to avoid. From the commit racket-deps.txt pins
+      # (st-8u3), read from that file so the pin is declared once.
       - name: Install sha
-        run: raco pkg install --auto --batch sha
+        run: raco pkg install --auto --batch "$(awk '$1 == "sha" {print $2}' racket-deps.txt)"
 
       # The same provisioning check the deploy host runs (scripts/preflight.sh,
       # st-7lm), against racket-deps.txt. Running it HERE is what keeps the two in

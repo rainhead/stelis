@@ -47,9 +47,12 @@ Stelis is the build system. `~/dev/beeatlas` and `~/dev/salishsea-io` are
 
 Toolchain: **Racket v9.3 CS** (on `PATH` at `/Applications/Racket v9.3`). Core is
 `#lang racket/base` under [`src/`](src/); the Datalog planner needs the `datalog`
-package (`raco pkg install datalog`) and the DASL CIDs need `sha`
-(`raco pkg install sha` — unlike `datalog`, it is NOT in the full distribution, so
-CI installs it explicitly). No build step — Racket compiles on demand.
+package (`raco pkg install datalog`) and the DASL CIDs need `sha` — unlike
+`datalog`, it is NOT in the full distribution, so CI installs it explicitly, from
+the commit [`racket-deps.txt`](racket-deps.txt) pins (st-8u3: the catalog's entry
+follows the package's git branch, so an unpinned install is different code on
+different days). Every installer, salishsea's Dockerfile included, takes the
+source from that file. No build step — Racket compiles on demand.
 
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·
