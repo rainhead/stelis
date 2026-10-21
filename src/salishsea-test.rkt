@@ -19,9 +19,9 @@
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
 ;; Orcasound and the snapshot of what Postgres still holds.
 (define-values (ordered pruned) (plan salishsea-graph 'days))
-(check-equal? ordered '(happywhale ingest-maplify ingest-orcasound reference snapshot ingest-register
+(check-equal? ordered '(ingest-maplify ingest-orcasound reference snapshot ingest-register
                         ingest-inaturalist maplify-names derive-occurrences occurrence-days)
-              (string-append "the day files need Happywhale's frozen file, the three sources' ingests, the reference "
+              (string-append "the day files need the three sources' ingests, the reference "
                              "files, the snapshot, the register, the name guard and the derivation; the register follows "
                              "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
                              "which names the taxa it fetches"))
@@ -42,13 +42,10 @@
                              (inputs-of 'catalogue)))])
   (check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) file)) 'authoritative)
   (check-false (producer-of salishsea-graph file)))
-;; Happywhale's frozen tables come from a file on the volume (salish-9uu.2.4), not the
-;; snapshot: somebody else's data snapshotted in once, which no task writes.
-(for ([t (in-list '(happywhale.encounters happywhale.users happywhale.individuals
-                    happywhale.species happywhale.media))])
-  (check-eq? (producer-of salishsea-graph t) 'happywhale (format "~a comes from the frozen file" t)))
-(check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'happywhale.duckdb)) 'upstream)
-(check-false (producer-of salishsea-graph 'happywhale.duckdb))
+;; Happywhale is out of the build until a live feed is prioritized (salish-zclv): its
+;; frozen file was the one input whose source could not serve it again.
+(check-false (hash-ref (graph-tasks salishsea-graph) 'happywhale #f) "no task loads Happywhale")
+(check-false (hash-ref (graph-artifacts salishsea-graph) 'happywhale.encounters #f) "no relation holds it")
 (check-not-false (memq 'register.vitals (inputs-of 'catalogue))
                  "an individual's vitals are the register's")
 ;; The Southern Residents' rows are generated from the register (salishsea decision 070).
@@ -204,9 +201,8 @@
 (check-not-false (memq 'maplify-names-hold (inputs-of 'dwca)) "a register that un-names sightings stops the archive too")
 (check-not-false (memq 'snapshot-day (inputs-of 'dwca)) "dated by the snapshot's day")
 (check-false (memq 'snapshot-meta (inputs-of 'dwca)) "not the moment, which moves every build")
-(for ([unpublished (in-list '(inaturalist_mirror.observations happywhale.encounters))])
-  (check-false (memq unpublished (inputs-of 'dwca))
-               (format "~a publishes to GBIF itself, so the archive doesn't read it" unpublished)))
+(check-false (memq 'inaturalist_mirror.observations (inputs-of 'dwca))
+             "iNaturalist publishes to GBIF itself, so the archive doesn't read it")
 (check-equal? ((project-path salishsea-project) 'dwca (string->path "/x")) (string->path "/x/dwca"))
 
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'snapshot)) 'boundary

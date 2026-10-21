@@ -576,7 +576,7 @@ sampled older month; iNaturalist by `updated_since` plus a reconciled window;
 Orcasound whole), each writing its boundary receipt — including the
 `unreachable` arm, so an outage never reads as a quiet day. A fourth boundary
 snapshots what Postgres still holds (native sightings, the register, the
-catalogue, Happywhale frozen, and its own Maplify copy while that ingest runs)
+catalogue, and its own Maplify copy while that ingest runs)
 into a local DuckDB file (rows serialized by Postgres's `to_jsonb`, PostgREST's
 own serializer, so the files match what the frontend parses). `derive-occurrences`
 and `derive-profile-links` are DuckDB twins of Postgres's views over the mirrors
@@ -601,10 +601,10 @@ catalogue's three views over the register (`group_parents`, `matriline_members`,
 names the pages read (salish-9uu.2.3); and the catalogue's own tables are
 checked-in files under salishsea's `data/catalogue/`, loaded by a `catalogue` task
 that computes what Postgres derived (folded codes; each individual's vitals from
-`register.vitals` and `register.current_status`). Happywhale's frozen tables are a
-producerless `'upstream` file on the volume (`mirrors/happywhale.duckdb`, kept off the
-public repository), loaded by a `happywhale` task (salish-9uu.2.4). The snapshot now
-reads only what users write. A transform writes one file per Pacific day. The snapshot reruns
+`register.vitals` and `register.current_status`). Happywhale is out of the build
+(salish-zclv, 2026-10-21): its frozen tables lived in a file on the volume that no
+source could serve again, so they wait for a live feed (salish-v5s) rather than ride
+as a dead arm. The snapshot now reads only what users write. A transform writes one file per Pacific day. The snapshot reruns
 every build; an unchanged database digests the same, and early cutoff skips
 the rest. It also records when it was
 taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),
