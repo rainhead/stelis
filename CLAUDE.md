@@ -583,10 +583,13 @@ and `derive-profile-links` are DuckDB twins of Postgres's views over the mirrors
 and the snapshot, writing `build.*` relations into the snapshot file; every
 published file reads those. Before the derivation sits the `maplify-names`
 gate: a register edition that un-names a Maplify sighting would silently drop
-it from the map, so the gate judges this build's resolution against the LAST
-PASSING build's, kept in `maplify-names.json` beside the mirrors — a declared
-`'authoritative` output, forward-only, the one state the build owns that
-cannot be regenerated. `dwca` writes the Darwin Core archive from twins of the
+it from the map, so the gate judges this build's resolution against a baseline
+checked into salishsea's `data/maplify-names.json` (decision 083) — a
+producerless `'authoritative` input like the allow-list — and on a pass writes
+what the baseline should become as a derived report, served at
+`/status/maplify-names.json`, which a pull request copies back over the
+baseline. Until 083 the gate wrote the baseline beside the mirrors: the one
+state the build owned that could not be regenerated. `dwca` writes the Darwin Core archive from twins of the
 `dwc` views. The reference tables — providers, organizations,
 collections, Maplify's collection rules, the enum orders — are not read from Postgres:
 they are checked-in files under salishsea's `data/reference/`, producerless

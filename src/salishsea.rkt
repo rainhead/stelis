@@ -420,13 +420,18 @@
      ;; That every Maplify name Postgres resolved still resolves in the register the
      ;; build was given.
      (make-artifact 'maplify-names-hold 'token)
-     ;; The guard's baseline: the last PASSING build's answers, which the next build is
-     ;; judged against (salish-xv35.9.2). Forward-only — each pass rewrites it from the
-     ;; one before, and once Postgres stops resolving Maplify nothing can regenerate it
-     ;; — so 'authoritative, written by a task in this graph (ADR 0013's 'either arm).
-     ;; Declared so the graph names its producer and extent, not so the cache can
-     ;; address it: an authoritative output is excluded from cutoff by design.
+     ;; The guard's baseline: every Maplify (name, scientific name) pair a passing build
+     ;; has named, and to what (salish-xv35.9.2). Checked in (data/maplify-names.json,
+     ;; salishsea decision 083), so a change to it is a reviewed pull request and the
+     ;; volume holds nothing the build cannot get again: producerless and forward-only,
+     ;; like the allow-list below. Until 083 the gate wrote it beside the mirrors, where
+     ;; five days of volume snapshots were its only copies.
      (make-artifact 'maplify-names.json 'file #:provenance 'authoritative)
+     ;; What the baseline should become, written by the gate on a pass and served as
+     ;; /status/maplify-names.json: this build's answers plus the named pairs the mirror
+     ;; no longer holds. Derived — a lost one is rewritten by the next pass — and a pull
+     ;; request copies it over the baseline (scripts/read-path/refresh-maplify-names.ts).
+     (make-artifact 'status/maplify-names.json 'file)
      ;; The pairs a curator has accepted as un-named (data/maplify-unnamed.tsv): a
      ;; checked-in decision record, written by a person with git, that the guard reads
      ;; — so an acceptance clears the hold by a declared input moving. Producerless and
@@ -589,7 +594,7 @@
    ;; A register edition that loses a name would quietly drop every Maplify sighting
    ;; that used it, since the derivation resolves names from the register it is given.
    ;; This fails when the build's own rule can no longer name a pair the last passing
-   ;; build named (its baseline, maplify-names.json), before the derivation, so the last
+   ;; build named (its baseline, the checked-in data/maplify-names.json), before the derivation, so the last
    ;; good files stand. Only pairs the mirror still holds count: a sighting Maplify no
    ;; longer returns isn't on the map to lose. The register-refresh workflow asks the
    ;; same question of an edition before loading it, so this is the backstop.
@@ -612,13 +617,14 @@
                                        "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
    (make-task 'maplify-names 'gate
               #:inputs '(maplify_mirror.sightings register.entities register.names
-                         register.ancestor register.deprecations maplify-unnamed.tsv)
-              #:outputs '(maplify-names-hold maplify-names.json)
+                         register.ancestor register.deprecations maplify-names.json maplify-unnamed.tsv)
+              #:outputs '(maplify-names-hold status/maplify-names.json)
               #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
                                  '("scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
                                    "scripts/register/unnamed.ts"
                                    "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
                                  (list SNAPSHOT-DB (path->string maplify-mirror)
+                                       "--baseline" (path->string (build-path SALISHSEA "data" "maplify-names.json"))
                                        "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
    ;; The five per-source Postgres views behind derived.occurrences, as DuckDB SQL
    ;; (salishsea decision 061), reading Maplify, iNaturalist and Orcasound from the
@@ -819,7 +825,8 @@
     [(whales.html) (build-path export-dir "whales.html")]
     [(search-index.json) (build-path export-dir "search-index.json")]
     [(dwca) (build-path export-dir "dwca")]
-    [(maplify-names.json) (build-path mirror-dir "maplify-names.json")]
+    [(maplify-names.json) (build-path SALISHSEA "data" "maplify-names.json")]
+    [(status/maplify-names.json) (build-path mirror-dir "maplify-names.json")]
     [(maplify-unnamed.tsv) (build-path SALISHSEA "data" "maplify-unnamed.tsv")]
     [(catalogue/individuals.tsv) (build-path SALISHSEA "data" "catalogue" "individuals.tsv")]
     [(catalogue/designations.tsv) (build-path SALISHSEA "data" "catalogue" "designations.tsv")]

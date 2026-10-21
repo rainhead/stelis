@@ -113,11 +113,16 @@
               "it judges a new edition by the Maplify pairs and the curator's allow-list")
 (check-eq? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-register)) 'boundary)
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'maplify-names)) 'gate)
-;; its baseline is forward-only state the gate itself writes (salish-xv35.9.2): declared,
-;; with the gate as its producer, so the graph knows the file exists and whose it is
+;; its baseline is a checked-in file (salishsea decision 083), changed by a pull request
+;; and never by the gate: producerless and forward-only like the allow-list, and an input
 (check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'maplify-names.json))
            'authoritative)
-(check-eq? (producer-of salishsea-graph 'maplify-names.json) 'maplify-names)
+(check-false (producer-of salishsea-graph 'maplify-names.json) "the baseline lives in git")
+(check-not-false (memq 'maplify-names.json (inputs-of 'maplify-names)) "and the gate judges against it")
+;; what the baseline should become is the gate's own derived report, served for the refresh
+(check-eq? (producer-of salishsea-graph 'status/maplify-names.json) 'maplify-names)
+(check-eq? (artifact-provenance (hash-ref (graph-artifacts salishsea-graph) 'status/maplify-names.json))
+           'derived)
 ;; and the curator's allow-list is its input: a checked-in file nobody in the graph writes,
 ;; declared so an acceptance clears the hold by a declared input moving
 (check-not-false (memq 'maplify-unnamed.tsv (inputs-of 'maplify-names)))
