@@ -35,9 +35,14 @@ Feedback and pointers are very welcome all the same — please
   lists: `datalog` (in the full distribution) and `sha`, installed from the commit
   that file pins. `scripts/install-racket.sh --prefix <dir>` installs all of it
   from the pinned build in [`racket-downloads.tsv`](racket-downloads.tsv), which is
-  how CI and the container images get theirs; on a machine with its own Racket,
+  how CI gets its own; on a machine with its own Racket,
   `scripts/preflight.sh` says which packages are missing and prints the install
-  command. No build step — Racket compiles on demand.
+  command. No build step — Racket compiles on demand. A container host takes the
+  image instead: CI publishes `ghcr.io/rainhead/stelis:<commit>` for every commit on
+  main, holding that install and the engine compiled, and a project's Dockerfile
+  copies the two trees out of it by digest
+  ([ADR 0017](docs/adr/0017-stelis-ships-as-an-image-per-commit.md);
+  `scripts/image-digest.sh <commit>` gives the digest).
 - A checkout of **[beeatlas](https://github.com/rainhead/beeatlas)** at
   `~/dev/beeatlas` (the graph shells into it).
 - **uv**, which provides both hermetic Python runtimes declared in

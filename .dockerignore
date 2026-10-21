@@ -1,0 +1,14 @@
+# What the Dockerfile's `COPY . /opt/stelis/` leaves out: the git and beads
+# databases, local build state, bytecode the image compiles itself, and the
+# Dockerfile's own CI.
+.git
+.beads
+.dolt
+.stelis
+compiled
+**/compiled
+__pycache__
+**/__pycache__
+.github
+.beads.gate.lock
+*.db
