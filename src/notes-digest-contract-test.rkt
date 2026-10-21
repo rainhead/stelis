@@ -37,7 +37,9 @@
          json
          "notes-digest.rkt")
 
-(define BEEATLAS (or (getenv "BEEATLAS_DIR") "/Users/rainhead/dev/beeatlas"))
+(define BEEATLAS
+  (or (getenv "BEEATLAS_DIR")
+      (path->string (build-path (find-system-path 'home-dir) "dev" "beeatlas"))))
 (define DATA (build-path BEEATLAS "data"))
 (define-runtime-path fixture "notes_contract_fixture.py")
 (define uv     (find-executable-path "uv"))

@@ -56,7 +56,7 @@
 
 (cond
   [(not (file-exists? beeatlas-db))
-   (printf "--moved-keys CLI contract: SKIPPED — no beeatlas checkout\n")]
+   (printf "--moved-keys CLI contract: SKIPPED — no beeatlas database at ~a\n" beeatlas-db)]
   [else
    ;; Two recorded builds: build 1 harvests two species; build 2 changes one, adds
    ;; one and drops one.

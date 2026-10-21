@@ -70,9 +70,12 @@
 ;; beeatlas's data/ is a uv project pinned to Python 3.14; dbt is shelled through
 ;; data/dbt/run.sh, which runs it from that project's uv.lock. Stelis delegates
 ;; hermeticity to those existing pins — it just launches the right command per task.
-;; Where the beeatlas case-study repo lives. Defaults to the author's checkout;
-;; override with BEEATLAS_DIR to run this graph on another host (maderas, CI).
-(define BEEATLAS (or (getenv "BEEATLAS_DIR") "/Users/rainhead/dev/beeatlas"))
+;; Where the beeatlas case-study repo lives. Defaults to ~/dev/beeatlas, which is
+;; the author's checkout on every machine; override with BEEATLAS_DIR to run this
+;; graph on another host (maderas, CI).
+(define BEEATLAS
+  (or (getenv "BEEATLAS_DIR")
+      (path->string (build-path (find-system-path 'home-dir) "dev" "beeatlas"))))
 (define DATA (string-append BEEATLAS "/data"))
 
 ;; Every env file Vite loads in PRODUCTION mode, most specific last — the order

@@ -82,9 +82,12 @@
          salishsea-graph
          SALISHSEA)
 
-;; Where the salishsea-io checkout lives. Defaults to the author's; SALISHSEA_DIR
-;; relocates it (another host, or a worktree).
-(define SALISHSEA (or (getenv "SALISHSEA_DIR") "/Users/rainhead/dev/salishsea-io"))
+;; Where the salishsea-io checkout lives. Defaults to ~/dev/salishsea-io, the
+;; author's checkout on every machine; SALISHSEA_DIR relocates it (another host,
+;; or a worktree).
+(define SALISHSEA
+  (or (getenv "SALISHSEA_DIR")
+      (path->string (build-path (find-system-path 'home-dir) "dev" "salishsea-io"))))
 (define (in-checkout . parts) (apply build-path SALISHSEA parts))
 
 ;; The snapshot database: in the checkout by default (*.duckdb is gitignored in
