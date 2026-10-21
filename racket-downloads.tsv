@@ -1,0 +1,20 @@
+# The Racket builds scripts/install-racket.sh can install, one per platform, pinned
+# by sha256 (st-2t1): the minimal distribution of the version racket-version names.
+#
+#   name    sha256    upstream URL(s), nearest first
+#
+# The script tries STELIS_DOWNLOAD_MIRROR/<sha256> first when that is set (a bucket
+# a consumer owns: salishsea's is https://salishsea.io/downloads, its decision 084),
+# then each URL here, and installs the first file whose bytes match. The checksum
+# decides what is installed, never the host. download.racket-lang.org is last: it
+# redirects to a mirror whose certificate Debian did not trust in October 2026
+# (salishsea-io#727), so Utah's and Waterloo's copies go first.
+#
+# The same shape as salishsea's fly/downloads.tsv, so its mirror script can read this
+# file at the Stelis commit it pins and keep its bucket holding the Racket that commit
+# installs.
+#
+# To move Racket: change racket-version, then each row here (the sha256 Racket
+# publishes beside the installer, and the URLs), and let CI's install prove it.
+
+racket-x86_64-linux	7a1cc4b14a746add95eec2e549df54e5154b7dc94938a86330ce6a02ec7f75ce	https://users.cs.utah.edu/plt/installers/9.3/racket-minimal-9.3-x86_64-linux-buster-cs.sh https://mirror.csclub.uwaterloo.ca/racket/racket-installers/9.3/racket-minimal-9.3-x86_64-linux-buster-cs.sh https://download.racket-lang.org/installers/9.3/racket-minimal-9.3-x86_64-linux-buster-cs.sh

@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # The build clock (ADR 0004) normally reads the beeatlas checkout's git
     # committer date, which CI has no checkout for. beeatlas-source-date-epoch
     # short-circuits on a numeric SOURCE_DATE_EPOCH — the documented override for
@@ -17,23 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The `datalog` package the planner needs ships in the full Racket
-      # distribution (setup-racket's default), already installed at installation
-      # scope — so we must NOT re-request it as a user package (that errors on the
-      # wider-scope install). A bare full distribution is enough.
-      - name: Install Racket
-        uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
-        with:
-          version: '9.3'
-          variant: 'CS'
-          distribution: 'full'
-
-      # `sha` (sha-256, for the DASL CIDs in dasl.rkt) is NOT in the full
-      # distribution — unlike datalog above — so it does install as a user package,
-      # with no wider-scope conflict to avoid. From the commit racket-deps.txt pins
-      # (st-8u3), read from that file so the pin is declared once.
-      - name: Install sha
-        run: raco pkg install --auto --batch "$(awk '$1 == "sha" {print $2}' racket-deps.txt)"
+      # The Racket the engine runs on, installed the way every host installs it
+      # (st-2t1): the pinned minimal build from racket-downloads.tsv, and the packages
+      # from the sources racket-deps.txt pins, into a prefix of its own. So CI tests
+      # the install path the hosts use, not a setup action's distribution.
+      - name: Install Racket and the engine's packages
+        run: |
+          bash scripts/install-racket.sh --prefix "$HOME/racket"
+          echo "$HOME/racket/bin" >> "$GITHUB_PATH"
 
       # The same provisioning check the deploy host runs (scripts/preflight.sh,
       # st-7lm), against racket-deps.txt. Running it HERE is what keeps the two in

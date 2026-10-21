@@ -52,7 +52,12 @@ package (`raco pkg install datalog`) and the DASL CIDs need `sha` — unlike
 the commit [`racket-deps.txt`](racket-deps.txt) pins (st-8u3: the catalog's entry
 follows the package's git branch, so an unpinned install is different code on
 different days). Every installer, salishsea's Dockerfile included, takes the
-source from that file. No build step — Racket compiles on demand.
+source from that file — through [`scripts/install-racket.sh`](scripts/install-racket.sh)
+(st-2t1), which installs the pinned minimal build from
+[`racket-downloads.tsv`](racket-downloads.tsv) plus the packages into a prefix,
+mirror first (`STELIS_DOWNLOAD_MIRROR`), checksum deciding; CI and the container
+images get their Racket that way, so no host carries its own copy of the steps.
+No build step — Racket compiles on demand.
 
 - **Run:** `racket src/main.rkt <target>` (print the minimal-upstream plan) ·
   `--commands <target>` (dry-run: print the exact hermetic command per task) ·

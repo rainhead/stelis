@@ -33,8 +33,11 @@ Feedback and pointers are very welcome all the same — please
 
 - **Racket v9.3 CS** on `PATH`, plus the packages [`racket-deps.txt`](racket-deps.txt)
   lists: `datalog` (in the full distribution) and `sha`, installed from the commit
-  that file pins. `scripts/preflight.sh` says which are missing and prints the
-  install command. No build step — Racket compiles on demand.
+  that file pins. `scripts/install-racket.sh --prefix <dir>` installs all of it
+  from the pinned build in [`racket-downloads.tsv`](racket-downloads.tsv), which is
+  how CI and the container images get theirs; on a machine with its own Racket,
+  `scripts/preflight.sh` says which packages are missing and prints the install
+  command. No build step — Racket compiles on demand.
 - A checkout of **[beeatlas](https://github.com/rainhead/beeatlas)** at
   `~/dev/beeatlas` (the graph shells into it).
 - **uv**, which provides both hermetic Python runtimes declared in
