@@ -39,9 +39,9 @@ worse for it.
 else.** The [image workflow](../../.github/workflows/image.yml) builds the
 [Dockerfile](../../Dockerfile) on every pull request and push to main, runs the test
 suite inside the result, and on main pushes it as `ghcr.io/rainhead/stelis:<40-character
-commit>`. There is no `latest` and no branch tag, so the only way to name an image is
-by the commit it was built from. The image carries the commit twice: as the OCI
-`revision` label, and as `/opt/stelis/commit` inside the tree.
+commit>`. There is no `latest` and no branch tag, so the only tag an image has is the
+commit it was built from; a consumer names it by digest (D2). The image carries the
+commit twice: as the OCI `revision` label, and as `/opt/stelis/commit` inside the tree.
 
 **D2. Consumers pin the digest, and the pin is checked in both directions.** A tag can
 be moved; a digest names one set of bytes. `scripts/image-digest.sh <commit>` resolves
@@ -81,8 +81,12 @@ through the FFI and the bare base has none: the build stage had it only as a
 dependency of the CA store, and so does any consumer that installs curl, which is why
 neither preflight nor salishsea's build had ever seen it missing. The final stage
 installs `libssl3`, and the Dockerfile says a consumer's base must carry it too.
-Preflight in the build stage proves the install; only the suite in the final stage
-proves the image.
+That is the whole of what the copied trees ask of their host: a glibc and zlib the
+Racket binary links against, which any Debian 12 base has, and a libcrypto for the
+FFI, which on Debian is `libssl3`. A base that lacks one completes the COPY and
+fails when `racket` starts; a consumer that cannot supply them takes the image
+`FROM` instead, which carries all three. Preflight in the build stage proves the
+install; only the suite in the final stage proves the image.
 
 **D5. The image build downloads what the install script downloads, once.** The build
 stage runs `install-racket.sh`, so the image installs exactly what a host running that
