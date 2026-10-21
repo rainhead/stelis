@@ -60,6 +60,14 @@ After that, a new build feature has to name the data question it answers. See
 `ROADMAP.md`'s Horizon 2 for what stays active, and its slotting rule for that
 test.
 
+**Widened 2026-10-21: the projects that build with Stelis pull too.** The rule above
+treated the data work as the only thing that could be waiting on the build system.
+That stopped being true once Stelis became the production build for both beeatlas
+and salishsea: a deploy that breaks, a volume that can't be recovered, or a build
+too slow or too opaque to operate is a cost to a real project, and fixing it needs
+no data question. Speculative engine capability with no project waiting on it still
+waits.
+
 **Working mode.** Development is interactive and didactic — deliberate about what
 functionality is taken on in what order, since the design space is large and open
 and the project's known failure mode is getting lost in it.

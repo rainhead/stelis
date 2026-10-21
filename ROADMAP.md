@@ -185,12 +185,15 @@ entries are unchanged; what changed is that they need a pull to start.
 
 ## Slotting rule of thumb
 
-- **Is it build-system machinery? → name the data question it answers.** As of
-  2026-08-03 this is the *first* test, not the last: Stelis has enough build
-  system to run the pipelines it was built for, so a new build feature is
-  premature unless something in the data work is waiting on it. `st-hdm` passes
-  (a page's provenance is a question about the data, and no renderer can answer
-  it); "delta propagation would be elegant" does not.
+- **Is it build-system machinery? → name who is waiting on it.** As of
+  2026-08-03 this is the *first* test, not the last. It passes in one of two ways:
+  something in the data work is waiting on it — `st-hdm` (a page's provenance is a
+  question about the data, and no renderer can answer it) — or a project that
+  builds with Stelis is worse off without it: a deploy that breaks, a volume that
+  can't be recovered, a build too slow or too opaque to operate. The second way was
+  added 2026-10-21, because Stelis is now the production build for beeatlas and
+  salishsea, and being a good build tool for them is a pull of its own. "Delta
+  propagation would be elegant" still passes neither.
 - **But a defect in a property Stelis already claims is not a new feature, and
   needs no data question.** Added 2026-08-06, because the rule above reads as
   though it defers these and it must not. Closing the gap between what the

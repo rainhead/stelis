@@ -21,10 +21,14 @@ making predictable mistakes.
   Horizon 2 — delta propagation, streaming/CRUD ingestion, compile-to-TS emission,
   demand-directed evaluation — is **recorded, not queued**: it waits for something
   in the data work to need it.
-- So the first question about any proposed build feature is **which data question
-  does it answer** (ROADMAP's slotting rule). If a request would build one with no
-  such question behind it, say so rather than building it — and if the user asks
-  anyway, that IS the pull; build it.
+- **But Stelis is also the production build tool for more than one project, and it
+  must not suck at that (2026-10-21).** So the first question about a proposed
+  build feature is **who is waiting on it** (ROADMAP's slotting rule): a data
+  question, or a project that builds with Stelis and is worse off without it — a
+  deploy that breaks, a volume that can't be recovered, a build too slow or too
+  opaque to operate. Either is a pull. What still waits is capability that nobody
+  needs yet ("delta propagation would be elegant"); say so rather than building
+  it — and if the user asks anyway, that IS the pull; build it.
 
 ## What this is (one line)
 
