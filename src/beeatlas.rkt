@@ -1101,7 +1101,9 @@
    ;; runs. _meta.built_at now reads the ADR-0004 SOURCE_DATE_EPOCH clock stelis
    ;; injects (beeatlas-8td SITE 1, beeatlas d9ff9e26), and the geometry was already
    ;; stable — so two stelis runs of this task reproduce identical bytes.
-   ;; `#:code' carries data/package-lock.json (st-vue): mapshaper is a SUBPROCESS
+   ;; `#:code' carries data/pnpm-lock.yaml and data/pnpm-workspace.yaml (st-vue;
+   ;; package-lock.json until st-3bv, after beeatlas went pnpm-only, so the task
+   ;; reran every build): mapshaper is a SUBPROCESS
    ;; binary, so the py-imports scan cannot see it, yet its `-simplify' output is
    ;; algorithm-dependent — a version bump moves the geometry while the recorded
    ;; code-hashes sit still and the task cache-skips on stale output. That is the
@@ -1119,7 +1121,7 @@
                           ecoregions_l4.clean.geojson
                           wilderness.clean.geojson)
               #:invoke (py "topology_postprocess" "main"
-                           #:code '("package-lock.json")))
+                           #:code '("pnpm-lock.yaml" "pnpm-workspace.yaml")))
    ;; species_export.main reads FOUR dbt-mart parquets from the sandbox and
    ;; writes species.json (among others) to EXPORT_DIR. occurrences.parquet is a
    ;; hard requirement (per-occurrence seasonality accumulation), not optional —
@@ -1297,8 +1299,10 @@
    ;; six nodes in the graph snapshot whose only purpose is to be hashed.
    ;;
    ;; The list is beeatlas's own (scripts/build-app.mjs BUNDLE_INPUTS), which is
-   ;; the gate this replaces — package-lock.json because a dependency bump
-   ;; changes the emitted chunks, and the env files because Vite bakes VITE_*
+   ;; the gate this replaces — pnpm-lock.yaml and pnpm-workspace.yaml because a
+   ;; dependency bump changes the emitted chunks (package-lock.json until st-3bv:
+   ;; beeatlas went pnpm-only in its ADR 0038, and a required code file that does
+   ;; not exist made this task rerun on every build), and the env files because Vite bakes VITE_*
    ;; values INTO them — VITE_DATA_BASE_URL and VITE_NOTES_API_BASE_URL, which
    ;; are the whole of it since beeatlas-q73 self-hosted the basemap and retired
    ;; VITE_MAPBOX_TOKEN (beeatlas src/env.d.ts says so; a stale line survives in
@@ -1330,7 +1334,8 @@
                                       (build-path BEEATLAS "vite.config.ts")
                                       (build-path BEEATLAS "vite.sw.config.ts")
                                       (build-path BEEATLAS "package.json")
-                                      (build-path BEEATLAS "package-lock.json"))
+                                      (build-path BEEATLAS "pnpm-lock.yaml")
+                                      (build-path BEEATLAS "pnpm-workspace.yaml"))
                                 node-runtime-code
                                 (for/list ([f (in-list VITE-ENV-FILES)])
                                   (optional-code (build-path BEEATLAS f))))))

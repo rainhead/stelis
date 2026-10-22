@@ -122,3 +122,17 @@ a case arm to beeatlas-relation-tables, or dbt-build can never hash this table" 
        (check-true (for/or ([a (in-list occupants)]) (and (memq a declared) #t))
                    (format "dbt reads ~a — held by ~a — but dbt-build declares none of \
 them, so a change to that table is a WRONG SKIP, not a rebuild" table occupants))))])
+
+;; Every REQUIRED code file a beeatlas recipe names exists in the checkout (st-3bv).
+;; The cache reads a missing one as unaddressable, so the task reruns on every build
+;; and nothing says why but a line in --explain; beeatlas's move to pnpm left two
+;; recipes hashing a package-lock.json that was gone. A file whose absence is a
+;; legitimate state is declared `optional-code' and is not checked here.
+(when (directory-exists? BEEATLAS)
+  (for* ([t (in-hash-values (graph-tasks beeatlas-graph))]
+         [e (in-list (invoke-code (task-invoke t)))]
+         #:unless (optional-code? e))
+    (define p (code-entry-path e))
+    (check-true (or (file-exists? p) (directory-exists? p))
+                (format "~a declares code ~a, which the beeatlas checkout does not have; \
+the task would rerun on every build" (task-name t) p))))
