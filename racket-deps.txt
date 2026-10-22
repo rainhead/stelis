@@ -1,11 +1,18 @@
-# Racket collections the engine requires at RUNTIME, one per line: the collection,
-# then (optionally) the pinned source to install it from.
+# Racket collections the engine requires at RUNTIME, one per line: the collection
+# (what scripts/preflight.sh requires), then the package to install for it when
+# that differs from the collection's name, or the pinned source to install it from.
 #
 # This declares what must be LOADABLE, not what must be installed — how a host
 # satisfies each one differs, and that is fine. The full Racket distribution ships
 # `datalog` at installation scope (so CI must NOT re-request it as a user package;
 # that errors on the wider-scope install), while `sha` is not in any distribution
 # and installs as a user package everywhere.
+#
+# scripts/install-racket.sh installs a catalog package as a built library, with its
+# runtime dependencies and without its build ones (st-7df: the build dependencies
+# are the documentation system, 210 MB), and a git-pinned package with no
+# dependency walk at all. So a git-pinned package's runtime dependencies are lines
+# here, not something the walk discovers. sha needs only `base`.
 #
 # scripts/preflight.sh checks every line here actually requires, and CI runs that
 # same script after its install step — so a dependency added here without a
@@ -31,3 +38,6 @@
 
 sha      https://github.com/greghendershott/sha.git#f9472bea67e05e8c11dc915e943038d3a7276a9b
 datalog
+# Not the engine's, but the suite's, which CI and the image gate run on this install;
+# it came in as a build dependency before and must be asked for now.
+rackunit rackunit-lib

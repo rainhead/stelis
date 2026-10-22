@@ -121,5 +121,10 @@ without that checkout pins `SOURCE_DATE_EPOCH`, as CI does.
   path, and the way onto a host that is not a container.
 - The image is public on ghcr.io, as the repo is. The first push creates the package;
   that it is public has to be confirmed in the GitHub packages settings once.
-- Size: 607 MB, most of it the Racket prefix (the `--auto` dependency walk pulls
-  gui-lib in, as st-2t1 noted). A trim is possible and separate.
+- Size: the layers unpack to about 250 MB (Docker's listing says more, since it
+  also counts the compressed blobs; Fly's cap applies to the unpacked size), of
+  which the Racket prefix is 148 MB. As first published it was about 475 MB
+  unpacked, because the `--auto` dependency walk installed both packages' BUILD
+  dependencies, the documentation system and the GUI library, 210 MB the engine
+  never opens; st-7df made the install script leave them out (a catalog package
+  as a built library, a git-pinned one with no walk, see `racket-deps.txt`).
