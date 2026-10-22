@@ -238,7 +238,8 @@ decisions #2–#3, which this amendment does not touch.
 ### Decision
 
 1. **The render returns as TWO nodes, not one.** `app-bundle` (inputs: `src/`, both
-   Vite configs, `package.json`, `package-lock.json`, the `.env*` files; output: the
+   Vite configs, `package.json`, the pnpm lockfile and workspace file (`package-lock.json`
+   when this was written; st-3bv), the `.env*` files; output: the
    hashed `assets/` subtree) and `site-content` (inputs: the data artifacts, `notes/`,
    and the render code — templates, `_data/`, `lib/`, configs — as `'code` artifacts;
    output: the pages subtree). One node was st-ak1's shape, and it fused two things
