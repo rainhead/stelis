@@ -806,7 +806,7 @@
    ;; A plain 'dir with NO #:keyed-by. Its members are content-hashed filenames
    ;; with no key structure to check a set against — there is no relation whose
    ;; keys they are, which is what a fan-out key means. The set is instead made
-   ;; exact by the producer: `npm run build:bundle` ends in finish-bundle.mjs,
+   ;; exact by the producer: `pnpm run build:bundle` ends in finish-bundle.mjs,
    ;; which deletes anything the Vite manifest does not name (beeatlas-8df). So
    ;; the tree digest settles because the directory is exactly the manifest, not
    ;; because Stelis polices it.
@@ -1324,7 +1324,7 @@
    ;; whose absence Vite itself treats as ordinary.
    (make-task 'app-bundle 'transform
               #:inputs '() #:outputs '(app-bundle)
-              #:invoke (recipe 'node (list "npm" "run" "build:bundle")
+              #:invoke (recipe 'node (list "pnpm" "run" "build:bundle")
                                (append
                                 (list (build-path BEEATLAS "src")
                                       (build-path BEEATLAS "vite.config.ts")
