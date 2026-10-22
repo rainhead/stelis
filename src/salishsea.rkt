@@ -174,7 +174,7 @@
 ;; iNaturalist's, attached as inaturalist_mirror for the same reason.
 (define inaturalist-relations
   '(inaturalist_mirror.observations inaturalist_mirror.observation_photos inaturalist_mirror.taxa
-    inaturalist_mirror.covered_days inaturalist_mirror.sync))
+    inaturalist_mirror.identifications inaturalist_mirror.covered_days inaturalist_mirror.sync))
 
 (define (snapshot-relation table)
   (string->symbol (string-append (string-replace table "_" "-") "-snapshot")))
@@ -257,14 +257,18 @@
 ;; derivation reads in place of Postgres's copies (salishsea's derive/sources.sql).
 ;; iNaturalist's taxa too: the mirror holds those its observations reach AND those the
 ;; register names (fetched from the register's mappings, salish-xv35.9.3), and re-asks
-;; upstream about a few of the longest-unchecked each run.
+;; upstream about a few of the longest-unchecked each run. iNaturalist's identifications
+;; too: whether anyone but the observer agrees with an observation is derived from them
+;; (salishsea decision 080), so a new identification alone re-derives the iNaturalist arm.
 (define mirror-source-relations
   '(maplify_mirror.sightings
     inaturalist_mirror.observations inaturalist_mirror.observation_photos inaturalist_mirror.taxa
+    inaturalist_mirror.identifications
     orcasound.bouts orcasound.bout_entities))
 
 ;; What derive-occurrences reads: the mirrors for the three sources, the snapshot for the
-;; rest, but not the identifications, which only the profile links read, nor the register's
+;; rest, but not the identifications people assert here (public.identifications), which
+;; only the profile links read, nor the register's
 ;; classification, which only the Darwin Core archive reads; and the name
 ;; guard's token, so a register that un-names Maplify sightings stops the derivation.
 (define occurrence-derivation-inputs
@@ -463,10 +467,11 @@
      (make-artifact 'maplify_mirror.sightings 'db-relation)
      (make-artifact 'maplify_mirror.covered_days 'db-relation)
      ;; iNaturalist's observations as the build fetches them (salish-xv35.8): every one in
-     ;; the fetch box, their photos, the taxa they reach, the days reconciled, and how far
-     ;; the changes sweep has read (sync).
+     ;; the fetch box, their photos, who identified them as what, the taxa they reach,
+     ;; the days reconciled, and how far the changes sweep has read (sync).
      (make-artifact 'inaturalist_mirror.observations 'db-relation)
      (make-artifact 'inaturalist_mirror.observation_photos 'db-relation)
+     (make-artifact 'inaturalist_mirror.identifications 'db-relation)
      (make-artifact 'inaturalist_mirror.taxa 'db-relation)
      (make-artifact 'inaturalist_mirror.covered_days 'db-relation)
      (make-artifact 'inaturalist_mirror.sync 'db-relation)

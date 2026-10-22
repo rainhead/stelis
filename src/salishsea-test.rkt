@@ -65,6 +65,7 @@
 ;; The derivation reads the mirrors in place of Postgres's copies of the three sources.
 (for ([mirrored (in-list '(maplify_mirror.sightings inaturalist_mirror.observations
                            inaturalist_mirror.observation_photos inaturalist_mirror.taxa
+                           inaturalist_mirror.identifications
                            orcasound.bouts orcasound.bout_entities))])
   (check-not-false (memq mirrored (inputs-of 'derive-occurrences))
                    (format "the derivation reads ~a" mirrored)))
