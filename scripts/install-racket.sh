@@ -102,19 +102,39 @@ if [[ "$("$racket" --version)" != *"v$version "* ]]; then
 fi
 
 # --- 4. the packages, from their pinned sources --------------------------------
-# datalog by name comes from the release catalog, which names one zip and its
-# checksum for this version; sha from the git commit racket-deps.txt pins (st-8u3).
-# --no-docs: datalog's dependencies carry documentation whose build needs SQLite,
-# and the engine never reads it.
-sources=()
+# A package by name comes from the release catalog, which names one zip and its
+# checksum for this version; one with a git source comes from the commit
+# racket-deps.txt pins (st-8u3). --no-docs: the engine reads no documentation,
+# and building it would need SQLite.
+#
+# Two installs, not one, because of what a dependency walk brings (st-7df). Both
+# datalog and sha declare racket-doc, scribble-lib and rackunit-lib as BUILD
+# dependencies, and `--auto` installs those with everything they drag in: the GUI
+# library, its docs, about 210 MB a host running the engine never opens, on a
+# 142 MB Racket. So:
+#   - a catalog package installs `--binary-lib`: the catalog's built form of it
+#     and of its runtime dependencies, with the build dependencies left out;
+#   - a git-pinned package has only source, which `--binary-lib` refuses, so it
+#     installs with no walk at all (`--deps force`), and any runtime dependency
+#     it has must be its own line in racket-deps.txt. sha's is `base`.
+# Measured 2026-10-22: 148 MB with everything the suite needs, against 360.
+catalog=()
+pinned=()
 while read -r line; do
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     line="${line%%[[:space:]]#*}"
     read -r dep source <<< "$line"
     [[ -z "$dep" ]] && continue
-    sources+=("${source:-$dep}")
+    # A second column that is a URL is a pinned source; any other is the package's
+    # name in the catalog when that differs from the collection's (rackunit-lib).
+    if [[ "$source" == *://* ]]; then pinned+=("$source"); else catalog+=("${source:-$dep}"); fi
 done < "$STELIS_DIR/racket-deps.txt"
-"$raco" pkg install --auto --batch --no-docs --scope installation "${sources[@]}"
+if (( ${#catalog[@]} > 0 )); then
+    "$raco" pkg install --auto --batch --no-docs --binary-lib --scope installation "${catalog[@]}"
+fi
+if (( ${#pinned[@]} > 0 )); then
+    "$raco" pkg install --batch --no-docs --deps force --scope installation "${pinned[@]}"
+fi
 
 # --- 5. prove it ---------------------------------------------------------------
 PATH="$prefix/bin:$PATH" bash "$SCRIPT_DIR/preflight.sh"
