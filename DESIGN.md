@@ -212,8 +212,8 @@ Includes:
 - Target selection + up-to-date skipping (the immediate need was *only*
   `occurrences.db`; today the only build is "run everything").
 - Input-addressed task caching, with the derived-vs-authoritative escape hatch.
-- Per-task hermetic runtime invocation (the dual-interpreter case: 3.14 for dlt
-  loaders, 3.13 for dbt).
+- Per-task hermetic runtime invocation (the dual-interpreter case that proved it:
+  3.14 for dlt loaders, 3.13 for dbt, until dbt could run on 3.14 too).
 - Gates/assertions as first-class, cacheable, skippable graph nodes.
 - Explicit output destinations (no hidden copies) and partial success (a failed
   target must not fail unrelated already-satisfied targets).

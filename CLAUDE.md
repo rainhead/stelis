@@ -37,10 +37,13 @@ Stelis is the build system. `~/dev/beeatlas` and `~/dev/salishsea-io` are
 
 ## Environment facts that cause real mistakes
 
-- **Two conflicting Python interpreters in one pipeline.** dlt loaders need Python
-  3.14; dbt needs 3.13 (dbt-core hard-crashes on 3.14 — `mashumaro
-  UnserializableField`, on every machine). Per-task hermetic runtimes are the
-  point, not a workaround.
+- **Per-task hermetic runtimes are the point, not a workaround.** The original
+  proof was two conflicting Python interpreters in one pipeline: dlt loaders on
+  3.14 and dbt on 3.13, because dbt-core crashed on 3.14 (`mashumaro
+  UnserializableField`, on every machine). Since beeatlas #129 (2026-10) dbt runs
+  from the same `data/` environment as the loaders, on 3.14, through
+  `data/dbt/run.sh`; the `dbt` runtime is still its own declaration, with its own
+  identity probe (st-kbi), so what moves it is still observed on its own.
 - Secrets inject hermetically and must **never** reach logs.
 
 ## Build, run, test
@@ -654,8 +657,8 @@ salishsea's tasks run at its `.nvmrc` node, in its checkout; the snapshot reads
 `SUPABASE_DB_URL` from the caller's environment and never prints it.
 
 Execution shells into `~/dev/beeatlas` via the runtimes declared in `beeatlas.rkt`:
-**uv** (Python 3.14, `data/`) for loaders/exporters and **uvx** (Python 3.13,
-`data/dbt/run.sh`) for dbt.
+**uv** (Python 3.14, `data/`) for loaders/exporters and **dbt** (`data/dbt/run.sh`,
+which runs dbt from that same environment since beeatlas #129).
 
 ## Standing guardrails (most-violated commitments)
 

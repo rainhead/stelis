@@ -45,10 +45,12 @@ Feedback and pointers are very welcome all the same — please
   `scripts/image-digest.sh <commit>` gives the digest).
 - A checkout of **[beeatlas](https://github.com/rainhead/beeatlas)** at
   `~/dev/beeatlas` (the graph shells into it).
-- **uv**, which provides both hermetic Python runtimes declared in
-  [`src/beeatlas.rkt`](src/beeatlas.rkt): uv/Python 3.14 for loaders and
-  exporters, uvx/Python 3.13 for dbt. (Two interpreters on purpose — dbt
-  cannot run on 3.14; per-task runtimes are the point.)
+- **uv**, which provides the Python runtimes declared in
+  [`src/beeatlas.rkt`](src/beeatlas.rkt): Python 3.14 in beeatlas's `data/`
+  environment, for the loaders and exporters and, since beeatlas #129, for dbt
+  too. (For a while dbt needed its own 3.13 interpreter; per-task runtimes made
+  that a declaration rather than a problem, and they stay declared per task now
+  that the two agree.)
 
 ## Running
 
