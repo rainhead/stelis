@@ -417,12 +417,14 @@
   (check-equal? (history-foreign-projects dir 'beeatlas) '(salishsea)
                 "...from either side")
   (check-equal? (length (history-load dir)) 2
-                "the key is additive: both lines still load as builds"))
+                "the key is additive: both lines still load as builds")
+  (delete-directory/files dir))
 
 (let ([dir (make-temporary-file "stelis-history-project-~a" 'directory)])
   (history-append! dir 'mid g "1" build1)
   (check-equal? (history-foreign-projects dir 'beeatlas) '()
-                "history-append! without #:project writes a beeatlas record"))
+                "history-append! without #:project writes a beeatlas record")
+  (delete-directory/files dir))
 
 ;; --- Pruning in batches, reading only the ends of the log ------------------------
 ;; At a build every five minutes one build ages out per build, and each prune rewrote
