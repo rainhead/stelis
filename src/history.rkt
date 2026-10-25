@@ -897,16 +897,32 @@
                         #:slack [slack 0])
   (define f (history-file state-dir))
   (define horizon (- now keep-seconds))
+  ;; A line without the text can't carry the field, so it is passed over unparsed
+  ;; (st-mxr): salishsea's history began before lines were dated, and finding its
+  ;; oldest dated line parsed 414 undated ones, 6.4 MB, on every build: 0.8 s of a
+  ;; save's build, for a prune that is due about once a day.
   (define (recorded-at line)
-    (define e (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line))))
+    (define e (and (regexp-match? #rx"recorded-at" line)
+                   (with-handlers ([exn:fail? (lambda (_) #f)]) (read (open-input-string line)))))
     (and (hash? e) (not (pruned-header? e))
          (let ([t (hash-ref e 'recorded-at #f)]) (and (exact-integer? t) t))))
+  ;; the oldest dated line's time, read as bytes so an undated line is never decoded
+  (define (oldest-recorded-at)
+    (call-with-input-file f
+      (lambda (in)
+        (let loop ()
+          (define b (read-bytes-line in 'linefeed))
+          (cond
+            [(eof-object? b) #f]
+            [(regexp-match? #rx#"recorded-at" b)
+             (or (recorded-at (bytes->string/utf-8 b #\?)) (loop))]
+            [else (loop)])))))
   (cond
     [(not (file-exists? f)) (values 0 0)]
     ;; nothing has aged out by more than the slack: no build before the first dated
     ;; one can go (an undated line goes only once a dated one before the horizon
     ;; does), and the first dated one is not old enough
-    [(let ([oldest (first-line-where f recorded-at)])
+    [(let ([oldest (oldest-recorded-at)])
        (or (not oldest) (>= oldest (- horizon slack))))
      (values 0 0)]
     [else (prune-before! state-dir f horizon recorded-at)]))
