@@ -13,5 +13,5 @@ bd update <id> --claim  # Claim work
 bd close <id>           # Complete work
 ```
 
-Commit and push only when the user asks — there is no git remote yet, and beads'
-local Dolt DB (`.beads/`) works fully offline.
+Commit and push code only when the user asks. Beads are the exception: sync them
+with `bd sync` without asking (see the beads section of `CLAUDE.md`).
