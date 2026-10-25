@@ -338,6 +338,13 @@ not hand-transcribed (fixes the places_maps→species_maps→config drift); the
 cache partitions inputs by kind, so a helper edit still reports `'code-changed`
 naming the file. `#:code` survives only as the escape hatch for imports a scan
 can't see (dynamic/importlib, baked-in data files) ·
+[`ts-imports.rkt`](src/ts-imports.rkt) the same for salishsea's TypeScript
+(st-6i2): each node task's code is its script's import closure, computed when the
+graph is authored — static and dynamic relative imports (type-only ones skipped)
+and literal `new URL(..., import.meta.url)` reads — so a call site declares only
+what no scan can see: SQL read by a computed name, and what the site build writes
+under `dist/`. A flat code list, not st-whi's helper nodes; `ts-imports-test.rkt`
+checks every closure against esbuild's own module graph when the checkout is there ·
 [`tree-digest.rkt`](src/tree-digest.rkt) content-addresses a `'dir` artifact by its
 (relative-path → content-hash) tree, and exposes those per-file pairs
 (`tree-hashes`) for per-key observations ·
@@ -658,10 +665,11 @@ shares, so a `?o=` link opens without a query) and the profile pages
 (`individual-pages`, `matriline-pages`, `ecotype-pages`, `haulout-pages`, salishsea decision 057:
 prerendered HTML, one task per kind reading only its own catalogue relations, with
 the Vite-built shell and Vite's manifest hashed as code because the site build that
-writes `dist/` is outside the graph; each node task's code list is its script's
-esbuild import closure, kept by hand, so `salishsea-checkout-test.rkt` fails when
-one names a file the checkout no longer has, after a deleted `src/supabase.ts` kept
-eight tasks from ever skipping for sixteen days) and `profile-index` (`redirects.json`, folded
+writes `dist/` is outside the graph; each node task's code is its script's import
+closure, computed by `ts-imports.rkt` since hand-kept lists drifted both ways — a
+deleted `src/supabase.ts` kept eight tasks from ever skipping for sixteen days —
+and `salishsea-checkout-test.rkt` fails when a recipe names a file the checkout
+does not have) and `profile-index` (`redirects.json`, folded
 designation → canonical page, which a redirect server on Fly answers legacy links
 from, `sitemap.xml`, and `animal-names.json`, the register's names the report
 form reads now that the map asks no database; no snapshot-meta input, so it
