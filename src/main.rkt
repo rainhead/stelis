@@ -43,6 +43,7 @@
          "rebuild-policy.rkt"
          "dir-extent.rkt"
          "blockstore.rkt"
+         (only-in "relation-digest.rkt" relation-memo-dir)
          (only-in "dasl.rkt" cid? cid->string)
          "determinism.rkt"
          (only-in "edge-verify.rkt" verify-edges export-dir-artifact?)
@@ -214,6 +215,9 @@
 (define stelis-state
   (if stelis-state-env (string->path stelis-state-env) (project-default-state-dir P)))
 (define stelis-cache (build-path stelis-state "cache"))
+;; st-mxr: a SQLite mirror's observations, remembered by its bytes, live in the cache:
+;; disposable like the rest of it, since losing one costs a scan and changes no answer.
+(relation-memo-dir (build-path stelis-cache "relations"))
 
 ;; An empty state dir is INDISTINGUISHABLE from a never-built one — history.rkt
 ;; treats a missing history as a legal first run, by design. That is fine while the
