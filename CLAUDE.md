@@ -730,11 +730,11 @@ bd close <id>           # Complete work
 
 - This tracks project *work items*. Persistent facts about the user/project still
   go in the file-based memory (see the memory section of the global CLAUDE.md), not
-  `bd remember` — the two don't overlap.
-- **Push beads regularly, without asking** (2026-08-16). `bd dolt push` replicates
-  the Dolt data plane to `refs/dolt/data` on this repo's GitHub remote; it never
-  touches `refs/heads/main`. Push after filing or closing issues and before ending
-  a session — un-pushed beads live only in `.beads/embeddeddolt/` on one machine.
+  `bd remember`: this repo is public, so everything in beads can be read by anyone.
+- **Sync beads regularly, without asking** (2026-08-16). `bd sync` pulls, checks
+  for conflicts and pushes the Dolt data plane to `refs/dolt/data` on this repo's
+  GitHub remote; it never touches `refs/heads/main`. Sync after filing or closing
+  issues and before ending a session (the SessionStart hook syncs too) — un-pushed beads live only in `.beads/embeddeddolt/` on one machine.
   This is the **one** exception to the global "push only when asked" rule, which
   still governs `git push` of code.
 <!-- END BEADS INTEGRATION -->

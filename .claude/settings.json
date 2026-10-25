@@ -15,8 +15,9 @@
       {
         "hooks": [
           {
-            "command": "bd prime",
-            "type": "command"
+            "command": "bd sync -q >/dev/null 2>&1 || echo \"bd sync failed (exit $?), so the issues here may be out of date. Run bd sync to see why.\"; bd prime",
+            "type": "command",
+            "timeout": 90
           }
         ],
         "matcher": ""
