@@ -267,7 +267,9 @@ cannot silently outlive the error it fixes — and catches the case dbt structur
 cannot, a correction whose upstream row is gone ·
 [`data-quality.rkt`](src/data-quality.rkt) rules that run as `rule-check` nodes;
 first rule = the integrity gate (record-count swing vs. the previous build's
-observation blocks publish — an OPERATOR alarm, distinct from editorial flags) ·
+observation blocks publish — an OPERATOR alarm, distinct from editorial flags; a
+keyed relation's count is the sum of its keys' counts, since it has no per-table
+row-count part) ·
 [`relation-digest.rkt`](src/relation-digest.rkt)
 content-addresses db-relation inputs via a DuckDB order-independent digest (row-
 coherent = the skip signal), plus per-column digests + non-null counts and a

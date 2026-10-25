@@ -34,17 +34,28 @@
          make-integrity-check)
 
 ;; parts->rowcount : (listof (cons string string)) -> (or/c exact-nonnegative-integer #f)
-;; Total rows across a relation's per-part observation: the sum of its row-count
-;; ("<schema>.<table>.*") parts (relation-digest.rkt records one per table). #f
-;; when there are none — the relation carries no rowcount layer.
+;; Total rows across a relation's per-part observation. A per-column observation
+;; carries one row-count ("<schema>.<table>.*") part per table (relation-digest.rkt),
+;; and the total is their sum. A KEYED relation's observation (ADR 0016) is instead
+;; one "<digest>:<count>" part per key, every row in exactly one key, so the total is
+;; the sum of the counts. #f when neither layer is there.
 (define (parts->rowcount parts)
-  (define counts
-    (for*/list ([p (in-list parts)]
-                #:when (string-suffix? (car p) ".*")
-                [n (in-value (string->number (cdr p)))]
-                #:when (exact-nonnegative-integer? n))
-      n))
-  (and (pair? counts) (apply + counts)))
+  (define (sum ns) (and (pair? ns) (apply + ns)))
+  (define (count-of v)
+    (define n (string->number v))
+    (and (exact-nonnegative-integer? n) n))
+  (cond
+    [(for/or ([p (in-list parts)]) (string-suffix? (car p) ".*"))
+     (sum (for*/list ([p (in-list parts)]
+                      #:when (string-suffix? (car p) ".*")
+                      [n (in-value (count-of (cdr p)))]
+                      #:when n)
+            n))]
+    [else
+     (sum (for*/list ([p (in-list parts)]
+                      [m (in-value (regexp-match #px"^[^:]*:([0-9]+)$" (cdr p)))]
+                      #:when m)
+            (string->number (cadr m))))]))
 
 ;; previous-count : path-string symbol -> (or/c exact-nonnegative-integer #f)
 ;; The relation's total row count at the most recent build that observed it, or #f

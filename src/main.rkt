@@ -764,6 +764,16 @@
       (define obs (history-observations stelis-state name))
       (define kind (let ([a (hash-ref (graph-artifacts G) name #f)])
                      (and a (artifact-kind a))))
+      ;; A relation's parts are its columns, unless the project keys it (ADR 0016,
+      ;; st-wn4): then they are keys. Read off the map itself rather than asked of
+      ;; the project, which would mean reading the database: a column map always
+      ;; carries relation-digest's "<table>.*" row-count part, a keyed map never does.
+      ;; The headings take the newest map's noun.
+      (define (noun-of parts)
+        (if (and (eq? kind 'db-relation)
+                 (for/or ([p (in-list parts)]) (string-suffix? (car p) ".*")))
+            "column"
+            "key"))
       (define noun (if (eq? kind 'db-relation) "column" "key"))
       ;; The per-key story STREAMS (st-6gv): each map is diffed against the one
       ;; before it as the log is read, and what is held is a printer per build
@@ -779,6 +789,8 @@
            (define prev (vector-ref st 0))
            (define cur (key-observation-keys o))
            (define b (key-observation-build o))
+           (when (list? cur) (set! noun (noun-of cur)))
+           (define noun-here noun)
            (define printer
              (cond
                [(not (list? cur))
@@ -786,16 +798,16 @@
                [(not prev)
                 (define n (length cur))
                 (define by (trace-record-task (key-observation-record o)))
-                (lambda () (printf "  build ~a  ✦ ~a ~a(s) first seen   (by ~a)\n" b n noun by))]
+                (lambda () (printf "  build ~a  ✦ ~a ~a(s) first seen   (by ~a)\n" b n noun-here by))]
                [(eq? prev 'unreadable)
                 (define n (length cur))
-                (lambda () (printf "  build ~a  ~a ~a(s); the observation before it is unreadable, so no diff\n" b n noun))]
+                (lambda () (printf "  build ~a  ~a ~a(s); the observation before it is unreadable, so no diff\n" b n noun-here))]
                [else
                 (define-values (added removed changed) (diff-key-maps prev cur))
                 (define n (length cur))
                 (cond
                   [(and (null? added) (null? removed) (null? changed))
-                   (lambda () (printf "  build ~a  ≡ rebuilt, all ~a ~a(s) identical\n" b n noun))]
+                   (lambda () (printf "  build ~a  ≡ rebuilt, all ~a ~a(s) identical\n" b n noun-here))]
                   [else
                    (lambda ()
                      (printf "  build ~a  ± ~a changed, +~a added, -~a removed\n"
