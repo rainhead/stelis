@@ -96,6 +96,10 @@ No build step — Racket compiles on demand.
   build is ITS, st-8x1) ·
   `--moved-keys <artifact>` (which keys moved in the LAST build, machine-readable —
   bare keys on stdout, everything else on stderr; exit 1 = no basis, rebuild in full) ·
+  `--build --report-dir <dir> <target>` (the build writes those two answers itself:
+  `<dir>/build` is the `--last-build` line, `<dir>/moved-keys` the target's moved
+  keys, and a missing file is the cautious answer, so a publish path needs no extra
+  launch to ask, st-3un, [`build-report.rkt`](src/build-report.rkt)) ·
   `--run <task>` (execute one task in its hermetic runtime) ·
   `--downstream <task>` (with `--build`/`--commands`/`--explain`/`--why`: scope the
   plan to TASK and the tasks that transitively consume its outputs — what a change
