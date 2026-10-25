@@ -412,7 +412,9 @@ was written — the file's one clock, housekeeping only — and `history-prune!`
 the aged-out PREFIX, then deletes the blocks no remaining line names. It prunes in
 BATCHES (once the oldest build is a thirtieth of the retention past it, so about
 daily), because a prune rewrites and re-reads the whole log; the check for whether
-one is due reads only the oldest dated line. NOTHING reads the whole log into
+one is due reads only the oldest dated line, scanning any undated lines before it
+as bytes without parsing them (st-mxr: salishsea's first 414 lines predate dating,
+and parsing them cost 0.8 s of every build). NOTHING reads the whole log into
 memory any more (st-6gv): Racket holds a string at four bytes a character and
 salishsea's log at retention is ~200 MB on a 1 GB machine. Each line carries its
 build NUMBER (assigned at append from the line before; a line from before that is
