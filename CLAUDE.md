@@ -268,7 +268,12 @@ input-addressed skip decisions + early-cutoff output receipts; a gate TOKEN is
 addressed by its gate's recorded input address (st-ysf), so dbt-build can skip; a
 file a task declares as a DATA input is addressed as data only, even inside a code
 directory its recipe expands (st-6w9: a seed another task writes would otherwise
-read as a hand edit, `'code-changed`) ·
+read as a hand edit, `'code-changed`). A `'dir`'s per-file map is HELD once a task in
+this build has written it (st-mxr, `dir-tree-hashes`): the producer's observation and
+every consumer's decision asked for the same 4,400-file walk of salishsea's days/, 0.3 s
+each on its Fly machine. Narrower than the relation observer's rule: a dir nobody in the
+build wrote is walked on every ask, so a hand edit or a stray file still reads as
+`output-stale` (st-243), and run-plan drops every hold when a build starts ·
 [`corrections-drift.rkt`](src/corrections-drift.rkt) the operator gate behind the
 CORRECTION overlay (st-t4t): beeatlas holds local overrides of values an upstream
 source gets wrong (a dbt seed + a precedence arm — a bounded join, so by ADR 0008's

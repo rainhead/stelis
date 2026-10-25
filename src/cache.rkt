@@ -21,7 +21,8 @@
          racket/string
          "model.rkt"
          "tree-digest.rkt"
-         "keyed-block.rkt")
+         "keyed-block.rkt"
+         "written.rkt")
 
 (provide (struct-out decision)
          snapshot snapshot? snapshot-recipe-hash snapshot-input-hashes
@@ -38,6 +39,7 @@
          input-snapshot
          input-store-snapshot
          artifact-key-parts
+         reset-dir-observations!
          env-dir-exclusions
          build-env-resolve-dir-exclusions
          output-snapshot
@@ -450,6 +452,33 @@
 ;; `token-address' (st-ysf). #f (absent/unresolvable) forces a rerun — a keyed
 ;; store whose scan fails falls back to file bytes, and an absent file to #f, so
 ;; unreadable stays conservative.
+;; --- A 'dir's observation, held until a task writes it (st-mxr) ------------------
+;; The per-file (path -> hash) map of a 'dir artifact is asked for up to three times
+;; in one build — the producer's merge basis before a partial run, its observation
+;; after, and every consumer's decision — and each ask walked and hashed the whole
+;; tree: salishsea's days/ is 4,400 files, 0.3 s on its Fly machine each time. The
+;; rule is narrower than the relation observer's (written.rkt): only a dir a task in
+;; THIS build has written is held, and only until that artifact's write generation
+;; moves again. A dir nobody in the build wrote is still whoever's — a hand edit, a
+;; stray file — and is walked on every ask, which is what the stale-output check
+;; (st-243's tampered merge basis) is for. The holds are dropped when a build
+;; starts (run-plan calls reset-dir-observations!), since between builds anything
+;; may write. Keyed by the artifact, its on-disk path and its exclusions, not the
+;; name alone: --verify builds the same names into two export dirs, and the second
+;; dir must be walked, not answered from the first.
+(define dir-observations (make-hash))   ; (list name path exclude) -> (cons generation pairs)
+(define (reset-dir-observations!) (hash-clear! dir-observations))
+(define (dir-tree-hashes a p exclude)
+  (define key (list a (if (path? p) (path->string p) p) exclude))
+  (define gen (write-generation a))
+  (define held (hash-ref dir-observations key #f))
+  (cond
+    [(and held (= (car held) gen)) (cdr held)]
+    [else
+     (define pairs (tree-hashes p #:exclude exclude))
+     (when (and pairs (positive? gen)) (hash-set! dir-observations key (cons gen pairs)))
+     pairs]))
+
 (define (input-hash g in resolve resolve-relation resolve-store-keys cache-dir
                     [resolve-dir-exclusions #f])
   (define a (hash-ref (graph-artifacts g) in #f))
@@ -458,9 +487,12 @@
      (and resolve-relation (resolve-relation in))]
     [(and a (eq? (artifact-kind a) 'dir))
      (define p (resolve in))
-     (and p (tree-digest p #:exclude (if resolve-dir-exclusions
-                                         (resolve-dir-exclusions in)
-                                         '())))]
+     (define pairs (and p (dir-tree-hashes in p (if resolve-dir-exclusions
+                                                    (resolve-dir-exclusions in)
+                                                    '()))))
+     ;; tree-digest IS the keyed-block digest of the pairs (st-1e5), so the held
+     ;; pairs answer the input address as well as the per-key layer
+     (and pairs (keyed-block-digest pairs))]
     [(and a (eq? (artifact-kind a) 'token))
      (and cache-dir (token-address g in cache-dir))]
     [else
@@ -545,7 +577,7 @@
 (define (artifact-key-parts a kind env)
   (case kind
     [(dir) (let ([p (env-resolve env a)])
-             (and p (tree-hashes p #:exclude (env-dir-exclusions env a))))]
+             (and p (dir-tree-hashes a p (env-dir-exclusions env a))))]
     [(db-relation)
      (define rsk (build-env-resolve-store-keys env))
      (define rrc (build-env-resolve-relation-columns env))
