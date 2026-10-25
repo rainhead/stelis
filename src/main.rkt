@@ -13,6 +13,7 @@
 ;;   racket src/main.rkt --build --all --export-dir DIR    ; build EVERY target (the run.py replacement)
 ;;   racket src/main.rkt --build --from dbt-build occurrences.db   ; ...a suffix
 ;;   racket src/main.rkt --build --from notes-harvest --export-dir DIR notes  ; CRUD: targeted notes into a served dir
+;;   racket src/main.rkt --build --report-dir R notes      ; ...and write its number and moved keys under R
 ;;   racket src/main.rkt --history                         ; list every recorded build
 ;;   racket src/main.rkt --history species-maps            ; one artifact's hash timeline
 ;;   racket src/main.rkt --history species-maps:genus/Bombus.svg  ; why ONE KEY last moved — RETROSPECTIVE
@@ -37,6 +38,7 @@
          "history.rkt"
          "delta.rkt"
          "delta-explain.rkt"
+         "build-report.rkt"
          "key-blame.rkt"
          "rebuild-policy.rkt"
          "dir-extent.rkt"
@@ -54,6 +56,7 @@
 (define export-dir-arg (make-parameter #f)) ; --export-dir: an explicit output destination
 (define all? (make-parameter #f))           ; --all: build the whole graph (replaces run.py)
 (define mark-publish-args (make-parameter #f)) ; --mark-publish: (build epoch outcome stage path)
+(define report-dir (make-parameter #f))     ; --report-dir: with --build, where to write its report (st-3un)
 (define project-arg (make-parameter 'beeatlas)) ; --project: which graph (st-ml9.1)
 
 (define name
@@ -106,6 +109,8 @@
                      (export-dir-arg dir)]
    [("--all") "with --build/--commands/--explain: the WHOLE graph (every task, topo-ordered) — the run.py replacement; no <target> needed"
               (all? #t)]
+   [("--report-dir") dir "with --build: write DIR/build (`<number> <epoch>`, as --last-build prints it) and DIR/moved-keys (TARGET's moved keys, as --moved-keys prints them; absent = no basis), so the caller needs no second launch to ask (st-3un)"
+                     (report-dir dir)]
    #:args names
    (cond
      [(null? names) #f]
@@ -119,6 +124,8 @@
             (eq? (mode) 'verify-edges) (eq? (mode) 'render-log)
             (eq? (mode) 'last-build) (eq? (mode) 'mark-publish))
   (error 'stelis "expects a <name> (a target artifact, or a task for --run/--why)"))
+(when (and (report-dir) (not (eq? (mode) 'build)))
+  (error 'stelis "--report-dir is for --build only"))
 
 ;; --- the project (st-ml9.1) ------------------------------------------------------
 ;; Everything below is written against P rather than against beeatlas by name. The
@@ -862,10 +869,8 @@
    (unless (hash-ref (graph-artifacts G) name #f)
      (eprintf "~a — no artifact by that name in the graph.\n" name)
      (exit 1))
-   ;; the delta at the last build is its map against the one before: two points,
-   ;; read from the end of the log (st-6gv)
-   (define kobs (history-key-observations stelis-state name #:last 2))
-   (define d (build-key-delta name kobs last-number))
+   ;; the delta at the last build is its map against the one before
+   (define d (key-delta-at stelis-state name last-number))
    (cond
      [(eq? d 'not-produced)
       ;; Silence on stdout is the answer. Say why on stderr so an operator running
@@ -942,6 +947,9 @@
 
   ;; --- execute an ordered plan (partial success) -------------------------
   [(eq? (mode) 'build)
+   ;; st-3un: cleared first, so a build that stops anywhere short of its history
+   ;; line leaves no report, which the caller reads as "nothing to mark, no basis"
+   (when (report-dir) (clear-build-report! (report-dir)))
    (define-values (ordered pruned) (plan-for))
    (define to-run (plan-suffix ordered))
    ;; st-6qc: refuse to build a plan whose file/dir outputs can't be verified.
@@ -995,6 +1003,9 @@
          (printf "history: ~a build~a older than ~a days expired, ~a block~a removed\n"
                  builds (if (= 1 builds) "" "s") (quotient keep 86400)
                  blocks (if (= 1 blocks) "" "s")))))
+   (when (report-dir)
+     (write-build-report! (report-dir) stelis-state
+                          (and name (hash-ref (graph-artifacts G) name #f) name)))
    ;; st-9rf: refresh the operator build log AFTER the append, so the page
    ;; describes the build that just finished — records and all, failures
    ;; included (partial success is exactly what an operator page is for).
