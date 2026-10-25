@@ -21,8 +21,11 @@
               100 "sums the .* row-count parts, ignores column parts")
 (check-equal? (parts->rowcount '(("a.b.*" . "3") ("c.d.*" . "4")))
               7 "a multi-table relation totals its per-table row counts")
-(check-false (parts->rowcount '(("s.t.k" . "abc:100")))
-             "no .* part -> #f (no rowcount layer)")
+(check-equal? (parts->rowcount '(("1" . "abc:2") ("226" . "def:3")))
+              5 "a keyed relation (no .* part, ADR 0016) totals its keys' row counts")
+(check-false (parts->rowcount '()) "no parts -> #f (no rowcount layer)")
+(check-false (parts->rowcount '(("x" . "not-a-count")))
+             "parts with no counts -> #f")
 
 ;; --- integrity-verdict (pure) -------------------------------------------------
 
