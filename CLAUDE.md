@@ -290,7 +290,11 @@ stale-output question LAZILY (a thunk): only a task every content reason has pas
 pays for the relation digests and tree hashes it is.
 A relation may live in a SQLite file (`sqlite-db`, st-ml9): the file is
 ATTACHed read-only into a transient DuckDB and digested the same row-coherent
-way, which is how salishsea's mirrors are inputs without a second digest. A
+way, which is how salishsea's mirrors are inputs without a second digest. Its
+observations are remembered by the file's bytes (st-mxr, `relation-memo-dir`,
+under the state dir's cache): a mirror whose bytes (and `-wal`) hash as last time
+holds the same rows, so a save-scoped build that runs no ingest answers from the
+memo instead of scanning — 5.6 s down to 0.3 s on salishsea's Fly machine. A
 relation the project declares KEYED (`relation-keys`, ADR 0016) is observed per
 key — rows grouped by a SQL expression, each group digested and counted, the shape
 a keyed store has — IN PLACE of its per-column parts (cache.rkt's

@@ -277,4 +277,36 @@
    (test-equal? "no longer pending, it rode the next batch and is held across the write"
                 (pd 'p2) p2-rebatched)
 
+   ;; --- A SQLite file's observations, remembered by its bytes (st-mxr) ---------------
+   ;; A fresh observer (a new process, as each build is) answers from the memo when the
+   ;; file's bytes are the ones last observed, and scans again when they are not.
+   (define memo (build-path tmp "memo"))
+   (define (fresh-observer)
+     (define-values (d _c)
+       (make-relation-observer '(bouts) (lambda (_) (sqlite-db sq "orcasound"))
+                               (lambda (_) '("orcasound.bouts"))))
+     d)
+   (sqlite! sq "('b1', 'J pod', -122.5), ('b2', NULL, -123.25)")
+   (define direct (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")))
+   (parameterize ([relation-memo-dir memo])
+     (test-equal? "a miss: the scan's answer, the same as asking directly"
+                  ((fresh-observer) 'bouts) direct)
+     (define entry (build-path memo "orcasound.rktd"))
+     (test-true "and the answer is remembered" (file-exists? entry))
+     ;; Tamper with the remembered digest: only a hit can return the tampered value.
+     (define d (call-with-input-file entry read))
+     (call-with-output-file entry #:exists 'truncate
+       (lambda (o) (write (list (car d) (list "orcasound.bouts" "TAMPERED" "2" (cadddr (cadr d)))) o)))
+     (test-false "the same bytes, a fresh observer: answered from the memo, with no scan"
+                 (equal? ((fresh-observer) 'bouts) direct))
+     (sqlite! sq "('b1', 'K pod', -122.5), ('b2', NULL, -123.25)")
+     (test-equal? "different bytes: the memo is passed over and the rows scanned"
+                  ((fresh-observer) 'bouts)
+                  (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")))
+     (test-false "and the new answer replaced the old entry"
+                 (equal? (car (call-with-input-file entry read)) (car d))))
+   (test-equal? "with no memo directory, nothing is remembered or read"
+                ((fresh-observer) 'bouts)
+                (relation-digest (sqlite-db sq "orcasound") '("orcasound.bouts")))
+
    (delete-directory/files tmp)])

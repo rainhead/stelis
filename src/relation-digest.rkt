@@ -36,6 +36,8 @@
 
 (require racket/string
          racket/list
+         racket/file
+         racket/path
          file/sha1
          "duckdb.rkt"
          "written.rkt")
@@ -55,6 +57,7 @@
          relation-keys
          make-relation-observer
          observe-tables ; for its tests: the observer falls back silently when it fails
+         relation-memo-dir
          (struct-out sqlite-db))
 
 ;; A relation's database: a DuckDB file (a path, as always), or a SQLite file (sqlite-db),
@@ -402,6 +405,80 @@
            (cons (cons (string-append t ".*") (table-obs-rows o)) (table-obs-columns o))))
         string<? #:key car))
 
+;; --- Remembering a SQLite file's observations (st-mxr) --------------------------
+;; A SQLite mirror whose bytes are the ones last observed holds the same rows, so its
+;; tables' observations are the ones taken then. Hashing the bytes is far cheaper than
+;; DuckDB scanning the rows: on salishsea's Fly machine, 179 ms against 3.25 s for the
+;; 100 MB iNaturalist mirror, which every save-scoped build digested afresh though only
+;; the ingests write it and a save's build runs none of them. Nothing here changes an
+;; answer: an observation is a function of the bytes, and this caches it by them.
+;;
+;; The key is the file's sha1 and, when there is one, its -wal file's: committed rows
+;; can sit in the WAL while the main file holds still (the notes store's lesson,
+;; notes-digest.rkt). One entry per database, overwritten on a miss, so the memo never
+;; grows. On a miss the bytes are hashed again after the scan, and the entry is stored
+;; only if they still match: a writer between the hash and the scan would otherwise
+;; file one state's observations under another state's key.
+;;
+;; Where the entries live is the caller's to say (main.rkt: the state dir's cache);
+;; with no directory, nothing is remembered.
+(define relation-memo-dir (make-parameter #f))
+
+(define (sqlite-content-key db)
+  (define f (sqlite-db-path db))
+  (define wal (string-append (if (path? f) (path->string f) f) "-wal"))
+  (with-handlers ([exn:fail:filesystem? (lambda (_) #f)])
+    (and (file-exists? f)
+         (string-append (call-with-input-file f sha1)
+                        (if (file-exists? wal)
+                            (string-append "+" (call-with-input-file wal sha1))
+                            "")))))
+
+(define (memo-file db)
+  (define dir (relation-memo-dir))
+  (and dir (build-path dir (string-append (sqlite-db-alias db) ".rktd"))))
+
+;; the entry: (list key (list table digest rows ((part . value) ...)) or (list table 'absent) ...)
+(define (read-memo file key)
+  (with-handlers ([(lambda (_) #t) (lambda (_) #f)])
+    (and file (file-exists? file)
+         (let ([d (call-with-input-file file read)])
+           (and (pair? d) (equal? (car d) key)
+                (for/hash ([e (in-list (cdr d))])
+                  (values (car e)
+                          (if (eq? (cadr e) 'absent)
+                              'absent
+                              (table-obs (cadr e) (caddr e) (cadddr e))))))))))
+
+(define (write-memo! file key result)
+  (with-handlers ([exn:fail? void])   ; a memo that can't be written is a miss next time
+    (make-directory* (path-only file))
+    (call-with-atomic-output-file file
+      (lambda (out _)
+        (write (cons key
+                     (for/list ([(t o) (in-hash result)])
+                       (if (eq? o 'absent)
+                           (list t 'absent)
+                           (list t (table-obs-digest o) (table-obs-rows o) (table-obs-columns o)))))
+               out)))))
+
+;; observe-tables/memo : like observe-tables, remembering a SQLite file's answers
+(define (observe-tables/memo db tables)
+  (define file (and (sqlite-db? db) (memo-file db)))
+  (define key (and file (sqlite-content-key db)))
+  (define held (and key (read-memo file key)))
+  (cond
+    [(and held (for/and ([t (in-list tables)]) (hash-has-key? held t)))
+     (for/hash ([t (in-list tables)]) (values t (hash-ref held t)))]
+    [else
+     (define result (observe-tables db tables))
+     (when (and result key (equal? key (sqlite-content-key db)))
+       ;; the same bytes: keep what was held for other tables too
+       (write-memo! file key (if held
+                                 (for/fold ([h held]) ([(t o) (in-hash result)]) (hash-set h t o))
+                                 result)))
+     result]))
+
 ;; make-relation-observer :
 ;;   (listof symbol) (symbol -> (or/c db #f)) (symbol -> (or/c (listof string) #f))
 ;;   [#:pending? (symbol -> boolean)]
@@ -455,7 +532,7 @@
       (define gens (for/list ([r (in-list wanted)]) (generation r)))
       (define all-tables (remove-duplicates (append* (map tables-of wanted))))
       (define ok-tables (filter (lambda (t) (regexp-match? qualified-name? t)) all-tables))
-      (define batch (and (pair? ok-tables) (observe-tables db ok-tables)))
+      (define batch (and (pair? ok-tables) (observe-tables/memo db ok-tables)))
       (for ([r (in-list wanted)] [g (in-list gens)])
         (define tables (tables-of r))
         (define obs (and batch (pair? tables)
