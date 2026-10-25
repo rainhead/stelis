@@ -110,7 +110,18 @@ No build step — Racket compiles on demand.
   have kept the two ingests ordered after the snapshot) ·
   `--build --all --export-dir <dir>` (build EVERY target into `<dir>` — the run.py
   replacement: covers all of run.py's steps, but content-addressed-skips current
-  work and is partial-success rather than fail-fast). Every task's status is
+  work and is partial-success rather than fail-fast). A `--build` YIELDS to a
+  waiting build (st-mxr.1.1, [ADR 0018](docs/adr/0018-a-build-yields-to-a-waiting-one.md)):
+  a caller that wants the lock creates `<state-dir>/yield`, blocks on the lock and
+  removes the file once it holds it; the running engine checks for the file before
+  each task's decision, records the rest of the plan as `'yielded`, appends the
+  history line, writes NO build report, and exits 3 — the caller's cue to take the
+  lock again and rerun (exit 1 is partial success, nothing to rerun; 75 is the
+  shell's "lock held, skipped"). Between tasks is the one place a build can stop
+  without touching a single-writer assumption: salishsea's snapshot DuckDB is a hub
+  one process may write and nobody else may open meanwhile, so two builds can never
+  run beside each other on one snapshot file, and the engine's state dir assumes one
+  engine process. The engine never takes the lock itself. Every task's status is
   followed by a `⏱` line — how long the engine spent DECIDING (addressing its
   inputs), RUNNING it, and OBSERVING its outputs — and the build ends with the
   bookkeeping after the last task and the CPU it took, engine and tasks apart:

@@ -58,6 +58,11 @@
 (define all? (make-parameter #f))           ; --all: build the whole graph (replaces run.py)
 (define mark-publish-args (make-parameter #f)) ; --mark-publish: (build epoch outcome stage path)
 (define report-dir (make-parameter #f))     ; --report-dir: with --build, where to write its report (st-3un)
+;; --build's exit when it yielded to a waiting build (st-mxr.1.1, ADR 0018): the
+;; caller should take the lock again and rerun. Distinct from 1 (a task failed or
+;; was blocked: partial success, nothing to rerun) and from the shell's 75
+;; (EX_TEMPFAIL, the lock was held and the caller skipped).
+(define EXIT-YIELDED 3)
 (define project-arg (make-parameter 'beeatlas)) ; --project: which graph (st-ml9.1)
 
 (define name
@@ -562,13 +567,15 @@
       (define records (build-record-records bld))
       (printf "Last build — target ~a, ~a task(s):\n"
               (build-record-target bld) (length records))
-      (printf "  ✓ ran · ≡ cached · ✗ failed · ⊘ skipped\n\n")
+      (printf "  ✓ ran · ≡ cached · ✗ failed · ⊘ skipped · ⏸ yielded\n\n")
       (for ([r (in-list records)] [i (in-naturals 1)])
         (define why
           (cond
             [(eq? 'skipped (trace-record-outcome r))
              (format "blocked by ~a"
                      (string-join (map symbol->string (trace-record-blockers r)) ", "))]
+            [(eq? 'yielded (trace-record-outcome r))
+             "yielded — another build asked for the lock; left for the rerun"]
             [(trace-record-decision r) (decision->string (trace-record-decision r))]
             [else "(caching was off)"]))
         ;; what the rerun did. Two receipts can ride a run: a probing boundary's
@@ -986,13 +993,26 @@
            (or name "the whole graph") (length to-run)
            (scope-note)
            out)
+   ;; st-mxr.1.1 (ADR 0018): a build that wants the lock this one holds asks for it
+   ;; by creating this file; run-plan looks for it before each task's decision and
+   ;; yields the rest of the plan. The engine never takes the lock itself — the
+   ;; caller does — so the request is the whole protocol: the waiter creates it,
+   ;; blocks on the lock, and removes it once it holds the lock. Honoring it removes
+   ;; it too, so a request nobody is waiting on costs one yielded build, not every one.
+   (define yield-file (build-path stelis-state "yield"))
    (define-values (status records)
      (run-plan G to-run RT
                #:env (task-env out)
                #:context benv
                #:state-dir stelis-state
                #:rebuild-keys-of rebuild-keys-of
-               #:incremental? (lambda (name) (and (memq name (project-incremental-tasks P)) #t))))
+               #:incremental? (lambda (name) (and (memq name (project-incremental-tasks P)) #t))
+               #:yield? (lambda () (file-exists? yield-file))))
+   (define yielded (for/sum ([v (in-hash-values status)] #:when (eq? v 'yielded)) 1))
+   (when (positive? yielded)
+     (when (file-exists? yield-file) (delete-file yield-file))
+     (printf "\n⏸ yielded with ~a task(s) left: another build asked for the lock. This build is recorded as far as it got; its caller reruns it (exit ~a).\n"
+             yielded EXIT-YIELDED))
    ;; build-timing: the bookkeeping after the last task, which no task's line covers.
    (define after-ms (make-hasheq))
    (define (after! phase thunk)
@@ -1019,7 +1039,10 @@
          (printf "history: ~a build~a older than ~a days expired, ~a block~a removed\n"
                  builds (if (= 1 builds) "" "s") (quotient keep 86400)
                  blocks (if (= 1 blocks) "" "s")))))
-   (when (report-dir)
+   ;; A yielded build writes no report: it is not an answer about the target (the
+   ;; target may be among the tasks left), and the caller's rerun writes its own.
+   ;; A missing report is the cautious answer by design (st-3un).
+   (when (and (report-dir) (zero? yielded))
      (write-build-report! (report-dir) stelis-state
                           (and name (hash-ref (graph-artifacts G) name #f) name)))
    ;; st-9rf: refresh the operator build log AFTER the append, so the page
@@ -1039,11 +1062,15 @@
            (real->decimal-string (/ (current-process-milliseconds) 1000.0) 1)
            (real->decimal-string (/ (current-process-milliseconds 'subprocesses) 1000.0) 1))
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
-   (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped —\n"
-           (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped))
+   (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped~a —\n"
+           (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped)
+           (if (zero? yielded) "" (format " · ~a yielded" yielded)))
    (define db (build-path out "occurrences.db"))
    (when (file-exists? db) (printf "  ~a (~a bytes)\n" db (file-size db)))
-   (exit (if (for/or ([v (in-hash-values status)]) (memq v '(failed skipped))) 1 0))]
+   (exit (cond
+           [(positive? yielded) EXIT-YIELDED]
+           [(for/or ([v (in-hash-values status)]) (memq v '(failed skipped))) 1]
+           [else 0]))]
 
   ;; --- determinism: build twice, compare hashes --------------------------
   [(eq? (mode) 'verify)

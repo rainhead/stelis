@@ -39,7 +39,9 @@
                                           ("Ceratina acantha.json" . "h3")))))
           (rec 'gate 'ok
                #:decision (decision 'run 'input-changed '(db))
-               #:delta (output-delta 'identical '(gate-token)))) 2))
+               #:delta (output-delta 'identical '(gate-token)))
+          ;; the build let a waiting one have the lock before publish (st-mxr.1.1)
+          (rec 'publish 'yielded)) 2))
 
 (define builds (list b1 b2))
 (define html
@@ -76,6 +78,9 @@
 (check-true (regexp-match? #rx"failed: gate" html))
 (check-true (regexp-match? #rx"blocked by: gate" html))
 (check-true (regexp-match? #rx"outputs identical — early cutoff" html))
+;; a yielded task says so, and the build's summary counts it
+(check-true (regexp-match? #rx"⏸ 1 yielded" html))
+(check-true (regexp-match? #rx"o-yielded.*yielded to a waiting build" html))
 
 ;; caps are reported, never silent
 (let ([short (build-log-html builds #:limit 1)])

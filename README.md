@@ -77,6 +77,19 @@ tail without re-running ingestion:
 racket src/main.rkt --build --from generate-sqlite occurrences.db
 ```
 
+Two builds must never run at once on one state dir: the engine's history, cache
+and relation observations assume one writer, and a project's shared files (salishsea's
+snapshot DuckDB) may too. Where builds can overlap, on a server with a schedule and a
+save-triggered build, the caller serializes them with a lock (salishsea's
+[`fly/build.sh`](https://github.com/salish-sea/salishsea-io/blob/main/fly/build.sh)
+takes `flock` on `/data/build.lock`). A build that wants that lock can ask the running
+one to let go: create `<state-dir>/yield`, block on the lock, remove the file once the
+lock is held. The running build finishes the task it is on, records the rest as
+yielded, and exits 3, which tells its caller to take the lock again and rerun it
+([ADR 0018](docs/adr/0018-a-build-yields-to-a-waiting-one.md)). The engine never takes
+the lock itself. A developer's build against a local state dir needs none of this:
+nothing else is building there.
+
 Reading the annotations: `▶` runs (the reason says why — a named changed
 input, changed task code (the file named), a changed recipe, no cache entry,
 a missing output, or a boundary/
