@@ -635,8 +635,8 @@ everything the CLI needs to build it — path resolver, runtimes, relation
 resolvers, build clock, checkout, default state dir, the databases it reads
 (`db-binding`: env var, fallback, and whether the fallback is refused). main.rkt is written against
 it, so a second graph is a second value, not a second CLI ·
-[`salishsea.rkt`](src/salishsea.rkt) the second project (st-ml9) — since st-mxr.1.2
-TWO projects from one authored task list, `salishsea-ingest` (the four source ingests)
+[`salishsea.rkt`](src/salishsea.rkt) salishsea's projects (st-ml9), both from one
+authored task list since st-mxr.1.2: `salishsea-ingest` (the four source ingests)
 and `salishsea` (the snapshot on), see the Projects bullet above — salishsea.io's
 logged-out reads as static files — and since salishsea's decision 061
 (salish-xv35, 2026-10) the ingest and the derivation too. Three `'boundary`
