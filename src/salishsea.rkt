@@ -345,7 +345,7 @@
                                       "src/date-format.ts"
                                       "src/ecotype-profile.ts" "src/haulout-profile.ts"
                                       "src/profile-shared.ts" "src/small-multiples.ts" "src/site-nav.ts"
-                                      "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
+                                      "src/catalog.ts" "src/fold.ts" "src/occurrence.ts" "src/profile-map.ts"
                                       (string-append "dist/" shell) "dist/.vite/manifest.json")
                                 (list kind SNAPSHOT-DB (path->string (in-checkout "dist"))))))
 
@@ -560,9 +560,9 @@
               #:outputs '(whales.html)
               #:invoke (node-script/code "scripts/read-path/whales.ts"
                                  '("scripts/read-path/duckdb-budget.ts" "scripts/read-path/profile-document.ts"
-                                   "src/catalog.ts" "src/date-format.ts" "src/ecotype-profile.ts" "src/fold.ts"
+                                   "src/catalog.ts" "src/date-format.ts" "src/fold.ts" "src/profile-map.ts"
                                    "src/profile-shared.ts" "src/site-nav.ts" "src/small-multiples.ts"
-                                   "src/supabase.ts" "src/whales.ts" "dist/whales.html"
+                                   "src/whales.ts" "dist/whales.html"
                                    ;; which names the search field's island, the page's one script
                                    "dist/.vite/manifest.json")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
@@ -581,7 +581,7 @@
               ;; regenerated asset reruns the task as a code change would.
               #:invoke (node-script/code "scripts/read-path/search-index.ts"
                                  '("scripts/read-path/duckdb-budget.ts" "src/catalog.ts" "src/constants.ts"
-                                   "src/extents.ts" "src/fold.ts" "src/map-view.ts" "src/search.ts" "src/supabase.ts"
+                                   "src/extents.ts" "src/fold.ts" "src/map-view.ts"
                                    "src/assets/orcasound-hydrophones.geojson")
                                  (list SNAPSHOT-DB)))
    ;; No snapshot-meta: nothing here depends on when the snapshot was taken, so
@@ -595,7 +595,7 @@
                                    "scripts/read-path/snapshot-tables.ts"
                                    "scripts/read-path/duckdb-budget.ts"
                                    "scripts/read-path/redirect-keys.ts"
-                                   "src/catalog.ts" "src/fold.ts" "src/supabase.ts"
+                                   "src/catalog.ts" "src/fold.ts"
                                    "dist/sitemap.xml")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
    ;; A register edition that loses a name would quietly drop every Maplify sighting
