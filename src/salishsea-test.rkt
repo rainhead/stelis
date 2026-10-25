@@ -240,3 +240,13 @@
               "the quiet days are the covered day's window less the days with occurrences")
 (check-false (memq 'quiet-days (inputs-of 'manifest))
              "a missing covered day already reads as empty, so the quiet days don't hold the manifest back")
+
+;; Provenance that reaches a page's rows (st-wn4): key-blame recurses into an input only
+;; when it has a per-key timeline, so every relation a page reads is keyed, or the
+;; answer for that page stops at the relation's name. A relation added to a page task
+;; must be given a key (salishsea-keys-test.rkt checks what each key is).
+(for* ([pages (in-list '(individual-pages matriline-pages ecotype-pages pod-pages haulout-pages))]
+       [in (in-list (inputs-of pages))]
+       #:unless (eq? in 'snapshot-year))
+  (check-not-false (hash-ref salishsea-keyed-relations in #f)
+                   (format "~a reads ~a, which is keyed" pages in)))

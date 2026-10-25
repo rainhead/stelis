@@ -80,7 +80,9 @@
 
 (provide salishsea-project
          salishsea-graph
-         SALISHSEA)
+         SALISHSEA
+         ;; for the test of what each keyed relation's key is
+         (rename-out [keyed-relations salishsea-keyed-relations]))
 
 ;; Where the salishsea-io checkout lives. Defaults to ~/dev/salishsea-io, the
 ;; author's checkout on every machine; SALISHSEA_DIR relocates it (another host,
@@ -913,8 +915,46 @@
 ;; and read live by occurrence-days's decision; held, like the observer's answers,
 ;; until a task writes the relation.
 (define OCCURRENCE-DAY "strftime(timezone('PST8PDT', observed_at), '%Y-%m-%d')")
+
+;; What the profile pages read, by the subject each row is about (st-wn4), so that
+;; `--history individual-pages:<id>.html` can name WHICH rows moved a page and not
+;; only which relation: key-blame recurses into an input only when it has a per-key
+;; timeline. The key is the subject's id as the row carries it (an individual's,
+;; a group's, a haul-out's), not the page's file name: key-blame never maps one
+;; artifact's keys onto another's, so a page's answer names every row of its inputs
+;; that moved in that build. A page reads its relatives' rows too, so that is the
+;; honest answer rather than a narrower one. A relationship row (a group's parent,
+;; an individual's memberships) is keyed by the subject it describes: the child
+;; group, the member. Nicknames name an individual or a group, never both, so their
+;; key says which.
+;;
+;; Every one of these is a single `doc' column, the row as PostgREST serializes it
+;; (the snapshot's to_jsonb), so a key is a field of it. Observed only when the
+;; producer writes the relation, one DuckDB launch each: 30-100 ms on salishsea's
+;; Fly machine, 2026-10-25.
+(define (doc-field f) (format "json_extract_string(doc, '$.~a')" f))
+(define page-subject-keys
+  `((individuals-snapshot . ,(doc-field "id"))
+    (designations-snapshot . ,(doc-field "individual_id"))
+    (nicknames-snapshot
+     . ,(format "coalesce('individual:' || ~a, 'group:' || ~a)"
+                (doc-field "individual_id") (doc-field "social_group_id")))
+    (parties-snapshot . ,(doc-field "id"))
+    (social-groups-snapshot . ,(doc-field "id"))
+    (group-parents-snapshot . ,(doc-field "group_id"))
+    (matriline-members-snapshot . ,(doc-field "individual_id"))
+    (animal-names-snapshot . ,(doc-field "entity_id"))
+    (haulouts-snapshot . ,(doc-field "id"))
+    (build.individual_occurrences . ,(doc-field "individual_id"))
+    (build.group_occurrences . ,(doc-field "social_group_id"))
+    (build.ecotype_occurrences . ,(doc-field "ecotype_id"))
+    (build.haulout_occurrences . ,(doc-field "haulout_id"))))
+
+;; artifact -> (qualified table . key expression)
 (define keyed-relations
-  (hash 'build.occurrences (cons "build.occurrences" OCCURRENCE-DAY)))
+  (for/fold ([h (hash 'build.occurrences (cons "build.occurrences" OCCURRENCE-DAY))])
+            ([p (in-list page-subject-keys)])
+    (hash-set h (car p) (cons (car (relation-tables (car p))) (cdr p)))))
 (define keyed-memo (make-hasheq))   ; artifact -> (generation . pairs)
 (define (salishsea-resolve-store-keys artifact)
   (define spec (hash-ref keyed-relations artifact #f))

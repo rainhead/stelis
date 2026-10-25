@@ -294,7 +294,14 @@ key — rows grouped by a SQL expression, each group digested and counted, the s
 a keyed store has — IN PLACE of its per-column parts (cache.rkt's
 `artifact-key-parts` asks the project's `resolve-store-keys` first), so a fan-out
 'dir `store-keyed` on it rebuilds per key: salishsea's `build.occurrences` by
-Pacific day, and `occurrence-days` a partial task writing only the moved days ·
+Pacific day, and `occurrence-days` a partial task writing only the moved days.
+A key is also what lets key-blame recurse into a relation, so every relation
+salishsea's profile pages read is keyed by the subject its rows describe (st-wn4,
+`salishsea-keys-test.rkt`): `--history individual-pages:<id>.html` names the
+individuals, designations or sightings whose rows moved, not only the relation.
+The first keyed observation of a relation is diffed against its last per-column
+one, so after declaring a key, delete its producer's cache entry and let one build
+record a keyed baseline before trusting an answer ·
 [`written.rkt`](src/written.rkt) which artifacts a task has written in this
 process: `run-task` (and a derivation) notes its declared outputs when it finishes,
 so a cached observation is keyed by the artifact's write generation — the same
