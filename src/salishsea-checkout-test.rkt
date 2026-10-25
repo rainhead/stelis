@@ -21,7 +21,8 @@
   [else
    (define dist (path->string (simplify-path (build-path SALISHSEA "dist"))))
    (define built? (directory-exists? dist))
-   (for* ([(name t) (in-hash (graph-tasks salishsea-graph))]
+   (for* ([g (in-list (list salishsea-graph salishsea-ingest-graph))]
+          [(name t) (in-hash (graph-tasks g))]
           [inv (in-value (task-invoke t))]
           #:when (recipe? inv)
           [c (in-list (recipe-code inv))]

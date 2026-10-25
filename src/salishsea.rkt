@@ -81,6 +81,10 @@
 
 (provide salishsea-project
          salishsea-graph
+         salishsea-ingest-project
+         salishsea-ingest-graph
+         ingest-task-names
+         handed-over-relations
          SALISHSEA
          ;; for the test of what each keyed relation's key is
          (rename-out [keyed-relations salishsea-keyed-relations]))
@@ -751,7 +755,48 @@
                                  '()
                                  (list SNAPSHOT-DB)))))
 
-(define salishsea-graph (build-graph tasks artifacts))
+;; --- Two graphs from one list (st-mxr.1.2) ------------------------------------
+;; Stelis's one-writer unit is the state dir: the history is numbered from the line
+;; before, a prune rewrites the log beside itself, and the relation observer holds a
+;; digest until a task in the same process writes the relation. So a build that must
+;; run beside another needs a state dir of its own, which is a graph of its own.
+;; salishsea has two writers: the four ingests, which pull the sources every five
+;; minutes (network-bound, long, light), and everything from the snapshot on, which
+;; a save runs too (CPU- and memory-bound, short). The INGEST graph holds the four
+;; boundaries and what they read and write; the DERIVE graph holds the rest, and
+;; reads what the ingests wrote as UPSTREAM leaves — somebody else's data,
+;; snapshotted in, with no producer here (ADR 0013). Same names, same tables, same
+;; digests on both sides, so a later reader can follow a why across the cut by
+;; content (st-mxr.1.3). One authored task list, partitioned, so a task cannot
+;; belong to neither graph or to both.
+;;
+;; Until the register leaves the snapshot file (salish-vedj), the two graphs still
+;; share that file through ingest-register and ingest-inaturalist, so their builds
+;; must still be serialized; the split makes two state dirs possible, not two
+;; builds at once.
+(define ingest-task-names '(ingest-maplify ingest-orcasound ingest-inaturalist ingest-register))
+(define (ingest-task? t) (memq (task-name t) ingest-task-names))
+(define ingest-tasks (filter ingest-task? tasks))
+(define derive-tasks (filter (lambda (t) (not (ingest-task? t))) tasks))
+;; What crosses the cut: every relation an ingest produces.
+(define handed-over-relations
+  (for*/list ([t (in-list ingest-tasks)] [o (in-list (task-outputs t))]) o))
+;; An ingest graph artifact is one an ingest task reads or writes; the derive graph's
+;; are the rest, plus the handed-over relations re-declared as upstream leaves.
+(define ingest-artifact-names
+  (for*/list ([t (in-list ingest-tasks)] [a (in-list (append (task-inputs t) (task-outputs t)))]) a))
+(define (artifact-named n) (findf (lambda (a) (eq? (artifact-name a) n)) artifacts))
+(define ingest-artifacts
+  (for/list ([n (in-list (remove-duplicates ingest-artifact-names))]) (artifact-named n)))
+(define derive-artifacts
+  (for/list ([a (in-list artifacts)])
+    (if (memq (artifact-name a) handed-over-relations)
+        (make-artifact (artifact-name a) (artifact-kind a) #:provenance 'upstream
+                       #:keyed-by (artifact-keyed-by a))
+        a)))
+
+(define salishsea-graph (build-graph derive-tasks derive-artifacts))
+(define salishsea-ingest-graph (build-graph ingest-tasks ingest-artifacts))
 
 ;; --- Where artifacts live, and how relations are addressed ------------------
 
@@ -832,19 +877,26 @@
 ;; runs (cache.rkt), so its outputs are pending until it has written them in this
 ;; process; written.rkt's generation is the same fact the observer already holds
 ;; answers by.
-(define (boundary-pending? relation)
-  (define producer (producer-of salishsea-graph relation))
-  (and producer
-       (eq? 'boundary (task-kind (hash-ref (graph-tasks salishsea-graph) producer)))
-       (zero? (write-generation relation))))
-(define-values (resolve-relation resolve-relation-columns)
+;;
+;; One observer per graph (st-mxr.1.2): what is pending depends on which graph's
+;; boundaries are still to run, and the derive graph's handed-over relations have no
+;; producer there, so they are observed in the first batch like any leaf.
+(define (make-resolvers g)
+  (define (boundary-pending? relation)
+    (define producer (producer-of g relation))
+    (and producer
+         (eq? 'boundary (task-kind (hash-ref (graph-tasks g) producer)))
+         (zero? (write-generation relation))))
   (make-relation-observer
-   (for/list ([(name a) (in-hash (graph-artifacts salishsea-graph))]
+   (for/list ([(name a) (in-hash (graph-artifacts g))]
               #:when (eq? (artifact-kind a) 'db-relation))
      name)
    relation-db
    relation-tables
    #:pending? boundary-pending?))
+(define-values (resolve-relation resolve-relation-columns) (make-resolvers salishsea-graph))
+(define-values (resolve-ingest-relation resolve-ingest-relation-columns)
+  (make-resolvers salishsea-ingest-graph))
 
 ;; --- Relations observed by a key (ADR 0016) ------------------------------------
 ;; build.occurrences by Pacific day: the grain the day files are written at, so the
@@ -967,4 +1019,26 @@
                 ;; minutes rendering it cost ~6 s of each; --render-log draws it when
                 ;; someone wants to read it.
                 #:build-log-after-build? #f
+                #:databases (list snapshot-db-binding)))
+
+;; The ingest graph as a project of its own (st-mxr.1.2): `--project salishsea-ingest`.
+;; Its state dir must differ from the derive graph's — the engine refuses a state dir
+;; holding another project's builds (st-z1c) — so a host that sets STELIS_STATE_DIR
+;; sets a different one for this project's builds. Nothing here is partial or
+;; incremental: an ingest writes its mirror whole or reconciles it itself.
+(define salishsea-ingest-project
+  (make-project 'salishsea-ingest
+                #:graph salishsea-ingest-graph
+                #:runtimes salishsea-runtimes
+                #:path salishsea-path
+                #:resolve-relation resolve-ingest-relation
+                #:resolve-relation-columns resolve-ingest-relation-columns
+                #:source-date-epoch salishsea-source-date-epoch
+                #:checkout (string->path SALISHSEA)
+                #:checkout-env "SALISHSEA_DIR"
+                #:default-state-dir (in-checkout ".stelis-ingest")
+                #:history-retention (* 30 24 60 60)
+                #:build-log-after-build? #f
+                ;; ingest-register writes the register into the snapshot file, and
+                ;; ingest-inaturalist reads the mappings from it, until salish-vedj
                 #:databases (list snapshot-db-binding)))

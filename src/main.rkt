@@ -152,7 +152,9 @@
 (define-runtime-module-path-index beeatlas-module "beeatlas.rkt")
 (define-runtime-module-path-index salishsea-module "salishsea.rkt")
 (define projects (hash 'beeatlas (cons beeatlas-module 'beeatlas-project)
-                      'salishsea (cons salishsea-module 'salishsea-project)))
+                      'salishsea (cons salishsea-module 'salishsea-project)
+                      ;; salishsea's ingests as their own graph and state dir (st-mxr.1.2)
+                      'salishsea-ingest (cons salishsea-module 'salishsea-ingest-project)))
 (define P
   (let ([entry (hash-ref projects (project-arg)
                          (lambda ()

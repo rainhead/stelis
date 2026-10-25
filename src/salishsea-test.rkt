@@ -14,17 +14,43 @@
 
 (define (inputs-of task) (task-inputs (hash-ref (graph-tasks salishsea-graph) task)))
 (define (outputs-of task) (task-outputs (hash-ref (graph-tasks salishsea-graph) task)))
+(define (ingest-inputs-of task) (task-inputs (hash-ref (graph-tasks salishsea-ingest-graph) task)))
+
+;; --- two graphs from one list (st-mxr.1.2) --------------------------------------
+;; The four ingests are a graph and a project of their own, so their builds can have a
+;; state dir of their own; everything from the snapshot on is the other. Every authored
+;; task is in exactly one.
+(check-equal? (sort (hash-keys (graph-tasks salishsea-ingest-graph)) symbol<?)
+              (sort ingest-task-names symbol<?))
+(for ([t (in-list ingest-task-names)])
+  (check-false (hash-ref (graph-tasks salishsea-graph) t #f) (format "~a is not in the derive graph" t)))
+(check-eq? (project-graph salishsea-ingest-project) salishsea-ingest-graph)
+;; What crosses the cut is produced by a boundary on the ingest side and read as an
+;; upstream leaf on the derive side, under the same name and kind — the property a
+;; reader following a why across the cut by content rests on (st-mxr.1.3).
+(check-not-false (memq 'maplify_mirror.sightings handed-over-relations))
+(check-not-false (memq 'register.names handed-over-relations))
+(for ([r (in-list handed-over-relations)])
+  (define producer (producer-of salishsea-ingest-graph r))
+  (check-not-false producer (format "~a is produced on the ingest side" r))
+  (check-eq? (task-kind (hash-ref (graph-tasks salishsea-ingest-graph) producer)) 'boundary)
+  (define here (hash-ref (graph-artifacts salishsea-graph) r #f))
+  (when here   ; a handed-over relation nothing derived reads is simply absent
+    (check-false (producer-of salishsea-graph r) (format "~a has no producer on the derive side" r))
+    (check-eq? (artifact-provenance here) 'upstream (format "~a is upstream there" r))
+    (check-eq? (artifact-kind here) (artifact-kind (hash-ref (graph-artifacts salishsea-ingest-graph) r)))))
+;; the two projects cannot share a state dir (st-z1c), so their defaults differ
+(check-not-equal? (project-default-state-dir salishsea-project)
+                  (project-default-state-dir salishsea-ingest-project))
 
 ;; Since salishsea's step 3 (decision 061, salish-xv35.9) the published files read the
 ;; occurrences the build derives, from its own mirrors of Maplify, iNaturalist and
-;; Orcasound and the snapshot of what Postgres still holds.
+;; Orcasound and the snapshot of what Postgres still holds. The ingests themselves are
+;; the other graph's, so here the mirrors are leaves.
 (define-values (ordered pruned) (plan salishsea-graph 'days))
-(check-equal? ordered '(ingest-maplify ingest-orcasound reference snapshot ingest-register
-                        ingest-inaturalist maplify-names derive-occurrences occurrence-days)
-              (string-append "the day files need the three sources' ingests, the reference "
-                             "files, the snapshot, the register, the name guard and the derivation; the register follows "
-                             "Maplify's ingest, whose pairs it must not un-name, and iNaturalist's follows the register, "
-                             "which names the taxa it fetches"))
+(check-equal? ordered '(maplify-names reference snapshot derive-occurrences occurrence-days)
+              (string-append "the day files need the name guard, the reference files, the snapshot "
+                             "and the derivation; the mirrors and the register arrive from the ingest graph"))
 (check-equal? (set-count pruned) 17
               (string-append "the calendar, the id index, the candidates and links, the catalogue and its "
                              "register views, the pages, the whales page, the profile index, the search index, "
@@ -102,17 +128,21 @@
 (check-not-false (memq 'maplify-names-hold (inputs-of 'derive-occurrences))
                  "the derivation waits on the guard")
 (define-values (guard-plan _gp) (plan salishsea-graph 'maplify-names-hold))
-(check-equal? guard-plan '(ingest-maplify ingest-register maplify-names)
-              "the guard reads the register the build fetched, for the pairs the mirror holds")
+(check-equal? guard-plan '(maplify-names)
+              "the guard reads the register the ingest graph fetched, for the pairs the mirror holds")
+(define-values (ingest-order _ip) (plan salishsea-ingest-graph 'inaturalist_mirror.taxa))
+(check-equal? ingest-order '(ingest-maplify ingest-register ingest-inaturalist)
+              (string-append "the register follows Maplify's ingest, whose pairs it must not un-name, "
+                             "and iNaturalist's follows the register, which names the taxa it fetches"))
 
 ;; The register is the build's own fetch (salishsea decision 064), not Postgres's copy: the
 ;; ingest-register boundary produces every register relation, and the snapshot none.
 (for ([r (in-list '(register.entities register.names register.mappings register.ancestor
                     register.deprecations register.classification register.edition))])
-  (check-eq? (producer-of salishsea-graph r) 'ingest-register (format "~a comes from the release" r)))
-(check-equal? (inputs-of 'ingest-register) '(maplify_mirror.sightings maplify-unnamed.tsv)
+  (check-eq? (producer-of salishsea-ingest-graph r) 'ingest-register (format "~a comes from the release" r)))
+(check-equal? (ingest-inputs-of 'ingest-register) '(maplify_mirror.sightings maplify-unnamed.tsv)
               "it judges a new edition by the Maplify pairs and the curator's allow-list")
-(check-eq? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-register)) 'boundary)
+(check-eq? (task-kind (hash-ref (graph-tasks salishsea-ingest-graph) 'ingest-register)) 'boundary)
 (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'maplify-names)) 'gate)
 ;; its baseline is a checked-in file (salishsea decision 083), changed by a pull request
 ;; and never by the gate: producerless and forward-only like the allow-list, and an input
@@ -141,9 +171,9 @@
 ;; The profile pages' link views (salish-xv35.13): derived from the build's own
 ;; occurrences and candidates, and what the pages read.
 (define-values (links-plan _lp) (plan salishsea-graph 'build.individual_occurrences))
-(check-equal? (take-right links-plan 3)
-              '(derive-occurrences derive-identifier-candidates derive-profile-links)
-              "the links are a port of the whole chain, not of the last view alone")
+(check-true (let ([at (lambda (t) (index-of links-plan t))])
+              (< (at 'derive-occurrences) (at 'derive-identifier-candidates) (at 'derive-profile-links)))
+            "the links are a port of the whole chain, not of the last view alone")
 (check-not-false (memq 'public.identifications (inputs-of 'derive-profile-links))
                  "what people assert overrides what a sighting's text suggests")
 (check-not-false (memq 'orcasound.bout_entities (inputs-of 'derive-profile-links))
@@ -154,11 +184,11 @@
 ;; its observations reach (salish-xv35.9.3). Maplify's is compared with Postgres's copy
 ;; by a report nothing published waits on, while Postgres ingests Maplify too.
 (for ([ingest (in-list '(ingest-orcasound ingest-maplify))])
-  (check-equal? (inputs-of ingest) '() (format "~a reads only its upstream" ingest))
-  (check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) ingest)) 'boundary))
-(check-equal? (inputs-of 'ingest-inaturalist) '(register.mappings)
+  (check-equal? (ingest-inputs-of ingest) '() (format "~a reads only its upstream" ingest))
+  (check-equal? (task-kind (hash-ref (graph-tasks salishsea-ingest-graph) ingest)) 'boundary))
+(check-equal? (ingest-inputs-of 'ingest-inaturalist) '(register.mappings)
               "ingest-inaturalist reads its upstream and the register's mappings, nothing else")
-(check-equal? (task-kind (hash-ref (graph-tasks salishsea-graph) 'ingest-inaturalist)) 'boundary)
+(check-equal? (task-kind (hash-ref (graph-tasks salishsea-ingest-graph) 'ingest-inaturalist)) 'boundary)
 (check-false (hash-ref (graph-tasks salishsea-graph) 'maplify-overlap #f)
              "the Maplify overlap report retired with Postgres's Maplify ingest (salish-xv35.9)")
 (check-false (memq 'maplify.sightings (inputs-of 'maplify-names))
@@ -187,7 +217,8 @@
               '(animal-names-snapshot build.occurrences register.ancestor register.classification
                 register.entities register.taxon_ancestor social-groups-snapshot)
               "the whales page's inputs are what whales.ts reads")
-(check-not-false (memq 'register.taxon_ancestor (outputs-of 'ingest-register))
+(check-not-false (memq 'register.taxon_ancestor
+                       (task-outputs (hash-ref (graph-tasks salishsea-ingest-graph) 'ingest-register)))
                  "the build loads the register's taxon lineage")
 ;; The ecotype's links pooled, and each matriline's for its small map (decision 067).
 (check-equal? (sort (inputs-of 'ecotype-pages) symbol<?)
