@@ -41,11 +41,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-# The install step reads only the five files it pins, so its layer is cached
+# The install step reads only the six files it pins, so its layer is cached
 # across engine commits that leave them alone: a change to src/ does not fetch
 # Racket again.
 ARG STELIS_DOWNLOAD_MIRROR
-COPY scripts/install-racket.sh scripts/preflight.sh /opt/stelis/scripts/
+COPY scripts/install-racket.sh scripts/native-code.rkt scripts/preflight.sh /opt/stelis/scripts/
 COPY racket-version racket-deps.txt racket-downloads.tsv /opt/stelis/
 RUN STELIS_DOWNLOAD_MIRROR="$STELIS_DOWNLOAD_MIRROR" \
       bash /opt/stelis/scripts/install-racket.sh --prefix /opt/racket

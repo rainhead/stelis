@@ -58,7 +58,10 @@ different days). Every installer, salishsea's Dockerfile included, takes the
 source from that file — through [`scripts/install-racket.sh`](scripts/install-racket.sh)
 (st-2t1), which installs the pinned minimal build from
 [`racket-downloads.tsv`](racket-downloads.tsv) plus the packages into a prefix,
-mirror first (`STELIS_DOWNLOAD_MIRROR`), checksum deciding; CI gets its Racket
+mirror first (`STELIS_DOWNLOAD_MIRROR`), checksum deciding, then converts the
+catalog packages' machine-independent code to native
+([`scripts/native-code.rkt`](scripts/native-code.rkt): left as it ships, Racket
+recompiles it on every launch, ~1 s on a Fly Machine, st-3un); CI gets its Racket
 that way, so no host carries its own copy of the steps. Container hosts get the
 IMAGE (st-9ov, [ADR 0017](docs/adr/0017-stelis-ships-as-an-image-per-commit.md)):
 the image workflow builds the [`Dockerfile`](Dockerfile) on every push to main and
