@@ -656,7 +656,10 @@ shares, so a `?o=` link opens without a query) and the profile pages
 (`individual-pages`, `matriline-pages`, `ecotype-pages`, `haulout-pages`, salishsea decision 057:
 prerendered HTML, one task per kind reading only its own catalogue relations, with
 the Vite-built shell and Vite's manifest hashed as code because the site build that
-writes `dist/` is outside the graph) and `profile-index` (`redirects.json`, folded
+writes `dist/` is outside the graph; each node task's code list is its script's
+esbuild import closure, kept by hand, so `salishsea-checkout-test.rkt` fails when
+one names a file the checkout no longer has, after a deleted `src/supabase.ts` kept
+eight tasks from ever skipping for sixteen days) and `profile-index` (`redirects.json`, folded
 designation → canonical page, which a redirect server on Fly answers legacy links
 from, `sitemap.xml`, and `animal-names.json`, the register's names the report
 form reads now that the map asks no database; no snapshot-meta input, so it
