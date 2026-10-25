@@ -76,7 +76,8 @@
          "project.rkt"
          "relation-digest.rkt"
          (only-in "fan-out-key.rkt" store-keyed)
-         (only-in "written.rkt" write-generation))
+         (only-in "written.rkt" write-generation)
+         (only-in "ts-imports.rkt" make-ts-import-closure))
 
 (provide salishsea-project
          salishsea-graph
@@ -150,12 +151,19 @@
 (define (node-script script . args)
   (node-script/code script '() args))
 
-;; node-script/code : like node-script, with extra code files the script imports —
-;; hashed into the task's address, so editing one reruns it.
+;; node-script/code : like node-script, with code files the script reads that its
+;; imports don't show. A recipe's code is hashed into the task's address, so editing
+;; any of it reruns the task. The script's own import closure is computed when the
+;; graph is authored (ts-imports.rkt, st-6i2), so EXTRA-CODE is only what no static
+;; scan can see: SQL read by a computed name (``new URL(`./derive/${file}`, ...)``)
+;; and what the site build writes under dist/. The hand-kept lists this replaces
+;; drifted both ways: a deleted file kept eight tasks from ever skipping for sixteen
+;; days, and files the scripts did import went unlisted (stelis #13).
+(define ts-import-closure (make-ts-import-closure SALISHSEA))
 (define (node-script/code script extra-code args)
   (recipe 'node
           (append (list "node" script) args)
-          (append (list (in-checkout script))
+          (append (map in-checkout (ts-import-closure script))
                   (map in-checkout extra-code)
                   node-code)))
 
@@ -321,10 +329,9 @@
 (define profile-index-relations
   (map snapshot-relation '("individuals" "designations" "social_groups" "haulouts" "animal_names")))
 
-;; A kind's page task. Its code is profiles.ts's import closure (esbuild's
-;; metafile, not a grep: all three kinds' templates, since one script renders
-;; them), the kind's Vite-built shell, and Vite's manifest, which names the map
-;; island's files. The shell and the manifest are code here rather than artifacts
+;; A kind's page task. Its code is profiles.ts's import closure (all the kinds'
+;; templates, since one script renders them), the kind's Vite-built shell, and
+;; Vite's manifest, which names the map island's files. The shell and the manifest are code here rather than artifacts
 ;; because the site build that writes dist/ is outside the graph (the image's, on
 ;; Fly), and the pages must rerun when either changes.
 ;;
@@ -337,16 +344,7 @@
              #:inputs (cons 'snapshot-year relations)
              #:outputs (list output)
              #:invoke (node-script/code "scripts/read-path/profiles.ts"
-                                (list "scripts/read-path/profile-document.ts"
-                                      "scripts/read-path/replace-dir.ts"
-                                      "scripts/read-path/snapshot-tables.ts"
-                                      "scripts/read-path/duckdb-budget.ts"
-                                      "src/individual-profile.ts" "src/matriline-profile.ts"
-                                      "src/date-format.ts"
-                                      "src/ecotype-profile.ts" "src/haulout-profile.ts"
-                                      "src/profile-shared.ts" "src/small-multiples.ts" "src/site-nav.ts"
-                                      "src/catalog.ts" "src/fold.ts" "src/occurrence.ts" "src/profile-map.ts"
-                                      (string-append "dist/" shell) "dist/.vite/manifest.json")
+                                (list (string-append "dist/" shell) "dist/.vite/manifest.json")
                                 (list kind SNAPSHOT-DB (path->string (in-checkout "dist"))))))
 
 (define artifacts
@@ -492,7 +490,7 @@
               #:outputs (list* 'snapshot-meta 'snapshot-year 'snapshot-day
                                snapshot-input-relations)
               #:invoke (node-script/code "scripts/read-path/snapshot.ts"
-                                 '("scripts/read-path/duckdb-budget.ts" "scripts/read-path/pacific-day.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; The reference tables from their checked-in files (decision 064): a transform, not
    ;; a boundary, since its inputs are declared files. Into the snapshot database, which
@@ -506,8 +504,7 @@
               #:inputs '(build.occurrences)
               #:outputs '(days)
               #:invoke (node-script/code "scripts/read-path/occurrence-days.ts"
-                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/pacific-day.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; Reads the snapshot's moment for the day it covers through, so it runs every
    ;; build; a query over one column and at most thirty tiny files. Not a manifest
@@ -517,16 +514,14 @@
               #:inputs '(build.occurrences snapshot-meta)
               #:outputs '(quiet-days)
               #:invoke (node-script/code "scripts/read-path/quiet-days.ts"
-                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/pacific-day.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; The region boxes are the map's own, so the files they come from are code.
    (make-task 'calendar 'transform
               #:inputs '(build.occurrences)
               #:outputs '(calendar)
               #:invoke (node-script/code "scripts/read-path/calendar.ts"
-                                 '("scripts/read-path/replace-dir.ts" "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/pacific-day.ts" "src/constants.ts" "src/extents.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; The shard hash is shared with the browser, so it is code: change it and
    ;; every id moves, which must rebuild the index.
@@ -534,8 +529,7 @@
               #:inputs '(build.occurrences)
               #:outputs '(ids)
               #:invoke (node-script/code "scripts/read-path/occurrence-ids.ts"
-                                 '("scripts/read-path/replace-dir.ts" "src/read-path-shard.ts"
-                                   "scripts/read-path/duckdb-budget.ts" "scripts/read-path/pacific-day.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; The profile pages: the shared templates filled from the snapshot, inside
    ;; the shell Vite built (salishsea decision 057).
@@ -559,10 +553,7 @@
               #:inputs whales-page-relations
               #:outputs '(whales.html)
               #:invoke (node-script/code "scripts/read-path/whales.ts"
-                                 '("scripts/read-path/duckdb-budget.ts" "scripts/read-path/profile-document.ts"
-                                   "src/catalog.ts" "src/date-format.ts" "src/fold.ts" "src/profile-map.ts"
-                                   "src/profile-shared.ts" "src/site-nav.ts" "src/small-multiples.ts"
-                                   "src/whales.ts" "dist/whales.html"
+                                 '("dist/whales.html"
                                    ;; which names the search field's island, the page's one script
                                    "dist/.vite/manifest.json")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
@@ -580,9 +571,7 @@
               ;; The map's hydrophones are found too, read from the checked-in asset, so a
               ;; regenerated asset reruns the task as a code change would.
               #:invoke (node-script/code "scripts/read-path/search-index.ts"
-                                 '("scripts/read-path/duckdb-budget.ts" "src/catalog.ts" "src/constants.ts"
-                                   "src/extents.ts" "src/fold.ts" "src/map-view.ts"
-                                   "src/assets/orcasound-hydrophones.geojson")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; No snapshot-meta: nothing here depends on when the snapshot was taken, so
    ;; unlike the pages this cuts off whenever the catalogue holds still. Vite's
@@ -591,12 +580,7 @@
               #:inputs profile-index-relations
               #:outputs '(redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:invoke (node-script/code "scripts/read-path/profile-index.ts"
-                                 '("scripts/read-path/profile-document.ts"
-                                   "scripts/read-path/snapshot-tables.ts"
-                                   "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/redirect-keys.ts"
-                                   "src/catalog.ts" "src/fold.ts"
-                                   "dist/sitemap.xml")
+                                 '("dist/sitemap.xml")
                                  (list SNAPSHOT-DB (path->string (in-checkout "dist")))))
    ;; A register edition that loses a name would quietly drop every Maplify sighting
    ;; that used it, since the derivation resolves names from the register it is given.
@@ -615,11 +599,7 @@
               #:inputs '(maplify_mirror.sightings maplify-unnamed.tsv)
               #:outputs (cons 'register.edition register-relations)
               #:invoke (node-script/code "scripts/read-path/ingest-register.ts"
-                                 '("scripts/ingest/maplify.ts" "scripts/register/check-unnaming.ts"
-                                   "scripts/register/edition.ts" "scripts/register/name-index.ts"
-                                   "scripts/register/unnamed.ts" "scripts/read-path/check-maplify-names.ts"
-                                   "scripts/read-path/ingest-runs.ts" "scripts/ingest/retry.ts"
-                                   "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
+                                 '()
                                  (list SNAPSHOT-DB (path->string maplify-mirror)
                                        "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
    (make-task 'maplify-names 'gate
@@ -627,9 +607,7 @@
                          register.ancestor register.deprecations maplify-names.json maplify-unnamed.tsv)
               #:outputs '(maplify-names-hold status/maplify-names.json)
               #:invoke (node-script/code "scripts/read-path/check-maplify-names.ts"
-                                 '("scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
-                                   "scripts/register/unnamed.ts"
-                                   "src/extents.ts" "src/fold.ts" "scripts/read-path/duckdb-budget.ts")
+                                 '()
                                  (list SNAPSHOT-DB (path->string maplify-mirror)
                                        "--baseline" (path->string (build-path SALISHSEA "data" "maplify-names.json"))
                                        "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
@@ -645,18 +623,7 @@
               #:inputs occurrence-derivation-inputs
               #:outputs '(build.occurrences)
               #:invoke (node-script/code "scripts/read-path/derive-occurrences.ts"
-                                 '("scripts/read-path/derive/extract.sql"
-                                   "scripts/read-path/derive/sources.ts"
-                                   "scripts/read-path/derive/sources.sql" "scripts/read-path/derive/source-taxa.sql"
-                                   "scripts/read-path/derive/maplify-entities.ts"
-                                   "scripts/read-path/derive/inaturalist-scope.ts"
-                                   "scripts/ingest/maplify.ts" "scripts/ingest/inaturalist.ts"
-                                   "scripts/register/name-index.ts"
-                                   "src/fold.ts" "src/extents.ts"
-                                   "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/derive/shared.sql"
-                                   "scripts/read-path/derive/lookups.sql" "scripts/read-path/derive/maplify-collection.sql"
-                                   "scripts/read-path/derive/occurrences.sql")
+                                 '()
                                  (list* SNAPSHOT-DB MIRRORS)))
    ;; Postgres's derived.identifier_candidates as DuckDB SQL: each designation an
    ;; occurrence names, paired with the catalogue's individual or matriline. Reads the
@@ -666,8 +633,7 @@
               #:inputs '(build.occurrences social-groups-snapshot designations-snapshot)
               #:outputs '(build.occurrence_identifier_candidates)
               #:invoke (node-script/code "scripts/read-path/derive-identifier-candidates.ts"
-                                 '("scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/derive/identifier-candidates.sql")
+                                 '()
                                  (list SNAPSHOT-DB)))
    ;; The four views a profile page's map reads (salish-xv35.13), as DuckDB SQL over the
    ;; occurrences and candidates the build derived, the identifications people assert,
@@ -690,8 +656,7 @@
                                                  register.group_ranks register.parentage register.matriarchs))
               #:outputs catalogue-file-relations
               #:invoke (node-script/code "scripts/read-path/catalogue.ts"
-                                 '("scripts/read-path/reference.ts" "src/fold.ts"
-                                   "scripts/read-path/duckdb-budget.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))
    (make-task 'derive-catalogue 'transform
               #:inputs '(register.entities register.names register.mappings register.ancestor
@@ -699,12 +664,8 @@
                          individuals-snapshot social-groups-snapshot)
               #:outputs catalogue-view-relations
               #:invoke (node-script/code "scripts/read-path/derive-catalogue.ts"
-                                 '("scripts/read-path/derive/sources.ts"
-                                   "scripts/read-path/derive/source-taxa.sql"
-                                   "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/derive/shared.sql"
-                                   "scripts/read-path/derive/lookups.sql"
-                                   "scripts/read-path/derive/catalogue.sql")
+                                 '("scripts/read-path/derive/catalogue.sql" "scripts/read-path/derive/lookups.sql"
+                                   "scripts/read-path/derive/shared.sql")
                                  (list SNAPSHOT-DB (path->string inaturalist-mirror))))
    (make-task 'derive-profile-links 'transform
               #:inputs '(build.occurrences build.occurrence_identifier_candidates
@@ -715,13 +676,8 @@
                          haulouts-snapshot)
               #:outputs profile-link-relations
               #:invoke (node-script/code "scripts/read-path/derive-profile-links.ts"
-                                 '("scripts/read-path/derive/haulout-distance.ts"
-                                   "scripts/read-path/derive/sources.ts"
-                                   "scripts/read-path/derive/sources.sql" "scripts/read-path/derive/source-taxa.sql"
-                                   "scripts/read-path/duckdb-budget.ts"
-                                   "scripts/read-path/derive/shared.sql"
-                                   "scripts/read-path/derive/haulout-nearby.sql"
-                                   "scripts/read-path/derive/profile-links.sql")
+                                 '("scripts/read-path/derive/haulout-nearby.sql" "scripts/read-path/derive/profile-links.sql"
+                                   "scripts/read-path/derive/shared.sql")
                                  (list* SNAPSHOT-DB MIRRORS)))
    ;; Orcasound's whole corpus, fetched by the build (salishsea decision 061, step B):
    ;; the same fetch shell and pure core as the Supabase function, written to a SQLite
@@ -733,8 +689,7 @@
    (make-task 'ingest-orcasound 'boundary
               #:outputs orcasound-relations
               #:invoke (node-script/code "scripts/read-path/ingest-orcasound.ts"
-                                 '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-orcasound.ts" "scripts/ingest/orcasound.ts"
-                                   "scripts/ingest/retry.ts")
+                                 '()
                                  (list (path->string orcasound-mirror))))
    ;; Maplify's windows, fetched by the build (salishsea decision 061, salish-xv35.7): the
    ;; thirty days ending today and one older month for anti-entropy (salish-xv35.15),
@@ -745,10 +700,7 @@
    (make-task 'ingest-maplify 'boundary
               #:outputs maplify-relations
               #:invoke (node-script/code "scripts/read-path/ingest-maplify.ts"
-                                 '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-maplify.ts" "scripts/ingest/maplify.ts"
-                                   "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
-                                   "scripts/read-path/windows.ts"
-                                   "scripts/register/name-index.ts" "src/extents.ts" "src/fold.ts")
+                                 '()
                                  (list (path->string maplify-mirror))))
 ;; iNaturalist, fetched by the build (salishsea decision 061, salish-xv35.8): what changed
    ;; since the last run (updated_since, which is how a late upload arrives), the last ten
@@ -763,10 +715,7 @@
               #:inputs '(register.mappings)
               #:outputs inaturalist-relations
               #:invoke (node-script/code "scripts/read-path/ingest-inaturalist.ts"
-                                 '("scripts/read-path/ingest-runs.ts" "scripts/ingest/fetch-inaturalist.ts" "scripts/ingest/inaturalist.ts"
-                                   "scripts/ingest/retry.ts" "scripts/ingest/window.ts"
-                                   "scripts/read-path/windows.ts" "src/extents.ts"
-                                   "scripts/read-path/duckdb-budget.ts")
+                                 '()
                                  (list (path->string inaturalist-mirror) "--register" SNAPSHOT-DB)))
    ;; The Darwin Core archive (salish-xv35.9), which a nightly workflow built from
    ;; Postgres's dwc views until Postgres stopped ingesting Maplify. derive/dwc.sql's
@@ -786,16 +735,9 @@
                          register.deprecations register.classification types.enums)
               #:outputs '(dwca)
               #:invoke (node-script/code "scripts/read-path/dwca.ts"
-                                 '("scripts/dwca/assertions.ts" "scripts/dwca/build.ts" "scripts/dwca/eml.ts"
-                                   "scripts/dwca/fields.ts" "scripts/dwca/guard.ts" "scripts/dwca/meta-xml.ts"
-                                   "scripts/dwca/verify-artifact.ts" "scripts/dwca/zip.ts"
-                                   "scripts/ingest/maplify.ts" "scripts/register/name-index.ts"
-                                   "scripts/read-path/derive/extract.sql" "scripts/read-path/derive/maplify-entities.ts"
-                                   "scripts/read-path/derive/sources.ts" "scripts/read-path/derive/sources.sql" "scripts/read-path/derive/source-taxa.sql"
-                                   "scripts/read-path/derive/shared.sql" "scripts/read-path/derive/lookups.sql" "scripts/read-path/derive/maplify-collection.sql"
-                                   "scripts/read-path/derive/dwc.sql"
-                                   "scripts/read-path/duckdb-budget.ts" "scripts/read-path/replace-dir.ts"
-                                   "src/extents.ts" "src/fold.ts")
+                                 '("scripts/read-path/derive/dwc.sql" "scripts/read-path/derive/extract.sql"
+                                   "scripts/read-path/derive/lookups.sql" "scripts/read-path/derive/maplify-collection.sql"
+                                   "scripts/read-path/derive/shared.sql")
                                  (list* SNAPSHOT-DB MIRRORS)))
    ;; Takes days, calendar, ids and the pages as inputs only for their ORDER: the
    ;; manifest must never claim a build whose files are not yet in place, and a
@@ -806,7 +748,7 @@
                          redirects.json sitemap.xml catalog-codes.json animal-names.json)
               #:outputs '(manifest.json)
               #:invoke (node-script/code "scripts/read-path/manifest.ts"
-                                 '("scripts/read-path/pacific-day.ts")
+                                 '()
                                  (list SNAPSHOT-DB)))))
 
 (define salishsea-graph (build-graph tasks artifacts))
