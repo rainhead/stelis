@@ -14,12 +14,14 @@
 # upstream URL, keeping the first whose bytes match the sha256; installs the
 # minimal distribution under --prefix (bin/racket, bin/raco, share/racket); installs
 # racket-deps.txt's packages at installation scope from the sources it pins, without
-# documentation; and runs scripts/preflight.sh against the result, so a host that
-# gets this far can load everything the engine requires.
+# documentation; converts what the catalog installed to native code
+# (scripts/native-code.rkt); and runs scripts/preflight.sh against the result, so a
+# host that gets this far can load everything the engine requires.
 #
 # Rerunning it is cheap: a prefix already holding this version, whose packages load,
-# is left alone. It installs a minimal Racket and manages only that prefix; it does
-# not touch a distribution the host installed some other way.
+# is left alone, apart from converting any code still machine-independent. It
+# installs a minimal Racket and manages only that prefix; it does not touch a
+# distribution the host installed some other way.
 #
 # Exit codes: 2 for a usage or platform problem, 1 for a download or install that
 # failed, 78 (EX_CONFIG, preflight's) when the install finished but the engine's
@@ -50,6 +52,7 @@ raco="$prefix/bin/raco"
 # --- 0. already done? ----------------------------------------------------------
 if [[ -x "$racket" ]] && [[ "$("$racket" --version 2>/dev/null)" == *"v$version "* ]] \
     && PATH="$prefix/bin:$PATH" bash "$SCRIPT_DIR/preflight.sh" > /dev/null 2>&1; then
+    "$racket" "$SCRIPT_DIR/native-code.rkt"
     echo "install-racket.sh: $prefix already holds Racket $version and every collection loads"
     exit 0
 fi
@@ -136,5 +139,13 @@ if (( ${#pinned[@]} > 0 )); then
     "$raco" pkg install --batch --no-docs --deps force --scope installation "${pinned[@]}"
 fi
 
-# --- 5. prove it ---------------------------------------------------------------
+# --- 5. native code ------------------------------------------------------------
+# A catalog package's built form is MACHINE-INDEPENDENT code, which Racket compiles
+# to machine code on every launch that loads it, and it carries no source or .dep
+# files for `raco setup` to recompile from (st-3un: ~1 s of each 1.5 s launch on
+# beeatlas's Fly Machine). Converted once here instead. The git-pinned packages
+# were compiled from source by `raco setup` and are native already.
+"$racket" "$SCRIPT_DIR/native-code.rkt"
+
+# --- 6. prove it ---------------------------------------------------------------
 PATH="$prefix/bin:$PATH" bash "$SCRIPT_DIR/preflight.sh"
