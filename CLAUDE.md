@@ -141,8 +141,13 @@ No build step — Racket compiles on demand.
   reach the fixed-path inputs — the sandbox, the seeds, committed content —
   because withholding those would mean mutating real files; this asks by
   OBSERVATION, so nothing is withheld. Exits non-zero on an undeclared read).
-- **Projects:** every mode takes `--project <name>` (`beeatlas`, the default, or
-  `salishsea`), placed before the target. Only the chosen project's module is
+- **Projects:** every mode takes `--project <name>` (`beeatlas`, the default,
+  `salishsea`, or `salishsea-ingest`), placed before the target. salishsea is TWO
+  projects from one authored task list (st-mxr.1.2, [ADR 0019](docs/adr/0019-one-state-dir-per-concurrent-build.md)):
+  `salishsea-ingest` is the four source ingests, `salishsea` everything from the
+  snapshot on, reading what the ingests wrote as `'upstream` leaves — because the
+  state dir is the engine's one-writer unit, a build that must run beside another
+  needs a state dir of its own, and so a graph of its own. Only the chosen project's module is
   loaded (st-5jg: beeatlas's closure is ~40 MB of resident code salishsea never
   uses); main.rkt's `compile-deps` submodule is what keeps `raco make src/main.rkt`
   compiling both, so don't remove it as dead. Each project has its own state dir, and
@@ -630,7 +635,9 @@ everything the CLI needs to build it — path resolver, runtimes, relation
 resolvers, build clock, checkout, default state dir, the databases it reads
 (`db-binding`: env var, fallback, and whether the fallback is refused). main.rkt is written against
 it, so a second graph is a second value, not a second CLI ·
-[`salishsea.rkt`](src/salishsea.rkt) the second project (st-ml9): salishsea.io's
+[`salishsea.rkt`](src/salishsea.rkt) salishsea's projects (st-ml9), both from one
+authored task list since st-mxr.1.2: `salishsea-ingest` (the four source ingests)
+and `salishsea` (the snapshot on), see the Projects bullet above — salishsea.io's
 logged-out reads as static files — and since salishsea's decision 061
 (salish-xv35, 2026-10) the ingest and the derivation too. Three `'boundary`
 tasks fetch the upstream sources themselves, each into a SQLite mirror on the
