@@ -90,6 +90,8 @@
   (cond
     [(eq? (trace-record-outcome r) 'skipped)
      (format "blocked by: ~a" (string-join (map ~a (trace-record-blockers r)) ", "))]
+    [(eq? (trace-record-outcome r) 'yielded)
+     "yielded to a waiting build; its caller reran this one"]
     [d (apply-rewrites (decision->string d) rewrites)]
     [else ""]))
 
@@ -230,8 +232,9 @@
            (html-escape (build-record-target br))
            (html-escape (let ([h (~a (build-record-graph-hash br))])
                           (if (> (string-length h) 12) (substring h 0 12) h))))
-   (format "<p class=\"sum\">✓ ~a ran · ≡ ~a cached · ✗ ~a failed · ⊘ ~a blocked~a</p>\n"
+   (format "<p class=\"sum\">✓ ~a ran · ≡ ~a cached · ✗ ~a failed · ⊘ ~a blocked~a~a</p>\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped)
+           (if (zero? (tally 'yielded)) "" (format " · ⏸ ~a yielded" (tally 'yielded)))
            (if (null? failed)
                ""
                (format " — <span class=\"o-failed\">failed: ~a</span>"
@@ -261,6 +264,7 @@ td.t{white-space:nowrap;font-weight:600}
 .o-cached{color:var(--muted)}
 .o-failed td.g,span.o-failed{color:var(--failed);font-weight:600}
 .o-skipped td.g{color:var(--skipped)}
+.o-yielded td.g{color:var(--skipped)}
 .src{font-size:.85rem}
 .src-err{color:var(--failed);font-weight:600}
 .pub-ok,.pub-no{font-size:.75rem;font-weight:600;padding:.1rem .45rem;border-radius:9px;vertical-align:middle}

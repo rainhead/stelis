@@ -31,6 +31,8 @@
                                          ("genus/Apis.svg"   . "h2"))))
                       '())
         (trace-record 'load   (decision 'skip 'cached '()) #f 'skipped '(xform) #f '() '() '())
+        ;; a task the build yielded before deciding (st-mxr.1.1): outcome alone carries it
+        (trace-record 'late   #f #f 'yielded '() #f '() '() '())
         (trace-record 'no-cache #f #f 'ok '() #f '((out . "o9")) '() '())
         ;; a probing boundary's source report (st-8bj) rides the optional 10th field
         (trace-record 'probe  (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()

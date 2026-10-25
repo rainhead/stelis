@@ -93,6 +93,31 @@
               (output-delta 'changed '(out))
               "the downstream rebuild changed its output too")
 
+;; --- yield (st-mxr.1.1, ADR 0018): a waiting build asks, the rest waits for a rerun
+
+;; `yield?' is asked before each task: #f before derive, #t before pack.
+(display-to-file "XY" raw-path #:exists 'replace)
+(define asked (box #f))
+(define b5
+  (parameterize ([current-output-port (open-output-nowhere)])
+    (define-values (status records)
+      (run-plan g '(derive pack) runtimes #:context benv
+                #:yield? (lambda () (begin0 (unbox asked) (set-box! asked #t)))))
+    (cons status records)))
+(check-equal? (status-of b5 'derive) 'ok "the task before the request ran")
+(check-equal? (status-of b5 'pack) 'yielded "the task at the request is yielded")
+(define yielded-rec (record-of b5 'pack))
+(check-false (trace-record-decision yielded-rec) "a yielded task was never decided")
+(check-equal? (trace-record-output-hashes yielded-rec) '() "…nor observed")
+(check-equal? (file->string out-path) "ZZ" "…nor run: pack's output is the previous build's")
+(check-equal? (file->string mid-path) "X" "derive's run before the request stands")
+
+;; the rerun picks up exactly where the yield left off: derive is current, pack owes
+(define b6 (build!))
+(check-equal? (status-of b6 'derive) 'cached "the rerun finds the pre-yield task current")
+(check-equal? (status-of b6 'pack) 'ok "…and runs the yielded one")
+(check-equal? (file->string out-path) "XX")
+
 ;; --- runtime identity probe (st-jkl) ------------------------------------------
 ;; The IO half: run a runtime's declared probe through its own launch prefix,
 ;; return the trimmed stdout, memoize per resolver. #f for no probe, an unknown

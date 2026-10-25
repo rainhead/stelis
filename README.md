@@ -77,6 +77,13 @@ tail without re-running ingestion:
 racket src/main.rkt --build --from generate-sqlite occurrences.db
 ```
 
+A build runs under a lock its caller holds, and a build that wants that lock can ask
+the running one to let go: create `<state-dir>/yield`, block on the lock, remove the
+file once the lock is held. The running build finishes the task it is on, records the
+rest as yielded, and exits 3, which tells its caller to take the lock again and rerun
+it ([ADR 0018](docs/adr/0018-a-build-yields-to-a-waiting-one.md)). The engine never
+takes the lock itself.
+
 Reading the annotations: `▶` runs (the reason says why — a named changed
 input, changed task code (the file named), a changed recipe, no cache entry,
 a missing output, or a boundary/

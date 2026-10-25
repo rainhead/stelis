@@ -375,8 +375,8 @@
 ;;            -> (values (hash symbol->symbol) (listof trace-record?))
 ;; Run tasks in the given (topological) order. A task whose in-plan producers all
 ;; succeeded runs; otherwise it is skipped (partial success). Returns each task's
-;; final status ('ok | 'failed | 'skipped), plus a trace-record per task in
-;; build order, for the build trace (st-yg7.4).
+;; final status ('ok | 'cached | 'failed | 'skipped | 'yielded), plus a trace-record
+;; per task in build order, for the build trace (st-yg7.4).
 ;; With a #:context build-env, a task whose decision verdict is 'skip (inputs
 ;; unchanged, outputs present) is SKIPPED as 'cached. Tasks whose inputs aren't
 ;; fully content-addressable always run — their decision says why.
@@ -398,17 +398,28 @@
 ;; (recorded-outputs-intact?), runs with STELIS_CHANGED_INPUTS naming the inputs
 ;; the decision named; any other reason to run — code, recipe, a missing or stale
 ;; output, no receipt — is a full recompute, and the task is told nothing.
+;; #:yield? is asked before each task's decision (st-mxr.1.1, ADR 0018): once it
+;; answers true, that task and every one after it is YIELDED — recorded with
+;; outcome 'yielded, no decision and no observation, nothing written — and the
+;; plan ends. Another build is waiting for the lock this one holds, and between
+;; two tasks is the one place it can be let go: every shared object (the snapshot
+;; database, a directory mid-swap, the receipts) is quiescent there. The caller
+;; owns the lock and reruns the yielded build afterwards; the engine only stops.
 (define (run-plan g ordered runtimes
                   #:env [extra-env '()]
                   #:context [env #f]
                   #:state-dir [state-dir #f]
                   #:rebuild-keys-of [rebuild-keys-of (lambda (_) #f)]
-                  #:incremental? [incremental? (lambda (_) #f)])
+                  #:incremental? [incremental? (lambda (_) #f)]
+                  #:yield? [yield? (lambda () #f)])
   (define status (make-hash))
   (define records '())
+  ;; sticky: once asked to yield, the rest of the plan is yielded without asking again
+  (define yielded? #f)
   (for ([name (in-list ordered)])
     (define t (hash-ref (graph-tasks g) name))
     (define blockers (blockers-of g name status))
+    (unless yielded? (set! yielded? (and (yield?) #t)))
     ;; Where this task's wall time went (build-timing): deciding whether it runs
     ;; (addressing its inputs), running it, and observing what it produced. Printed
     ;; with each task, so the build's own costs are visible beside its tasks'.
@@ -423,7 +434,7 @@
     ;; task is content-addressable, the snapshot to store after a clean run
     (define-values (dec snap)
       (timed! 'deciding
-              (lambda () (if env (decision+snapshot g name env) (values #f #f)))))
+              (lambda () (if (and env (not yielded?)) (decision+snapshot g name env) (values #f #f)))))
     (define delta #f)
     ;; the observation (st-sds): each derived output's content hash after a run,
     ;; recorded on the trace so history projects an artifact→hash timeline. '()
@@ -442,7 +453,7 @@
     ;; the previous entry, read BEFORE cache-store! overwrites it — the
     ;; comparison basis for the output delta. Read up front (cheap, and before
     ;; anything can run) so every producing arm shares one basis.
-    (define prior (and env (read-cache-entry (build-env-cache-dir env) name)))
+    (define prior (and env (not yielded?) (read-cache-entry (build-env-cache-dir env) name)))
     ;; observe-outputs! : -> void
     ;; The post-run bookkeeping every node that PRODUCED artifacts owes — whether
     ;; it shelled out or derived in-process (st-ozp). Hash the outputs at both
@@ -471,6 +482,9 @@
                    (string-join (map symbol->string (output-delta-details delta)) ", "))])))
     (define outcome
       (cond
+        [yielded?
+         (printf "\n⏸ ~a — yielded (another build is waiting for the lock)\n" name)
+         'yielded]
         [(pair? blockers)
          (printf "\n⊘ ~a — skipped (blocked by ~a)\n"
                  name (string-join (map symbol->string blockers) ", "))
@@ -618,7 +632,7 @@
          (when (and ok? env identity-ok?)
            (observe-outputs!))
          (if (and ok? identity-ok?) 'ok 'failed)]))
-    (printf "  ⏱ ~a\n" (timing->string timing))
+    (unless yielded? (printf "  ⏱ ~a\n" (timing->string timing)))
     ;; Stelis's own lines are block-buffered when the build's output is not a
     ;; terminal (a log), so a line would otherwise surface only when the next task
     ;; launches, stamped with that later time.

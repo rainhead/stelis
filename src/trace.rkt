@@ -37,7 +37,10 @@
 ;;   snapshot      : (or/c snapshot? #f) — the fingerprints behind it (this run's
 ;;                   BASIS: recipe + input hashes); #f when the task wasn't
 ;;                   content-addressable (or caching was off)
-;;   outcome       : 'ok | 'cached | 'failed | 'skipped
+;;   outcome       : 'ok | 'cached | 'failed | 'skipped | 'yielded
+;;                   'yielded (st-mxr.1.1): the build let go of the lock to a
+;;                   waiting build before this task was decided; nothing was run,
+;;                   observed or written, and the caller reruns the build
 ;;   blockers      : (listof symbol) — for 'skipped: the failed/skipped producers
 ;;   delta         : (or/c output-delta? #f) — for 'ok: how the rebuilt outputs
 ;;                   compare to the previous build's; #f when there was no basis
@@ -82,7 +85,7 @@
 
 ;; outcome-glyph : symbol -> string — the one legend for actual outcomes.
 (define (outcome-glyph o)
-  (case o [(ok) "✓"] [(cached) "≡"] [(failed) "✗"] [(skipped) "⊘"]))
+  (case o [(ok) "✓"] [(cached) "≡"] [(failed) "✗"] [(skipped) "⊘"] [(yielded) "⏸"]))
 
 ;; --- Record serialization -----------------------------------------------------
 ;; decisions, snapshots, and deltas are transparent structs — they don't `read'
