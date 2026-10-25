@@ -415,6 +415,7 @@
   (define status (make-hash))
   (define records '())
   ;; a build starts with no held dir observations: between builds anything may write
+  (note-build-start!)
   (reset-dir-observations!)
   ;; sticky: once asked to yield, the rest of the plan is yielded without asking again
   (define yielded? #f)

@@ -35,6 +35,10 @@
                   tmp (build-path tmp "cache")))
 (define (consumer-address e)
   (hash-ref (snapshot-input-hashes (input-snapshot g 'use (lambda (a) (env-resolve e a)))) 'out))
+(define (build-starts!)                      ; what run-plan does first
+  (note-build-start!)
+  (reset-dir-observations!))
+(build-starts!)
 
 ;; --- nobody in the build wrote it: every ask walks -----------------------------
 
@@ -71,9 +75,14 @@
 ;; --- a new build starts with no holds -----------------------------------------
 (write-a! (dir "one") "between builds")
 (check-equal? (artifact-key-parts 'out 'dir e1) (a-map "stray") "still held within the build")
-(reset-dir-observations!)                    ; what run-plan does first
+(build-starts!)
 (check-equal? (artifact-key-parts 'out 'dir e1) (a-map "between builds")
               "the next build sees what was written between builds")
+;; and, no task in THIS build having written it, it is not held either: the write
+;; generation alone would say "written", but that was last build's trust
+(write-a! (dir "one") "edited in the next build")
+(check-equal? (artifact-key-parts 'out 'dir e1) (a-map "edited in the next build")
+              "a dir written in an earlier build of this process is still walked")
 
 ;; --- a missing dir is never held ----------------------------------------------
 (define e3 (env-for (dir "later")))

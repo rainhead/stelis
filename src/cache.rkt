@@ -461,9 +461,12 @@
 ;; THIS build has written is held, and only until that artifact's write generation
 ;; moves again. A dir nobody in the build wrote is still whoever's — a hand edit, a
 ;; stray file — and is walked on every ask, which is what the stale-output check
-;; (st-243's tampered merge basis) is for. The holds are dropped when a build
-;; starts (run-plan calls reset-dir-observations!), since between builds anything
-;; may write. Keyed by the artifact, its on-disk path and its exclusions, not the
+;; (st-243's tampered merge basis) is for. "This build" is written.rkt's count of
+;; builds started in the process, not the write generation alone: a second build in
+;; one process (--verify, a test) must not inherit the first's trust. The holds are
+;; dropped when a build starts (run-plan calls reset-dir-observations! after
+;; note-build-start!), since between builds anything may write. Keyed by the
+;; artifact, its on-disk path and its exclusions, not the
 ;; name alone: --verify builds the same names into two export dirs, and the second
 ;; dir must be walked, not answered from the first.
 (define dir-observations (make-hash))   ; (list name path exclude) -> (cons generation pairs)
@@ -476,7 +479,7 @@
     [(and held (= (car held) gen)) (cdr held)]
     [else
      (define pairs (tree-hashes p #:exclude exclude))
-     (when (and pairs (positive? gen)) (hash-set! dir-observations key (cons gen pairs)))
+     (when (and pairs (written-this-build? a)) (hash-set! dir-observations key (cons gen pairs)))
      pairs]))
 
 (define (input-hash g in resolve resolve-relation resolve-store-keys cache-dir
