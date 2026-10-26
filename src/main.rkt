@@ -103,7 +103,7 @@
                        (mode 'mark-publish)
                        (mark-publish-args (list build epoch outcome stage path))]
    #:once-each
-   [("--project") proj "build PROJ's graph: a registered name (beeatlas | salishsea | salishsea-ingest; default beeatlas), or the path of a module that provides `project', a graph kept in its own repository (ADR 0020). Its build state is its own: a state dir holding another project's builds is refused"
+   [("--project") proj "build PROJ's graph: a registered name (beeatlas, the default), or the path of a module that provides `project', a graph kept in its own repository (ADR 0020; salishsea's are stelis/salishsea.rkt and stelis/salishsea-ingest.rkt in salishsea-io). Its build state is its own: a state dir holding another project's builds is refused"
                   (project-arg (if (regexp-match? #rx"[/\\]|[.]rkt$" proj)
                                    (path->complete-path (string->path proj))
                                    (string->symbol proj)))]
@@ -150,13 +150,11 @@
 ;; project modules: `raco make` follows static requires only, and a module loaded
 ;; by `dynamic-require' alone would be compiled in memory on every start instead
 ;; (measured: slower AND larger than loading both).
-(module compile-deps racket/base (require "beeatlas.rkt" "salishsea.rkt"))
+;; salishsea's two graphs left this registry for salishsea-io's stelis/ (ADR 0020,
+;; st-ty7): a project kept in its own repository is named by its module path below.
+(module compile-deps racket/base (require "beeatlas.rkt"))
 (define-runtime-module-path-index beeatlas-module "beeatlas.rkt")
-(define-runtime-module-path-index salishsea-module "salishsea.rkt")
-(define projects (hash 'beeatlas (cons beeatlas-module 'beeatlas-project)
-                      'salishsea (cons salishsea-module 'salishsea-project)
-                      ;; salishsea's ingests as their own graph and state dir (st-mxr.1.2)
-                      'salishsea-ingest (cons salishsea-module 'salishsea-ingest-project)))
+(define projects (hash 'beeatlas (cons beeatlas-module 'beeatlas-project)))
 ;; A project kept in its own repository (st-ab3, ADR 0020) is named by the path of
 ;; its module, which provides `project': a project value built against the engine
 ;; required by collection (stelis/model and the rest, scripts/link-collection.sh).

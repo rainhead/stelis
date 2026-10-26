@@ -141,22 +141,22 @@ No build step — Racket compiles on demand.
   reach the fixed-path inputs — the sandbox, the seeds, committed content —
   because withholding those would mean mutating real files; this asks by
   OBSERVATION, so nothing is withheld. Exits non-zero on an undeclared read).
-- **Projects:** every mode takes `--project <name>` (`beeatlas`, the default,
-  `salishsea`, or `salishsea-ingest`), placed before the target — or `--project
-  <path>` to a module that provides `project`, a graph kept in its own repository
-  and requiring the engine by collection (`stelis/model` and the rest; `src/info.rkt`
-  names the collection, `scripts/link-collection.sh` links it, st-ab3,
-  [ADR 0020](docs/adr/0020-a-projects-graph-lives-in-its-repo.md): salishsea's
-  graph moves to salishsea-io first, `salish-dhts`, then beeatlas's; a graph change
-  and the script change it names were two lockstep PRs in two repos). salishsea is TWO
-  projects from one authored task list (st-mxr.1.2, [ADR 0019](docs/adr/0019-one-state-dir-per-concurrent-build.md)):
-  `salishsea-ingest` is the four source ingests, `salishsea` everything from the
-  snapshot on, reading what the ingests wrote as `'upstream` leaves — because the
-  state dir is the engine's one-writer unit, a build that must run beside another
-  needs a state dir of its own, and so a graph of its own. Only the chosen project's module is
-  loaded (st-5jg: beeatlas's closure is ~40 MB of resident code salishsea never
-  uses); main.rkt's `compile-deps` submodule is what keeps `raco make src/main.rkt`
-  compiling both, so don't remove it as dead. Each project has its own state dir, and
+- **Projects:** every mode takes `--project <name>` (`beeatlas`, the default and the
+  one registered name left), placed before the target — or `--project <path>` to a
+  module that provides `project`, a graph kept in its own repository and requiring
+  the engine by collection (`stelis/model` and the rest; `src/info.rkt` names the
+  collection, `scripts/link-collection.sh` links it, st-ab3,
+  [ADR 0020](docs/adr/0020-a-projects-graph-lives-in-its-repo.md)). salishsea's two
+  graphs live that way in salishsea-io's `stelis/` since 2026-10-26 (st-ty7): a graph
+  change and the script change it names were two lockstep PRs in two repos. They are
+  two projects from one authored task list (st-mxr.1.2, [ADR 0019](docs/adr/0019-one-state-dir-per-concurrent-build.md)):
+  the ingests, and everything from the snapshot on reading what the ingests wrote as
+  `'upstream` leaves — because the state dir is the engine's one-writer unit, a build
+  that must run beside another needs a state dir of its own, and so a graph of its own.
+  beeatlas's graph follows when it next changes. Only the chosen project's module is
+  loaded (st-5jg: beeatlas's closure is ~40 MB of resident code a smaller project
+  never uses); main.rkt's `compile-deps` submodule is what keeps `raco make src/main.rkt`
+  compiling the registered graphs, so don't remove it as dead. Each project has its own state dir, and
   build records name their project: a state dir holding another project's builds
   is refused rather than read across (st-z1c). salishsea's state defaults into its
   own checkout; beeatlas's stays cwd-relative `.stelis` (st-7f4).
@@ -335,7 +335,7 @@ a keyed store has — IN PLACE of its per-column parts (cache.rkt's
 Pacific day, and `occurrence-days` a partial task writing only the moved days.
 A key is also what lets key-blame recurse into a relation, so every relation
 salishsea's profile pages read is keyed by the subject its rows describe (st-wn4,
-`salishsea-keys-test.rkt`): `--history individual-pages:<id>.html` names the
+`salishsea-keys-test.rkt`, in salishsea-io's `stelis/` since st-ty7): `--history individual-pages:<id>.html` names the
 individuals, designations or sightings whose rows moved, not only the relation.
 The first keyed observation of a relation is diffed against its last per-column
 one, so after declaring a key, delete its producer's cache entry and let one build
@@ -655,73 +655,15 @@ everything the CLI needs to build it — path resolver, runtimes, relation
 resolvers, build clock, checkout, default state dir, the databases it reads
 (`db-binding`: env var, fallback, and whether the fallback is refused). main.rkt is written against
 it, so a second graph is a second value, not a second CLI ·
-[`salishsea.rkt`](src/salishsea.rkt) salishsea's projects (st-ml9), both from one
-authored task list since st-mxr.1.2: `salishsea-ingest` (the four source ingests)
-and `salishsea` (the snapshot on), see the Projects bullet above — salishsea.io's
-logged-out reads as static files — and since salishsea's decision 061
-(salish-xv35, 2026-10) the ingest and the derivation too. Three `'boundary`
-tasks fetch the upstream sources themselves, each into a SQLite mirror on the
-volume holding ONLY what the source said (Maplify over a 30-day window plus one
-sampled older month; iNaturalist by `updated_since` plus a reconciled window;
-Orcasound whole), each writing its boundary receipt — including the
-`unreachable` arm, so an outage never reads as a quiet day. A fourth boundary
-snapshots what Postgres still holds (native sightings, the register, the
-catalogue, and its own Maplify copy while that ingest runs)
-into a local DuckDB file (rows serialized by Postgres's `to_jsonb`, PostgREST's
-own serializer, so the files match what the frontend parses). `derive-occurrences`
-and `derive-profile-links` are DuckDB twins of Postgres's views over the mirrors
-and the snapshot, writing `build.*` relations into the snapshot file; every
-published file reads those. Before the derivation sits the `maplify-names`
-gate: a register edition that un-names a Maplify sighting would silently drop
-it from the map, so the gate judges this build's resolution against a baseline
-checked into salishsea's `data/maplify-names.json` (decision 083) — a
-producerless `'authoritative` input like the allow-list — and on a pass writes
-what the baseline should become as a derived report, served at
-`/status/maplify-names.json`, which a pull request copies back over the
-baseline. Until 083 the gate wrote the baseline beside the mirrors: the one
-state the build owned that could not be regenerated. `dwca` writes the Darwin Core archive from twins of the
-`dwc` views. The reference tables — providers, organizations,
-collections, Maplify's collection rules, the enum orders — are not read from Postgres:
-they are checked-in files under salishsea's `data/reference/`, producerless
-`'authoritative` inputs that a `reference` task loads into the snapshot file under the
-same names (salishsea decision 064, the first move of its step 4). The register
-too: an `ingest-register` boundary fetches its newest release each build (one
-redirect probe; a download only when the tag moved), writes `register.*` into the
-snapshot file, and refuses an edition that would un-name a Maplify pair the held
-edition names — the build keeps what it holds and the run log says why. And the
-catalogue's three views over the register (`group_parents`, `matriline_members`,
-`animal_names`) are a `derive-catalogue` transform's, written under the snapshot's
-names the pages read (salish-9uu.2.3); and the catalogue's own tables are
-checked-in files under salishsea's `data/catalogue/`, loaded by a `catalogue` task
-that computes what Postgres derived (folded codes; each individual's vitals from
-`register.vitals` and `register.current_status`). Happywhale is out of the build
-(salish-zclv, 2026-10-21): its frozen tables lived in a file on the volume that no
-source could serve again, so they wait for a live feed (salish-v5s) rather than ride
-as a dead arm. The snapshot now reads only what users write. A transform writes one file per Pacific day. The snapshot reruns
-every build; an unchanged database digests the same, and early cutoff skips
-the rest. It also records when it was
-taken (`snapshot-meta`, its own relation so the occurrences' digest holds still),
-and a `manifest` task writes `manifest.json` from that AFTER the day files and the
-calendar's month files (`calendar`, per-region day counts; its code includes
-salishsea's `src/constants.ts` and `src/extents.ts`, the map's own region boxes)
-and the id index (`ids`, id → day in 256 shards by a hash salishsea's browser code
-shares, so a `?o=` link opens without a query) and the profile pages
-(`individual-pages`, `matriline-pages`, `ecotype-pages`, `haulout-pages`, salishsea decision 057:
-prerendered HTML, one task per kind reading only its own catalogue relations, with
-the Vite-built shell and Vite's manifest hashed as code because the site build that
-writes `dist/` is outside the graph; each node task's code is its script's import
-closure, computed by `ts-imports.rkt` since hand-kept lists drifted both ways — a
-deleted `src/supabase.ts` kept eight tasks from ever skipping for sixteen days —
-and `salishsea-checkout-test.rkt` fails when a recipe names a file the checkout
-does not have) and `profile-index` (`redirects.json`, folded
-designation → canonical page, which a redirect server on Fly answers legacy links
-from, `sitemap.xml`, and `animal-names.json`, the register's names the report
-form reads now that the map asks no database; no snapshot-meta input, so it
-cuts off) —
-every export an input for order only — so the frontend can tell a quiet day from one
-no build has reached. Scripts live in salishsea's
-`scripts/read-path/`; `SALISHSEA_DIR` relocates the checkout and
-`SALISHSEA_SNAPSHOT_DB` the snapshot (on Fly, onto the volume) ·
+salishsea's two graphs are NOT here any more (ADR 0020, st-ty7): they live in
+salishsea-io as `stelis/salishsea.rkt` (the snapshot on: the derive graph) and
+`stelis/salishsea-ingest.rkt` (the four source ingests), beside the scripts they name,
+requiring this engine as the `stelis` collection and loaded by `--project <path>`; their
+four tests run in salishsea's CI inside the pinned Stelis image and in its Fly image
+build. What they declare and why — the mirrors, the register's own DuckDB file, the
+snapshot boundary, the keyed days, the pages' subject keys — is documented there and in
+salishsea's decisions 056–092; the engine features they exercise are described above by
+the module that provides each ·
 [`main.rkt`](src/main.rkt) CLI · `src/*-test.rkt` tests ·
 [`docs/adr/`](docs/adr/) decisions.
 
