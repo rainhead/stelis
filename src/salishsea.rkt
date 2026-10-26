@@ -118,6 +118,13 @@
 (define orcasound-mirror (build-path mirror-dir "orcasound.sqlite"))
 (define maplify-mirror (build-path mirror-dir "maplify.sqlite"))
 (define inaturalist-mirror (build-path mirror-dir "inaturalist.sqlite"))
+;; The register (salishsea decision 064), beside the mirrors since salish-vedj: a DuckDB
+;; file of its own that ingest-register writes beside and renames over, so a build that
+;; reads it never opens a file being written, and no ingest needs the snapshot file,
+;; which one process at a time may hold for writing. Attached as `register', its tables
+;; keep the names they had as a schema of the snapshot (register.entities and the rest).
+(define register-db (build-path mirror-dir "register.duckdb"))
+(define REGISTER-DB (path->string register-db))
 
 ;; --- Runtime ----------------------------------------------------------------
 ;; salishsea pins node in .nvmrc, and nothing about `node' on PATH carries that
@@ -228,8 +235,8 @@
     "public.identifications"))
 
 ;; The register (salishsea decision 064, salish-9uu.2.2): fetched by the build from its
-;; newest release, as the three sources are, and written into the snapshot database under
-;; the names Postgres's copy had, so the derivation reads it unchanged. `register.edition'
+;; newest release, as the three sources are, and written into its own file (register-db)
+;; under the names Postgres's copy had, so the derivation reads it unchanged. `register.edition'
 ;; says which release; nothing reads it but a person asking.
 (define register-tables
   '("register.entities" "register.names" "register.mappings"
@@ -604,8 +611,11 @@
               #:outputs (cons 'register.edition register-relations)
               #:invoke (node-script/code "scripts/read-path/ingest-register.ts"
                                  '()
-                                 (list SNAPSHOT-DB (path->string maplify-mirror)
-                                       "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
+                                 (list REGISTER-DB (path->string maplify-mirror)
+                                       "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv"))
+                                       ;; where the register lived before salish-vedj: its
+                                       ;; copy there is dropped once the file is written
+                                       "--retire-from" SNAPSHOT-DB)))
    (make-task 'maplify-names 'gate
               #:inputs '(maplify_mirror.sightings register.entities register.names
                          register.ancestor register.deprecations maplify-names.json maplify-unnamed.tsv)
@@ -720,7 +730,7 @@
               #:outputs inaturalist-relations
               #:invoke (node-script/code "scripts/read-path/ingest-inaturalist.ts"
                                  '()
-                                 (list (path->string inaturalist-mirror) "--register" SNAPSHOT-DB)))
+                                 (list (path->string inaturalist-mirror) "--register" REGISTER-DB)))
    ;; The Darwin Core archive (salish-xv35.9), which a nightly workflow built from
    ;; Postgres's dwc views until Postgres stopped ingesting Maplify. derive/dwc.sql's
    ;; twins of those views, over the same lookups and Maplify resolution the occurrences
@@ -770,10 +780,11 @@
 ;; content (st-mxr.1.3). One authored task list, partitioned, so a task cannot
 ;; belong to neither graph or to both.
 ;;
-;; Until the register leaves the snapshot file (salish-vedj), the two graphs still
-;; share that file through ingest-register and ingest-inaturalist, so their builds
-;; must still be serialized; the split makes two state dirs possible, not two
-;; builds at once.
+;; The register has left the snapshot file for its own (register-db, salish-vedj), so
+;; no ingest reads or writes the snapshot, except that ingest-register drops the
+;; register's old copy from it once (--retire-from). The builds stay serialized until
+;; that flag is gone and two overlapping builds are measured (salishsea's
+;; salish-uh0y); the split makes two state dirs possible, not two builds at once.
 (define ingest-task-names '(ingest-maplify ingest-orcasound ingest-inaturalist ingest-register))
 (define (ingest-task? t) (memq (task-name t) ingest-task-names))
 (define ingest-tasks (filter ingest-task? tasks))
@@ -856,12 +867,15 @@
           (list (string-append "snapshot." table)))])]))
 
 ;; The database a relation lives in: a mirror's SQLite file, attached under its source's
-;; name (relation-digest's sqlite-db), or the snapshot. #f when the file isn't there yet.
+;; name (relation-digest's sqlite-db), the register's DuckDB file attached as `register'
+;; (duckdb-db), or the snapshot. #f when the file isn't there yet.
 (define (relation-db artifact)
   (cond
     [(memq artifact orcasound-relations) (sqlite-db orcasound-mirror "orcasound")]
     [(memq artifact maplify-relations) (sqlite-db maplify-mirror "maplify_mirror")]
     [(memq artifact inaturalist-relations) (sqlite-db inaturalist-mirror "inaturalist_mirror")]
+    [(or (memq artifact register-relations) (eq? artifact 'register.edition))
+     (duckdb-db register-db "register")]
     [(file-exists? snapshot-db) snapshot-db]
     [else #f]))
 ;; A relation's digest and its per-column parts, for every relation of a database in
@@ -1039,6 +1053,6 @@
                 #:default-state-dir (in-checkout ".stelis-ingest")
                 #:history-retention (* 30 24 60 60)
                 #:build-log-after-build? #f
-                ;; ingest-register writes the register into the snapshot file, and
-                ;; ingest-inaturalist reads the mappings from it, until salish-vedj
+                ;; only for ingest-register's --retire-from (salish-vedj), which drops
+                ;; the register's old copy from the snapshot file once
                 #:databases (list snapshot-db-binding)))

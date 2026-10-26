@@ -58,28 +58,40 @@
          make-relation-observer
          observe-tables ; for its tests: the observer falls back silently when it fails
          relation-memo-dir
-         (struct-out sqlite-db))
+         (struct-out attached-db)
+         sqlite-db
+         duckdb-db)
 
-;; A relation's database: a DuckDB file (a path, as always), or a SQLite file (sqlite-db),
-;; attached read-only under `alias' so its tables are named "<alias>.<table>" exactly as a
-;; DuckDB file's "<schema>.<table>" are. A SQLite file's bytes move when its rows don't
-;; (page layout, free lists), so a mirror written by a task is addressed by its rows, the
-;; same row-coherent digest as any relation, never by the file (salishsea decision 061:
-;; each upstream source's mirror is a SQLite file a boundary task writes, st-ml9.3).
-(struct sqlite-db (path alias) #:transparent)
+;; A relation's database: a DuckDB file (a path, as always), or a file attached
+;; read-only under `alias' (attached-db) so its tables are named "<alias>.<table>"
+;; exactly as a DuckDB file's "<schema>.<table>" are. A SQLite file is attached so
+;; (sqlite-db): its bytes move when its rows don't (page layout, free lists), so a mirror
+;; written by a task is addressed by its rows, the same row-coherent digest as any
+;; relation, never by the file (salishsea decision 061: each upstream source's mirror
+;; is a SQLite file a boundary task writes, st-ml9.3). A DuckDB file is attached so too
+;; (duckdb-db) when its tables are named by the file rather than by a schema in it:
+;; salishsea's register, which a boundary writes beside the mirrors and replaces whole,
+;; so a build reading it beside the ingest build never opens a file being written
+;; (salish-vedj, st-mxr.1).
+(struct attached-db (path alias type) #:transparent)
+(define (sqlite-db path alias) (attached-db path alias 'sqlite))
+(define (duckdb-db path alias) (attached-db path alias 'duckdb))
 
-;; query-db : (or/c path-string sqlite-db) string -> (or/c string #f)
-;; duckdb-query over either kind of database: a SQLite file is attached into a transient
-;; in-memory DuckDB first. A missing file is #f, as a missing DuckDB file already is.
+;; query-db : (or/c path-string attached-db) string -> (or/c string #f)
+;; duckdb-query over either kind of database: an attached file is attached into a
+;; transient in-memory DuckDB first. A missing file is #f, as a missing DuckDB file
+;; already is.
 (define (query-db db sql)
   (cond
-    [(sqlite-db? db)
-     (define file (sqlite-db-path db))
+    [(attached-db? db)
+     (define file (attached-db-path db))
      (and (file-exists? file)
-          (regexp-match? sql-identifier? (sqlite-db-alias db))
+          (regexp-match? sql-identifier? (attached-db-alias db))
           (duckdb-query #f (string-append
                             "ATTACH '" (string-replace (if (path? file) (path->string file) file) "'" "''")
-                            "' AS " (sqlite-db-alias db) " (TYPE sqlite, READ_ONLY);\n" sql)))]
+                            "' AS " (attached-db-alias db)
+                            (if (eq? 'sqlite (attached-db-type db)) " (TYPE sqlite, READ_ONLY)" " (READ_ONLY)")
+                            ";\n" sql)))]
     [else (duckdb-query db sql)]))
 
 ;; A qualified table name we are willing to interpolate into SQL (duckdb.rkt's
@@ -136,7 +148,7 @@
 ;; The key is `coalesce(k::VARCHAR, '')`: a NULL key is not a file name, and the
 ;; identity check reports the orphan rather than this failing to read.
 
-;; relation-keys : (or/c path-string sqlite-db) string string
+;; relation-keys : (or/c path-string attached-db) string string
 ;;   -> (or/c (listof (cons string string)) #f)
 ;; Sorted ("<key>" -> "<digest>:<count>") pairs over `qualified' grouped by
 ;; `key-expr', or #f when the relation can't be read.
@@ -239,9 +251,9 @@
   (define parts (string-split qualified "."))
   (define schema (car parts))
   (define table (cadr parts))
-  ;; An attached SQLite file is a catalog whose tables sit in its `main' schema.
+  ;; An attached file is a catalog whose tables sit in its `main' schema.
   (define where
-    (if (sqlite-db? db)
+    (if (attached-db? db)
         (string-append "table_catalog = '" schema "' AND table_schema = 'main'")
         (string-append "table_schema = '" schema "'")))
   (define sql
@@ -307,12 +319,12 @@
 ;; "<table>|<column>" for every column of every table, in table-columns' order.
 (define (batch-columns-query db tables)
   (define qualified
-    (if (sqlite-db? db)
+    (if (attached-db? db)
         "table_catalog || '.' || table_name"
         "table_schema || '.' || table_name"))
   (string-append
    "SELECT " qualified ", column_name FROM information_schema.columns WHERE "
-   (if (sqlite-db? db) "table_schema = 'main' AND " "")
+   (if (attached-db? db) "table_schema = 'main' AND " "")
    qualified " IN ("
    (string-join (for/list ([t (in-list tables)]) (string-append "'" t "'")) ", ")
    ") ORDER BY 1, column_name;"))
@@ -405,16 +417,18 @@
            (cons (cons (string-append t ".*") (table-obs-rows o)) (table-obs-columns o))))
         string<? #:key car))
 
-;; --- Remembering a SQLite file's observations (st-mxr) --------------------------
+;; --- Remembering an attached file's observations (st-mxr) ----------------------
 ;; A SQLite mirror whose bytes are the ones last observed holds the same rows, so its
-;; tables' observations are the ones taken then. Hashing the bytes is far cheaper than
+;; tables' observations are the ones taken then, and so does an attached DuckDB file
+;; (salishsea's register). Hashing the bytes is far cheaper than
 ;; DuckDB scanning the rows: on salishsea's Fly machine, 179 ms against 3.25 s for the
 ;; 100 MB iNaturalist mirror, which every save-scoped build digested afresh though only
 ;; the ingests write it and a save's build runs none of them. Nothing here changes an
 ;; answer: an observation is a function of the bytes, and this caches it by them.
 ;;
-;; The key is the file's sha1 and, when there is one, its -wal file's: committed rows
-;; can sit in the WAL while the main file holds still (the notes store's lesson,
+;; The key is the file's sha1 and, when there is one, its write-ahead log's (SQLite's
+;; -wal file, DuckDB's .wal): committed rows can sit in the log while the main file
+;; holds still (the notes store's lesson,
 ;; notes-digest.rkt). One entry per database, overwritten on a miss, so the memo never
 ;; grows. On a miss the bytes are hashed again after the scan, and the entry is stored
 ;; only if they still match: a writer between the hash and the scan would otherwise
@@ -424,9 +438,10 @@
 ;; with no directory, nothing is remembered.
 (define relation-memo-dir (make-parameter #f))
 
-(define (sqlite-content-key db)
-  (define f (sqlite-db-path db))
-  (define wal (string-append (if (path? f) (path->string f) f) "-wal"))
+(define (attached-content-key db)
+  (define f (attached-db-path db))
+  (define wal (string-append (if (path? f) (path->string f) f)
+                             (if (eq? 'sqlite (attached-db-type db)) "-wal" ".wal")))
   (with-handlers ([exn:fail:filesystem? (lambda (_) #f)])
     (and (file-exists? f)
          (string-append (call-with-input-file f sha1)
@@ -436,7 +451,7 @@
 
 (define (memo-file db)
   (define dir (relation-memo-dir))
-  (and dir (build-path dir (string-append (sqlite-db-alias db) ".rktd"))))
+  (and dir (build-path dir (string-append (attached-db-alias db) ".rktd"))))
 
 ;; the entry: (list key (list table digest rows ((part . value) ...)) or (list table 'absent) ...)
 (define (read-memo file key)
@@ -462,17 +477,17 @@
                            (list t (table-obs-digest o) (table-obs-rows o) (table-obs-columns o)))))
                out)))))
 
-;; observe-tables/memo : like observe-tables, remembering a SQLite file's answers
+;; observe-tables/memo : like observe-tables, remembering an attached file's answers
 (define (observe-tables/memo db tables)
-  (define file (and (sqlite-db? db) (memo-file db)))
-  (define key (and file (sqlite-content-key db)))
+  (define file (and (attached-db? db) (memo-file db)))
+  (define key (and file (attached-content-key db)))
   (define held (and key (read-memo file key)))
   (cond
     [(and held (for/and ([t (in-list tables)]) (hash-has-key? held t)))
      (for/hash ([t (in-list tables)]) (values t (hash-ref held t)))]
     [else
      (define result (observe-tables db tables))
-     (when (and result key (equal? key (sqlite-content-key db)))
+     (when (and result key (equal? key (attached-content-key db)))
        ;; the same bytes: keep what was held for other tables too
        (write-memo! file key (if held
                                  (for/fold ([h held]) ([(t o) (in-hash result)]) (hash-set h t o))
