@@ -869,7 +869,10 @@
 
 ;; a recorded output is present if it exists as a file OR a directory ('dir
 ;; outputs, st-cly, resolve to a directory that file-exists? would miss).
+;; Names the paths as STRINGS: a decision's details are written into the history
+;; line, and a path object writes as `#<path:...>`, which `read` refuses — every
+;; nightly on beeatlas's Fly machine wrote an unreadable record this way (st-abp).
 (define (missing output-paths)
   (for/list ([p (in-list output-paths)]
              #:unless (or (file-exists? p) (directory-exists? p)))
-    p))
+    (if (path? p) (path->string p) p)))

@@ -206,8 +206,8 @@
 (display-to-file "a,b\n1,2\n" raw-path #:exists 'replace)
 (delete-file out-path)
 (check-equal? (task-decision g 'xform env)
-              (decision 'run 'output-missing (list out-path))
-              "inputs unchanged but the output is gone")
+              (decision 'run 'output-missing (list (path->string out-path)))
+              "inputs unchanged but the output is gone (named as a string: the detail is written to the history, st-abp)")
 (display-to-file "db-bytes" out-path)
 
 ;; --- an output MUTATED on disk, not lost (st-zh2) -----------------------------
@@ -536,7 +536,7 @@
 ;; lose the whole directory: output-missing names the dir path, not a file
 (delete-directory/files dir-out)
 (check-equal? (task-decision gdir 'render dir-env)
-              (decision 'run 'output-missing (list dir-out))
+              (decision 'run 'output-missing (list (path->string dir-out)))
               "a 'dir output gone entirely -> run, output-missing")
 
 ;; --- a keyed 'file store input: addressed by key digests, NOT bytes (st-2k9) --

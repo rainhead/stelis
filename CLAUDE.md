@@ -446,7 +446,11 @@ each keyed artifact's latest earlier map, the build log's basis), the newest N
 points of a per-key timeline (`#:last`, two for `--moved-keys`, one for a gate's
 baseline) — or folds over it one build at a time (`history-fold`, `history-key-fold`;
 `--history` and `--history <artifact>` print as they go). The one whole-timeline
-reader left is key-blame's. salishsea also skips the build-log render after each
+reader left is key-blame's. An append READS ITS OWN LINE BACK first and fails the build
+on a value `write` prints but `read` refuses (st-abp: a path object in a decision's
+details wrote `#<path:…>`, every reader skipped the nightly's record as corrupt, and
+`--last-build` named the build before it, so beeatlas's receipt landed wrong; decision
+details are strings now). salishsea also skips the build-log render after each
 build (`#:build-log-after-build? #f`; nothing publishes it, `--render-log` draws it). The count dropped is a header line, so every survivor keeps its NUMBER
 (`build-record-number`; publish receipts join on number + epoch), and answers that
 reach the horizon say where the record starts ·

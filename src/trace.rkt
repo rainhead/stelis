@@ -93,8 +93,14 @@
 ;; wraps a build's records in its own versioned envelope; the record datum
 ;; itself carries no version (the envelope's does).
 
+;; A detail that is a path is written as its string: `write` prints a path object as
+;; `#<path:...>`, which no reader accepts, and a record is only as good as its
+;; round trip (st-abp). Every arm that names a path already names a string; this is
+;; the net under them.
 (define (decision->datum d)
-  (and d (list (decision-verdict d) (decision-reason d) (decision-details d))))
+  (and d (list (decision-verdict d) (decision-reason d)
+               (for/list ([x (in-list (decision-details d))])
+                 (if (path? x) (path->string x) x)))))
 (define (datum->decision v)
   (and (list? v) (= 3 (length v)) (decision (car v) (cadr v) (caddr v))))
 
