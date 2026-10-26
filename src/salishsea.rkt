@@ -614,10 +614,7 @@
               #:invoke (node-script/code "scripts/read-path/ingest-register.ts"
                                  '()
                                  (list REGISTER-DB (path->string maplify-mirror)
-                                       "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv"))
-                                       ;; where the register lived before salish-vedj: its
-                                       ;; copy there is dropped once the file is written
-                                       "--retire-from" SNAPSHOT-DB)))
+                                       "--allow" (path->string (build-path SALISHSEA "data" "maplify-unnamed.tsv")))))
    (make-task 'maplify-names 'gate
               #:inputs '(maplify_mirror.sightings register.entities register.names
                          register.ancestor register.deprecations maplify-names.json maplify-unnamed.tsv)
@@ -782,11 +779,9 @@
 ;; content (st-mxr.1.3). One authored task list, partitioned, so a task cannot
 ;; belong to neither graph or to both.
 ;;
-;; The register has left the snapshot file for its own (register-db, salish-vedj), so
-;; no ingest reads or writes the snapshot, except that ingest-register drops the
-;; register's old copy from it once (--retire-from). The builds stay serialized until
-;; that flag is gone and two overlapping builds are measured (salishsea's
-;; salish-uh0y); the split makes two state dirs possible, not two builds at once.
+;; The register has its own file (register-db, salish-vedj), so no ingest opens the
+;; snapshot file, and salishsea runs the ingest graph outside the lock the derive
+;; graph builds under (salish-uh0y): a save's build never waits for an ingest.
 (define ingest-task-names '(ingest-maplify ingest-orcasound ingest-inaturalist ingest-register))
 (define (ingest-task? t) (memq (task-name t) ingest-task-names))
 (define ingest-tasks (filter ingest-task? tasks))
@@ -1054,7 +1049,5 @@
                 #:checkout-env "SALISHSEA_DIR"
                 #:default-state-dir (in-checkout ".stelis-ingest")
                 #:history-retention (* 30 24 60 60)
-                #:build-log-after-build? #f
-                ;; only for ingest-register's --retire-from (salish-vedj), which drops
-                ;; the register's old copy from the snapshot file once
-                #:databases (list snapshot-db-binding)))
+                ;; no database: no ingest opens the snapshot file (salish-vedj)
+                #:build-log-after-build? #f))
