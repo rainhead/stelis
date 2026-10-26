@@ -289,3 +289,14 @@
 (let-values ([(dir _name _must-be-dir?) (split-path salishsea-snapshot-db)])
   (check-equal? salishsea-register-db (build-path dir "mirrors" "register.duckdb")
                 "the register file is mirrors/register.duckdb beside the snapshot"))
+
+;; No ingest is handed the snapshot file (salish-uh0y): salishsea runs the ingest graph
+;; outside the lock the derive graph builds under, and DuckDB lets one process open the
+;; snapshot for writing with nobody else opening it meanwhile, so an ingest that opened
+;; it would fail, or make a derive task fail, whenever the two builds overlap.
+(for ([(name t) (in-hash (graph-tasks salishsea-ingest-graph))])
+  (define inv (task-invoke t))
+  (check-false (and (recipe? inv)
+                    (member (path->string salishsea-snapshot-db)
+                            (map (lambda (a) (if (path? a) (path->string a) a)) (recipe-args inv))))
+               (format "~a is not handed the snapshot file" name)))
