@@ -162,6 +162,27 @@
    (test-false "no file: unresolvable, as a missing DuckDB file is"
                (relation-digest (sqlite-db (build-path tmp "absent.sqlite") "orcasound") '("orcasound.bouts")))
 
+   ;; --- A DuckDB file attached under an alias (duckdb-db), as salishsea's register is ---
+   ;; Its tables sit in `main' and are named by the alias, as a SQLite mirror's are; the
+   ;; same rows digest the same as they do in the SQLite file, so the two kinds agree.
+   (define (duck! file rows)
+     (when (file-exists? file) (delete-file file))
+     (ddl! file (string-append
+                 "CREATE TABLE bouts (id TEXT PRIMARY KEY, title TEXT, lon DOUBLE);"
+                 "INSERT INTO bouts VALUES " rows ";")))
+   (define dk (build-path tmp "register.duckdb"))
+   (duck! dk "('b1', 'J pod', -122.5), ('b2', NULL, -123.25)")
+   (define duck-digest (relation-digest (duckdb-db dk "register") '("register.bouts")))
+   (test-true "an attached DuckDB relation digests" (string? duck-digest))
+   (duck! dk "('b2', NULL, -123.25), ('b1', 'J pod', -122.5)")
+   (test-equal? "the same rows in a fresh DuckDB file, another order: the same digest"
+                (relation-digest (duckdb-db dk "register") '("register.bouts")) duck-digest)
+   (test-equal? "its columns, named by the alias"
+                (map car (relation-columns (duckdb-db dk "register") '("register.bouts")))
+                '("register.bouts.*" "register.bouts.id" "register.bouts.lon" "register.bouts.title"))
+   (test-false "no file: unresolvable"
+               (relation-digest (duckdb-db (build-path tmp "absent.duckdb") "register") '("register.bouts")))
+
    ;; --- The batched observer (st-ml9.6) ----------------------------------------
    ;; The same answers the one-relation functions give — byte for byte, so recorded
    ;; history stays comparable — for every relation of a database at once, held until
