@@ -133,4 +133,16 @@
               (output-delta 'identical '(raw))
               "a boundary rerun to identical content still gets a cutoff receipt")
 
+;; --- a path in a decision's details is written as its string (st-abp) ---------
+;; `write' prints a path object as #<path:...>, which no reader takes; beeatlas's
+;; nightlies wrote three such records before this net existed.
+(define path-rec
+  (trace-record 'd (decision 'run 'output-missing (list (string->path "/x/out.csv")))
+                #f 'ok '() #f '() '() '()))
+(define path-datum (trace-record->datum path-rec))
+(check-equal? (decision-details (trace-record-decision (datum->trace-record path-datum)))
+              '("/x/out.csv"))
+(check-true (list? (read (open-input-string (format "~s" path-datum))))
+            "…so the datum reads back")
+
 (delete-directory/files tmp)

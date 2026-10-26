@@ -465,3 +465,22 @@
   (check-equal? (history-foreign-projects lt 'salishsea) '(beeatlas) "the oldest build is beeatlas's")
   (check-equal? (history-foreign-projects lt 'beeatlas) '(salishsea) "the newest is salishsea's")
   (delete-directory/files lt))
+
+;; --- an unreadable record is refused, not appended (st-abp) -------------------
+;; A value `write' prints but `read' refuses would be skipped by every reader as a
+;; corrupt build, and --last-build would then name the build before it. The append
+;; reads its own line back first and fails the build instead.
+(let ([ud (make-temporary-file "stelis-history-unreadable-~a" 'directory)])
+  (history-append! ud 'mid g "1" build1)
+  (check-exn #rx"would not read back"
+             (lambda ()
+               (history-append! ud 'mid g "2"
+                                (list (trace-record 'bad (decision 'run 'output-missing (list (void)))
+                                                    #f 'ok '() #f '() '() '())))))
+  (check-equal? (build-record-number (history-last ud)) 1 "nothing was appended")
+  ;; a path, the case that bit beeatlas, is written as its string and reads back
+  (history-append! ud 'mid g "3"
+                   (list (trace-record 'd (decision 'run 'output-missing (list (string->path "/x/out.csv")))
+                                       #f 'ok '() #f '() '() '())))
+  (check-equal? (build-record-number (history-last ud)) 2)
+  (delete-directory/files ud))

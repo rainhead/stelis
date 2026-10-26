@@ -295,11 +295,14 @@
   (define h (block-put! state-dir (graph->drisl g)))
   (make-directory* state-dir)
   (define number (add1 (or (history-last-number state-dir) (history-pruned-count state-dir))))
-  (call-with-output-file (history-file state-dir) #:exists 'append
-    (lambda (o)
-      ;; one build per line: `write' emits no interior newlines for these
-      ;; symbol/string/list values, so line-oriented reading can skip a single
-      ;; corrupt build without losing the rest.
+  (define record-data
+    (for/list ([r (in-list records)])
+      (externalize-keyed state-dir (trace-record->datum r))))
+  ;; one build per line: `write' emits no interior newlines for these
+  ;; symbol/string/list values, so line-oriented reading can skip a single
+  ;; corrupt build without losing the rest.
+  (define line
+    (let ([o (open-output-string)])
       (write (hash 'version HISTORY-VERSION
                    'project project
                    'number number
@@ -307,9 +310,27 @@
                    'graph-hash h
                    'epoch epoch
                    'recorded-at recorded-at
-                   'records (for/list ([r (in-list records)])
-                              (externalize-keyed state-dir (trace-record->datum r))))
+                   'records record-data)
              o)
+      (get-output-string o)))
+  ;; The line must read back before it is appended (st-abp): a value `write' can
+  ;; print but `read' cannot take — a path object, a struct, void — would be skipped
+  ;; by every reader as a corrupt build, and the build that wrote it would then be
+  ;; invisible to --last-build, so its publish receipt would land on the build before.
+  ;; Refusing here fails the build that has the defect, at its author's desk.
+  (unless (hash? (with-handlers ([exn:fail:read? (lambda (_) #f)])
+                   (read (open-input-string line))))
+    (define culprit
+      (for/first ([datum (in-list record-data)]
+                  #:unless (with-handlers ([exn:fail:read? (lambda (_) #f)])
+                             (read (open-input-string (format "~s" datum)))))
+        datum))
+    (error 'history-append!
+           "build ~a's record would not read back, so it was not recorded. The first unreadable task record: ~s"
+           number (and culprit (if (pair? culprit) (car culprit) culprit))))
+  (call-with-output-file (history-file state-dir) #:exists 'append
+    (lambda (o)
+      (write-string line o)
       (newline o)))
   h)
 
