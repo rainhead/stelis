@@ -1,9 +1,10 @@
 #lang racket/base
 
 ;; Tests for the TypeScript import closure (ts-imports.rkt, st-6i2). The parse layer
-;; is pure; the closure runs on a temporary tree; and when the salishsea checkout and
-;; its esbuild are present, every node task's entry script is checked against
-;; esbuild's own module graph, the closure the hand-kept lists were transcribed from.
+;; is pure and the closure runs on a temporary tree. The comparison of every node
+;; task's closure against esbuild's own module graph, which needs salishsea's checkout
+;; and its esbuild, moved with the graph to salishsea-io's stelis/ (ADR 0020, st-ty7),
+;; where its CI runs it.
 
 (require rackunit
          racket/file
@@ -12,8 +13,7 @@
          racket/set
          racket/string
          racket/system
-         "ts-imports.rkt"
-         (only-in "salishsea.rkt" SALISHSEA))
+         "ts-imports.rkt")
 
 (define (parse text)
   (define-values (mods reads) (parse-ts-imports text))
@@ -81,51 +81,3 @@
 (test-equal? "an entry that isn't there is just itself"
              (closure "scripts/absent.ts") '("scripts/absent.ts"))
 (delete-directory/files tree)
-
-;; --- Against esbuild, on the real scripts ---------------------------------------
-;; The computed closure may be wider than esbuild's (an import used only as a type is
-;; followed, which esbuild drops), never narrower: narrower is a stale skip.
-
-(define esbuild
-  (for/first ([d (in-list (if (directory-exists? (build-path SALISHSEA "node_modules" ".pnpm"))
-                              (directory-list (build-path SALISHSEA "node_modules" ".pnpm") #:build? #t)
-                              '()))]
-              #:when (regexp-match? #rx"/@esbuild\\+linux-x64@" (path->string d))
-              [bin (in-value (build-path d "node_modules" "@esbuild" "linux-x64" "bin" "esbuild"))]
-              #:when (file-exists? bin))
-    bin))
-
-(define (esbuild-inputs entry)
-  (define meta (make-temporary-file "stelis-meta-~a.json"))
-  (define out (make-temporary-file "stelis-out-~a.js"))
-  (define ok?
-    (parameterize ([current-directory SALISHSEA]
-                   [current-output-port (open-output-nowhere)]
-                   [current-error-port (open-output-nowhere)])
-      (system* esbuild entry "--bundle" "--platform=node" "--packages=external" "--format=esm"
-               (format "--metafile=~a" meta) (format "--outfile=~a" out) "--log-level=error")))
-  (define inputs
-    (and ok?
-         (for/list ([m (in-list (regexp-match* #px"\"([^\"]+)\": \\{\\s*\"bytes\"" (file->string meta)
-                                               #:match-select cadr))])
-           m)))
-  (delete-file meta) (delete-file out)
-  inputs)
-
-(cond
-  [(not esbuild)
-   (printf "ts-imports-test: no salishsea checkout with esbuild at ~a — skipping the esbuild comparison.\n" SALISHSEA)]
-  [else
-   (define real (make-ts-import-closure SALISHSEA))
-   (define entries
-     (for/list ([f (in-list (directory-list (build-path SALISHSEA "scripts" "read-path")))]
-                #:when (regexp-match? #rx"\\.ts$" (path->string f))
-                #:unless (regexp-match? #rx"\\.test\\.ts$" (path->string f)))
-       (string-append "scripts/read-path/" (path->string f))))
-   (for ([entry (in-list entries)])
-     (define theirs (esbuild-inputs entry))
-     (when theirs
-       (define ours (list->set (real entry)))
-       (test-equal? (format "~a: every module esbuild bundles is in the closure" entry)
-                    (sort (set->list (set-subtract (list->set theirs) ours)) string<?)
-                    '())))])
