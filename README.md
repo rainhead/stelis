@@ -43,6 +43,11 @@ Feedback and pointers are very welcome all the same — please
   copies the two trees out of it by digest
   ([ADR 0017](docs/adr/0017-stelis-ships-as-an-image-per-commit.md);
   `scripts/image-digest.sh <commit>` gives the digest).
+- The engine linked as the Racket collection `stelis`, for a project whose graph
+  lives in its own repository and requires the engine by collection path
+  ([ADR 0020](docs/adr/0020-a-projects-graph-lives-in-its-repo.md)):
+  `scripts/link-collection.sh` (add `--scope user` on a distro Racket). The image
+  and CI run it; the engine itself runs without it.
 - A checkout of **[beeatlas](https://github.com/rainhead/beeatlas)** at
   `~/dev/beeatlas` (the graph shells into it).
 - **uv**, which provides the Python runtimes declared in
