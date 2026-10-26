@@ -281,3 +281,11 @@
        #:unless (eq? in 'snapshot-year))
   (check-not-false (hash-ref salishsea-keyed-relations in #f)
                    (format "~a reads ~a, which is keyed" pages in)))
+
+;; salishsea's scripts are handed the snapshot's path and find the register beside it,
+;; as register-file.ts's registerFile does: mirrors/register.duckdb in the snapshot's
+;; directory (salish-vedj). The graph must observe that same file, or a build would
+;; record the digest of one register and derive from another.
+(let-values ([(dir _name _must-be-dir?) (split-path salishsea-snapshot-db)])
+  (check-equal? salishsea-register-db (build-path dir "mirrors" "register.duckdb")
+                "the register file is mirrors/register.duckdb beside the snapshot"))
