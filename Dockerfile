@@ -59,6 +59,7 @@ COPY . /opt/stelis/
 RUN test -n "$STELIS_COMMIT" \
  && echo "$STELIS_COMMIT" > /opt/stelis/commit \
  && raco make /opt/stelis/src/main.rkt \
+ && bash /opt/stelis/scripts/link-collection.sh \
  && bash /opt/stelis/scripts/preflight.sh \
  && racket /opt/stelis/src/main.rkt --help > /dev/null
 

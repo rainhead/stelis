@@ -63,7 +63,7 @@
 ;; was blocked: partial success, nothing to rerun) and from the shell's 75
 ;; (EX_TEMPFAIL, the lock was held and the caller skipped).
 (define EXIT-YIELDED 3)
-(define project-arg (make-parameter 'beeatlas)) ; --project: which graph (st-ml9.1)
+(define project-arg (make-parameter 'beeatlas)) ; --project: which graph (st-ml9.1); a symbol, or a module path (st-ab3)
 
 (define name
   (command-line
@@ -103,8 +103,10 @@
                        (mode 'mark-publish)
                        (mark-publish-args (list build epoch outcome stage path))]
    #:once-each
-   [("--project") proj "build PROJ's graph (beeatlas | salishsea; default beeatlas). Its build state is its own: a state dir holding another project's builds is refused"
-                  (project-arg (string->symbol proj))]
+   [("--project") proj "build PROJ's graph: a registered name (beeatlas | salishsea | salishsea-ingest; default beeatlas), or the path of a module that provides `project', a graph kept in its own repository (ADR 0020). Its build state is its own: a state dir holding another project's builds is refused"
+                  (project-arg (if (regexp-match? #rx"[/\\]|[.]rkt$" proj)
+                                   (path->complete-path (string->path proj))
+                                   (string->symbol proj)))]
    [("--from") ft "scope --build/--commands/--explain/--why/--verify to the plan suffix at FT"
                (from-task (string->symbol ft))]
    [("--downstream") dt "scope --build/--commands/--explain/--why to DT and the tasks that transitively consume its outputs — what a change to DT's outputs can move (a save-triggered build re-reads one source and re-derives from it, leaving the other sources' ingests to their own schedule)"
@@ -155,14 +157,30 @@
                       'salishsea (cons salishsea-module 'salishsea-project)
                       ;; salishsea's ingests as their own graph and state dir (st-mxr.1.2)
                       'salishsea-ingest (cons salishsea-module 'salishsea-ingest-project)))
+;; A project kept in its own repository (st-ab3, ADR 0020) is named by the path of
+;; its module, which provides `project': a project value built against the engine
+;; required by collection (stelis/model and the rest, scripts/link-collection.sh).
+;; The registered names stay for the graphs still kept here.
 (define P
-  (let ([entry (hash-ref projects (project-arg)
-                         (lambda ()
-                           (error 'stelis "--project ~a: no such project (known: ~a)"
-                                  (project-arg)
-                                  (string-join (sort (map symbol->string (hash-keys projects)) string<?)
-                                               ", "))))])
-    (dynamic-require (car entry) (cdr entry))))
+  (cond
+    [(path? (project-arg))
+     (define file (project-arg))
+     (unless (file-exists? file)
+       (error 'stelis "--project ~a: no such module" file))
+     (define v (dynamic-require file 'project
+                                (lambda ()
+                                  (error 'stelis "--project ~a: the module provides no `project'" file))))
+     (unless (project? v)
+       (error 'stelis "--project ~a: `project' is not a project value (see project.rkt's make-project)" file))
+     v]
+    [else
+     (define entry (hash-ref projects (project-arg)
+                             (lambda ()
+                               (error 'stelis "--project ~a: no such project (known: ~a, or the path of a module providing `project')"
+                                      (project-arg)
+                                      (string-join (sort (map symbol->string (hash-keys projects)) string<?)
+                                                   ", ")))))
+     (dynamic-require (car entry) (cdr entry))]))
 (define G (project-graph P))
 (define RT (project-runtimes P))
 (define (artifact-path a dir) ((project-path P) a dir))

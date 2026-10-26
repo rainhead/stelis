@@ -142,7 +142,13 @@ No build step — Racket compiles on demand.
   because withholding those would mean mutating real files; this asks by
   OBSERVATION, so nothing is withheld. Exits non-zero on an undeclared read).
 - **Projects:** every mode takes `--project <name>` (`beeatlas`, the default,
-  `salishsea`, or `salishsea-ingest`), placed before the target. salishsea is TWO
+  `salishsea`, or `salishsea-ingest`), placed before the target — or `--project
+  <path>` to a module that provides `project`, a graph kept in its own repository
+  and requiring the engine by collection (`stelis/model` and the rest; `src/info.rkt`
+  names the collection, `scripts/link-collection.sh` links it, st-ab3,
+  [ADR 0020](docs/adr/0020-a-projects-graph-lives-in-its-repo.md): salishsea's
+  graph moves to salishsea-io first, `salish-dhts`, then beeatlas's; a graph change
+  and the script change it names were two lockstep PRs in two repos). salishsea is TWO
   projects from one authored task list (st-mxr.1.2, [ADR 0019](docs/adr/0019-one-state-dir-per-concurrent-build.md)):
   `salishsea-ingest` is the four source ingests, `salishsea` everything from the
   snapshot on, reading what the ingests wrote as `'upstream` leaves — because the

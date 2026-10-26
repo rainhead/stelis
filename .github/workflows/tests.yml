@@ -25,6 +25,9 @@ jobs:
         run: |
           bash scripts/install-racket.sh --prefix "$HOME/racket"
           echo "$HOME/racket/bin" >> "$GITHUB_PATH"
+          # the engine as the `stelis' collection, for the test that loads a
+          # project from a module outside the repo (ADR 0020)
+          PATH="$HOME/racket/bin:$PATH" bash scripts/link-collection.sh
 
       # The same provisioning check the deploy host runs (scripts/preflight.sh,
       # st-7lm), against racket-deps.txt. Running it HERE is what keeps the two in
