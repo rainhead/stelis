@@ -87,7 +87,9 @@
          handed-over-relations
          SALISHSEA
          ;; for the test of what each keyed relation's key is
-         (rename-out [keyed-relations salishsea-keyed-relations]))
+         (rename-out [keyed-relations salishsea-keyed-relations])
+         ;; for the test that the register is where salishsea's scripts look for it
+         (rename-out [snapshot-db salishsea-snapshot-db] [register-db salishsea-register-db]))
 
 ;; Where the salishsea-io checkout lives. Defaults to ~/dev/salishsea-io, the
 ;; author's checkout on every machine; SALISHSEA_DIR relocates it (another host,
