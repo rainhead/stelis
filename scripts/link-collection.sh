@@ -20,9 +20,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 src="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src" && pwd)"
+# A successful require says a collection named stelis loads, not that it is THIS
+# checkout's: a link left by an older checkout would answer too, and an external
+# project would then build against the older engine. So compare directories.
 if racket -l racket/base -e '(require stelis/project)' > /dev/null 2>&1; then
-    echo "link-collection: stelis already loads from $(racket -l racket/base -l racket/path -e '(displayln (path-only (collection-file-path "project.rkt" "stelis")))')"
-    exit 0
+    linked="$(racket -l racket/base -l racket/path -e '(display (path-only (collection-file-path "project.rkt" "stelis")))')"
+    if [[ "$(cd "$linked" && pwd -P)" == "$(cd "$src" && pwd -P)" ]]; then
+        echo "link-collection: stelis already loads from $linked"
+        exit 0
+    fi
+    echo "link-collection: a collection named stelis already loads from $linked, not from $src." >&2
+    echo "  Remove that link first (raco pkg remove --scope <its scope> stelis), then run this again." >&2
+    exit 1
 fi
 # the options before the source: `--link` takes none, and `--name` must precede it
 raco pkg install --scope "$scope" --no-setup --deps force --batch --no-docs --link --name stelis "$src"
