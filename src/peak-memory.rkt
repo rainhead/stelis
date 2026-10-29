@@ -21,12 +21,20 @@
 ;;     the kernel's per-process mark cannot add up) and each process's own
 ;;     high-water mark (VmHWM, kept by the kernel between samples). A spike in a
 ;;     process that lives less than one interval, or in the last interval before
-;;     it exits, is missed, so a sampled figure is a LOWER BOUND, and says so.
+;;     it exits, is missed, so a sampled figure is a LOWER BOUND on the summed
+;;     resident sizes, and says so. That sum counts a page shared by two
+;;     processes (a library, a forked copy) once in each, so it can overstate the
+;;     memory the processes held between them; it is what the processes report,
+;;     not a count of distinct physical pages.
 ;;
 ;; A task's peak is the larger of the two, tagged with which one it came from. A
 ;; task the engine runs in-process (a rule check, a derivation) shares the
-;; engine's memory, so its figure is the engine's own peak while it ran, tagged
-;; 'engine. Linux has /proc; elsewhere only the kernel's account is available.
+;; engine's memory, so its figure is the engine's resident size while it ran,
+;; tagged 'engine. That includes whatever the engine already held (its code, a
+;; graph, observations from earlier tasks), so it is the engine's size during the
+;; task, not the task's own share. The engine's high-water marks (VmHWM, and the
+;; kernel's ru_maxrss) cover its whole life, so they count only when they rose
+;; during the task. Linux has /proc; elsewhere only the kernel's account is available.
 ;; Sizes are in kilobytes throughout, the unit Linux reports them in.
 
 (require ffi/unsafe
@@ -220,10 +228,12 @@
   (define before (rusage-max-kb 'self))
   (define stop (start-sampler (getpid) #:tree? #f))
   (define result (thunk))
-  (define-values (sum one) (stop))
+  ;; the engine's VmHWM is its lifetime mark, which an earlier task may have set,
+  ;; so only its resident size as sampled while THUNK ran is this task's
+  (define-values (sum _lifetime-mark) (stop))
   (define after (rusage-max-kb 'self))
   (values result
-          (let ([p (combine (and before after (> after before) after) sum one 'engine)])
+          (let ([p (combine (and before after (> after before) after) sum #f 'engine)])
             ;; the sampler watched the engine too, so either figure is the engine's
             (and p (peak (peak-kb p) 'engine)))))
 

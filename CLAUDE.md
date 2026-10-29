@@ -353,9 +353,12 @@ over the engine's life, so it names only a task that set a new one — and a chi
 between fork and exec counts the engine's pages as its own, so the figure means
 something only above the engine's own peak), and a sampler over the task's process
 tree in /proc every 200 ms (the sum of resident sizes, which a per-process mark
-cannot add up; a LOWER BOUND, and printed as one: `peak ≥ 245 MB (sampled)`). A
-task run in-process is measured as the engine's own peak. Linux only for the
-sampler; elsewhere the kernel's account alone ·
+cannot add up; a LOWER BOUND on that sum, and printed as one: `peak ≥ 245 MB
+(sampled)`. The sum counts a shared page once per process, so it can overstate the
+distinct memory held). A task run in-process is measured as the engine's resident
+size while it ran — earlier work the engine still holds included — never the
+engine's lifetime high-water mark unless that rose during the task. Linux only for
+the sampler; elsewhere the kernel's account alone ·
 [`written.rkt`](src/written.rkt) which artifacts a task has written in this
 process: `run-task` (and a derivation) notes its declared outputs when it finishes,
 so a cached observation is keyed by the artifact's write generation — the same

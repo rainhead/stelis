@@ -99,4 +99,14 @@
   (let-values ([(v pk) (measure-in-process
                         (lambda () (bytes-length (make-bytes 50000000 1))))])
     (check-equal? v 50000000)
-    (check-equal? (and pk (peak-basis pk)) 'engine)))
+    (check-equal? (and pk (peak-basis pk)) 'engine))
+
+  ;; an in-process task is not credited with an earlier task's high-water mark:
+  ;; after a large allocation is collected, a task that allocates nothing reports
+  ;; the engine's size while it ran, below the engine's lifetime peak
+  (let-values ([(_v big) (measure-in-process
+                          (lambda () (bytes-length (make-bytes 400000000 1))))])
+    (collect-garbage 'major)
+    (let-values ([(_v small) (measure-in-process (lambda () (sleep 0.5) 1))])
+      (check-true (and big small (< (peak-kb small) (peak-kb big)))
+                  (format "a quiet task after a heavy one: ~a, then ~a" big small)))))
