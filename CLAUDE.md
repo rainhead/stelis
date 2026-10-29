@@ -123,9 +123,14 @@ No build step — Racket compiles on demand.
   run beside each other on one snapshot file, and the engine's state dir assumes one
   engine process. The engine never takes the lock itself. Every task's status is
   followed by a `⏱` line — how long the engine spent DECIDING (addressing its
-  inputs), RUNNING it, and OBSERVING its outputs — and the build ends with the
-  bookkeeping after the last task and the CPU it took, engine and tasks apart:
-  on a shared CPU that, not wall time, is what a build costs. Status lines are
+  inputs), RUNNING it, and OBSERVING its outputs, and the memory it took at its
+  PEAK while running (st-1hi.1; also on its history record and in the build log) —
+  and the build ends with the bookkeeping after the last task, the CPU it took,
+  engine and tasks apart: on a shared CPU that, not wall time, is what a build
+  costs — and its memory: the task with the largest peak, the engine's own peak,
+  and the largest process the engine started (which counts the DuckDB launches
+  that digest relations while deciding, a cost no task line shows). Memory is
+  what a machine is sized by. Status lines are
   flushed as written, so a log's timestamps are the engine's, not the next task's.
   `--verify-edges` (POST-BUILD: re-run each covered task in an EXPORT_DIR seeded
   with ONLY its declared inputs — are they sufficient, and are the declared outputs
@@ -340,6 +345,17 @@ individuals, designations or sightings whose rows moved, not only the relation.
 The first keyed observation of a relation is diffed against its last per-column
 one, so after declaring a key, delete its producer's cache entry and let one build
 record a keyed baseline before trusting an answer ·
+[`peak-memory.rkt`](src/peak-memory.rkt) how much memory a task took at its peak
+(st-1hi.1, under the epic st-1hi: the projects' machines are sized for their worst
+build). Two instruments, because neither covers the other: the kernel's account of
+the largest process the engine has reaped (getrusage, exact, but a high-water mark
+over the engine's life, so it names only a task that set a new one — and a child
+between fork and exec counts the engine's pages as its own, so the figure means
+something only above the engine's own peak), and a sampler over the task's process
+tree in /proc every 200 ms (the sum of resident sizes, which a per-process mark
+cannot add up; a LOWER BOUND, and printed as one: `peak ≥ 245 MB (sampled)`). A
+task run in-process is measured as the engine's own peak. Linux only for the
+sampler; elsewhere the kernel's account alone ·
 [`written.rkt`](src/written.rkt) which artifacts a task has written in this
 process: `run-task` (and a derivation) notes its declared outputs when it finishes,
 so a cached observation is keyed by the artifact's write generation — the same

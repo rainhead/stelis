@@ -11,7 +11,8 @@
          "model.rkt"
          "cache.rkt"
          "exec.rkt"
-         "trace.rkt")
+         "trace.rkt"
+         "peak-memory.rkt")
 
 (define tmp (make-temporary-file "stelis-trace-test-~a" 'directory))
 
@@ -41,7 +42,12 @@
                       (source-report #f 12 #f))
         ;; the unreachable arm (st-ml9.9) carries its error text as a 4th element
         (trace-record 'probe3 (decision 'run 'boundary '()) #f 'ok '() #f '() '() '()
-                      (source-report #f #f #f "ECONNREFUSED"))))
+                      (source-report #f #f #f "ECONNREFUSED"))
+        ;; a task's memory at its peak (st-1hi.1) rides the optional 11th field
+        (trace-record 'heavy (decision 'run 'input-changed '(raw)) #f 'ok '() #f '() '() '()
+                      #f (peak 421888 'process))
+        (trace-record 'gate (decision 'run 'input-changed '(raw)) #f 'ok '() #f '() '() '()
+                      #f (peak 180224 'engine))))
 
 ;; the two original arms still serialize to three elements, so pre-st-ml9.9
 ;; history is byte-identical; only the unreachable arm grows a fourth
@@ -66,6 +72,13 @@
   (check-false (trace-record-source-report r)
                "a 9-element legacy datum has no source-report")
   (check-equal? (trace-record-task r) 'old "…and its other fields still read"))
+
+;; …and a pre-st-1hi.1 datum (10 elements, no peak) reads back with peak #f
+(let ([before-peak (list 'old (list 'run 'boundary '()) #f 'ok '() #f '() '() '() '(#t 0 #f))])
+  (define r (datum->trace-record before-peak))
+  (check-false (trace-record-peak r) "a 10-element datum has no peak")
+  (check-equal? (trace-record-source-report r) (source-report #t 0 #f)
+                "…and its source report still reads"))
 
 ;; and the datum is genuinely `read'-able (the property history relies on to
 ;; store one build per line)

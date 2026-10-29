@@ -35,6 +35,7 @@
          "explain.rkt"
          "provenance-datalog.rkt"
          "trace.rkt"
+         "peak-memory.rkt"   ; per-task and build memory peaks (st-1hi.1)
          "history.rkt"
          "delta.rkt"
          "delta-explain.rkt"
@@ -1079,6 +1080,24 @@
    (printf "⏱ CPU: engine ~a s · tasks ~a s\n"
            (real->decimal-string (/ (current-process-milliseconds) 1000.0) 1)
            (real->decimal-string (/ (current-process-milliseconds 'subprocesses) 1000.0) 1))
+   ;; st-1hi.1: memory is what a machine is sized by, so say which task set this
+   ;; build's peak, and the engine's own. The largest process the engine started
+   ;; includes what no task line covers, such as the DuckDB launches that digest
+   ;; relations while deciding.
+   (let* ([top (for/fold ([best #f]) ([r (in-list records)] #:when (trace-record-peak r))
+                 (if (or (not best)
+                         (> (peak-kb (trace-record-peak r)) (peak-kb (trace-record-peak best))))
+                     r best))]
+          [mb (lambda (kb) (format "~a MB" (quotient (+ kb 512) 1024)))]
+          [self (rusage-max-kb 'self)]
+          [children (rusage-max-kb 'children)]
+          [parts (filter values
+                         (list (and top (format "largest task ~a, ~a" (trace-record-task top)
+                                                (peak->string (trace-record-peak top))))
+                               (and self (format "engine peak ~a" (mb self)))
+                               (and children (positive? children)
+                                    (format "largest process started ~a" (mb children)))))])
+     (when (pair? parts) (printf "⏱ memory: ~a\n" (string-join parts " · "))))
    (define (tally s) (for/sum ([v (in-hash-values status)] #:when (eq? v s)) 1))
    (printf "\n— ~a ok · ~a cached · ~a failed · ~a skipped~a —\n"
            (tally 'ok) (tally 'cached) (tally 'failed) (tally 'skipped)
