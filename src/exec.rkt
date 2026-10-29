@@ -22,6 +22,7 @@
          "cache.rkt"
          "trace.rkt"
          "written.rkt"
+         "peak-memory.rkt"
          (only-in "fan-out-key.rkt" store-keyed? verify-store-keyed
                   fan-out-verdict-sound? fan-out-verdict-orphans))
 
@@ -188,7 +189,8 @@
 ;; same hint discipline: a task that ignores the variable recomputes everything.
 (define (run-task g name runtimes #:env [extra-env '()] #:label [label #f]
                   #:rebuild-keys [rebuild-keys #f]
-                  #:changed-inputs [changed-inputs #f])
+                  #:changed-inputs [changed-inputs #f]
+                  #:on-peak [on-peak void])
   (define rec (task-invoke (hash-ref (graph-tasks g) name)))
   (unless rec (error 'run-task "task ~a has no recipe" name))
   (define argv (recipe->argv rec runtimes))
@@ -218,15 +220,16 @@
        (for ([kv (in-list env*)])
          (putenv (car kv) (cdr kv)))
        (if label
-           (run/streaming exe (cdr argv) label)
+           (run/streaming exe (cdr argv) label on-peak)
            (apply system*/exit-code exe (cdr argv)))))
    (lambda () (note-written! (task-outputs (hash-ref (graph-tasks g) name))))))
 
-;; run/streaming : path (listof string) symbol -> exact-integer
+;; run/streaming : path (listof string) symbol (-> (or/c peak? #f) any) -> exact-integer
 ;; Run the command, prefixing each captured output line with `label'. stdout and
 ;; stderr are pumped by separate threads (so a chatty stream can't deadlock the
-;; other), each line flushed as it arrives for real-time streaming.
-(define (run/streaming exe args label)
+;; other), each line flushed as it arrives for real-time streaming. The process
+;; tree's peak memory is measured while it runs (st-1hi.1) and handed to ON-PEAK.
+(define (run/streaming exe args label on-peak)
   (define-values (sp out in err) (apply subprocess #f #f #f exe args))
   (close-output-port in) ; these tasks read no stdin
   (define prefix (format "  ~a │ " label))
@@ -241,10 +244,12 @@
            (loop))))))
   (define t-out (pump out (current-output-port)))
   (define t-err (pump err (current-error-port)))
-  (subprocess-wait sp)
+  (define-values (status pk)
+    (measure-subprocess sp (lambda () (subprocess-wait sp) (subprocess-status sp))))
+  (on-peak pk)
   (thread-wait t-out)
   (thread-wait t-err)
-  (subprocess-status sp))
+  status)
 
 ;; prune-keys! : path-string (listof string) -> void
 ;; The engine's half of a partial rebuild's RETRACTION (st-pd1): delete the files
@@ -359,15 +364,18 @@
                                 (and (string? since) since))]
                 [else #f])))))
 
-;; timing->string : (hash symbol -> milliseconds) -> string
-;; One task's phases, in the order they happen, each to a tenth of a second:
-;; "deciding 0.4 s · running 2.1 s · observing 1.3 s". A phase that didn't happen
-;; (a cached task neither runs nor is observed) is left out.
-(define (timing->string timing)
+;; timing->string : (hash symbol -> milliseconds) (or/c peak? #f) -> string
+;; One task's phases, in the order they happen, each to a tenth of a second, and
+;; the memory it took at its peak while running (st-1hi.1):
+;; "deciding 0.4 s · running 2.1 s · observing 1.3 s · peak 412 MB". A phase that
+;; didn't happen (a cached task neither runs nor is observed) is left out.
+(define (timing->string timing [pk #f])
   (string-join
-   (for/list ([phase (in-list '(deciding running observing))]
-              #:when (hash-ref timing phase #f))
-     (format "~a ~a s" phase (real->decimal-string (/ (hash-ref timing phase) 1000.0) 1)))
+   (append
+    (for/list ([phase (in-list '(deciding running observing))]
+               #:when (hash-ref timing phase #f))
+      (format "~a ~a s" phase (real->decimal-string (/ (hash-ref timing phase) 1000.0) 1)))
+    (if pk (list (peak->string pk)) '()))
    " · "))
 
 ;; run-plan : graph (listof symbol) (hash symbol->runtime)
@@ -453,6 +461,9 @@
     ;; (Named `boundary-report', not `source-report', so it doesn't shadow the
     ;; struct constructor for the rest of the loop body.)
     (define boundary-report #f)
+    ;; how much memory the task took at its peak while it ran (st-1hi.1); #f for
+    ;; a task that did not run, or where nothing could be measured
+    (define task-peak #f)
     ;; the previous entry, read BEFORE cache-store! overwrites it — the
     ;; comparison basis for the output delta. Read up front (cheap, and before
     ;; anything can run) so every producing arm shares one basis.
@@ -503,9 +514,17 @@
         [(rule-check? (task-invoke t))
          (define rc (task-invoke t))
          (printf "\n▶ ~a  [rule: ~a]\n" name (rule-check-label rc))
-         (define-values (ok? note)
+         (define-values (ok+note pk)
            (timed! 'running
-                   (lambda () ((rule-check-run rc) (check-context g name env state-dir)))))
+                   (lambda ()
+                     (measure-in-process
+                      (lambda ()
+                        (call-with-values
+                         (lambda () ((rule-check-run rc) (check-context g name env state-dir)))
+                         list))))))
+         (set! task-peak pk)
+         (define ok? (car ok+note))
+         (define note (cadr ok+note))
          (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
          (when (and ok? env)
            (cache-store! (build-env-cache-dir env) name snap
@@ -519,13 +538,21 @@
         [(derivation? (task-invoke t))
          (define d (task-invoke t))
          (printf "\n▶ ~a  [derivation: ~a]\n" name (derivation-label d))
-         (define-values (ok? note)
+         (define-values (ok+note pk)
            (timed! 'running
                    (lambda ()
-                     (dynamic-wind
-                      void
-                      (lambda () ((derivation-run d) (check-context g name env state-dir)))
-                      (lambda () (note-written! (task-outputs t)))))))
+                     (measure-in-process
+                      (lambda ()
+                        (dynamic-wind
+                         void
+                         (lambda ()
+                           (call-with-values
+                            (lambda () ((derivation-run d) (check-context g name env state-dir)))
+                            list))
+                         (lambda () (note-written! (task-outputs t)))))))))
+         (set! task-peak pk)
+         (define ok? (car ok+note))
+         (define note (cadr ok+note))
          (printf "~a ~a — ~a\n" (if ok? "✓" "✗") name note)
          (when (and ok? env) (observe-outputs!))
          (if ok? 'ok 'failed)]
@@ -572,7 +599,8 @@
                               (lambda ()
                                 (run-task g name runtimes #:env run-env #:label name
                                           #:changed-inputs changed-inputs
-                                          #:rebuild-keys (and rk (car rk))))))
+                                          #:rebuild-keys (and rk (car rk))
+                                          #:on-peak (lambda (pk) (set! task-peak pk))))))
          (define ok? (zero? code))
          (printf "~a ~a — exit ~a\n" (if ok? "✓" "✗") name code)
          ;; the loader's source report (st-8bj), read whether or not there are
@@ -635,7 +663,7 @@
          (when (and ok? env identity-ok?)
            (observe-outputs!))
          (if (and ok? identity-ok?) 'ok 'failed)]))
-    (unless yielded? (printf "  ⏱ ~a\n" (timing->string timing)))
+    (unless yielded? (printf "  ⏱ ~a\n" (timing->string timing task-peak)))
     ;; Stelis's own lines are block-buffered when the build's output is not a
     ;; terminal (a log), so a line would otherwise surface only when the next task
     ;; launches, stamped with that later time.
@@ -644,6 +672,6 @@
     (set! records
           (cons (trace-record name dec snap outcome blockers delta
                               output-hashes output-key-hashes input-key-hashes
-                              boundary-report)
+                              boundary-report task-peak)
                 records)))
   (values status (reverse records)))

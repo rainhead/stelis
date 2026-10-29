@@ -40,6 +40,7 @@
          racket/date
          "cache.rkt"      ; decision / output-delta / source-report structs
          "trace.rkt"      ; trace-record accessors + outcome-glyph
+         "peak-memory.rkt" ; peak->string (pure)
          "explain.rkt"    ; decision->string, source-report->string (pure)
          "history.rkt"    ; build-record + key-observation structs
          "delta.rkt")     ; build-key-delta — the pure retrospective per-key fold
@@ -202,7 +203,8 @@
 (define (record-row r rewrites)
   (define o (trace-record-outcome r))
   (define sr (trace-record-source-report r))
-  (format "<tr class=\"~a\"><td class=\"g\">~a</td><td class=\"t\">~a</td><td>~a</td><td>~a~a</td></tr>"
+  (define pk (trace-record-peak r))
+  (format "<tr class=\"~a\"><td class=\"g\">~a</td><td class=\"t\">~a</td><td>~a</td><td>~a~a~a</td></tr>"
           (outcome-class o)
           (html-escape (outcome-glyph o))
           (html-escape (trace-record-task r))
@@ -214,7 +216,10 @@
               (format "<div class=\"src~a\">~a</div>"
                       (if (source-report-error sr) " src-err" "")
                       (html-escape (source-report->string sr)))
-              "")))
+              "")
+          ;; the task's memory at its peak (st-1hi.1), so the build that sized a
+          ;; machine names the task that did it
+          (if pk (format "<div class=\"mem\">~a</div>" (html-escape (peak->string pk))) "")))
 
 (define (build-section builds i rewrites receipts)
   (define br (list-ref builds (sub1 i)))
@@ -250,7 +255,7 @@
 body{background:var(--bg);color:var(--fg);font:14px/1.55 ui-sans-serif,system-ui,sans-serif;max-width:72rem;margin:2rem auto;padding:0 1.25rem}
 h1{font-size:1.4rem;margin:0 0 .25rem}
 h2{font-size:1.05rem;margin:2rem 0 .25rem;border-top:2px solid var(--line);padding-top:1rem}
-.meta,.sum,.src{color:var(--muted)}
+.meta,.sum,.src,.mem{color:var(--muted)}
 .sum{margin:.1rem 0 .5rem}
 .meta{font-weight:normal;font-size:.85rem}
 .keys{font-size:.9rem;margin:.15rem 0;padding:.3rem .6rem;background:var(--soft);border-radius:4px}
@@ -265,7 +270,7 @@ td.t{white-space:nowrap;font-weight:600}
 .o-failed td.g,span.o-failed{color:var(--failed);font-weight:600}
 .o-skipped td.g{color:var(--skipped)}
 .o-yielded td.g{color:var(--skipped)}
-.src{font-size:.85rem}
+.src,.mem{font-size:.85rem}
 .src-err{color:var(--failed);font-weight:600}
 .pub-ok,.pub-no{font-size:.75rem;font-weight:600;padding:.1rem .45rem;border-radius:9px;vertical-align:middle}
 .pub-ok{color:var(--ok);border:1px solid var(--ok)}

@@ -15,7 +15,8 @@
 ;; record now carries `output-hashes` — each produced artifact's observed hash —
 ;; so history can project an observation timeline, not just a decision log.
 
-(require "cache.rkt")
+(require "cache.rkt"
+         "peak-memory.rkt")
 
 ;; trace-record uses a smart constructor (below), so it can't be exported via
 ;; struct-out (which needs the omitted define-syntaxes); name the parts explicitly,
@@ -25,6 +26,7 @@
          trace-record-outcome trace-record-blockers trace-record-delta
          trace-record-output-hashes trace-record-output-key-hashes
          trace-record-input-key-hashes trace-record-source-report
+         trace-record-peak
          outcome-glyph
          trace-record->datum
          datum->trace-record
@@ -70,18 +72,23 @@
 ;;                   loader) — the great majority of records, so it is an OPTIONAL
 ;;                   trailing field: every pre-st-8bj call site (and history datum)
 ;;                   omits it and reads back as #f.
+;;   peak          : (or/c peak? #f) — how much memory the task took at its peak
+;;                   while it ran, and how that was measured (peak-memory.rkt,
+;;                   st-1hi.1). #f when it did not run or nothing could be measured;
+;;                   an optional trailing field like source-report, so every record
+;;                   written before it reads back as #f.
 (struct trace-record
   (task decision snapshot outcome blockers delta
-   output-hashes output-key-hashes input-key-hashes source-report)
+   output-hashes output-key-hashes input-key-hashes source-report peak)
   #:transparent #:omit-define-syntaxes #:constructor-name make-trace-record)
 ;; Smart constructor: source-report defaults to #f so the field is opt-in (mirrors
 ;; cache.rkt's snapshot). Keeps the 9-argument call sites — tests, and every code
 ;; path that produces no source-report — valid unchanged.
 (define (trace-record task decision snapshot outcome blockers delta
                       output-hashes output-key-hashes input-key-hashes
-                      [source-report #f])
+                      [source-report #f] [peak #f])
   (make-trace-record task decision snapshot outcome blockers delta
-                     output-hashes output-key-hashes input-key-hashes source-report))
+                     output-hashes output-key-hashes input-key-hashes source-report peak))
 
 ;; outcome-glyph : symbol -> string — the one legend for actual outcomes.
 (define (outcome-glyph o)
@@ -163,7 +170,8 @@
         (trace-record-output-hashes r)
         (trace-record-output-key-hashes r)
         (trace-record-input-key-hashes r)
-        (source-report->datum (trace-record-source-report r))))
+        (source-report->datum (trace-record-source-report r))
+        (peak->datum (trace-record-peak r))))
 
 ;; datum->trace-record : any -> trace-record
 ;; Inverse of trace-record->datum. Assumes a well-formed datum (the caller —
@@ -182,4 +190,6 @@
                 ;; (9 elements) has none and reads back as #f, so old history loads
                 ;; unchanged — no HISTORY-VERSION bump needed (cf. datum->snapshot's
                 ;; 2-vs-3 tolerance).
-                (and (> (length r) 9) (datum->source-report (list-ref r 9)))))
+                (and (> (length r) 9) (datum->source-report (list-ref r 9)))
+                ;; peak (st-1hi.1), the next opt-in trailing field: absent before it
+                (and (> (length r) 10) (datum->peak (list-ref r 10)))))
