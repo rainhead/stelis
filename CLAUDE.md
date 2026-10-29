@@ -356,8 +356,9 @@ tree in /proc every 200 ms (the sum of resident sizes, which a per-process mark
 cannot add up; a LOWER BOUND on that sum, and printed as one: `peak ≥ 245 MB
 (sampled)`. The sum counts a shared page once per process, so it can overstate the
 distinct memory held). A task run in-process is measured as the engine's resident
-size while it ran — earlier work the engine still holds included — never the
-engine's lifetime high-water mark unless that rose during the task. Linux only for
+size while it ran — earlier work the engine still holds included, so it equals an
+earlier peak when the engine still holds that much — never read from the engine's
+lifetime high-water mark unless that rose during the task. Linux only for
 the sampler; elsewhere the kernel's account alone ·
 [`written.rkt`](src/written.rkt) which artifacts a task has written in this
 process: `run-task` (and a derivation) notes its declared outputs when it finishes,
