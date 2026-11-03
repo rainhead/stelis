@@ -138,8 +138,8 @@ receives and surfaces the report. It appears:
 The report is the loader's account of its source, not an observation of what the
 loader did next, so Stelis words it that way and never lets it stand in for the
 output change it observed. A loader can report "unchanged" and reload anyway:
-beeatlas's ecdysis loader did, every night, reloading every row at a 2.4 GB peak
-while the report read as "ingestion skipped" (st-as0, beeatlas-4uez).
+beeatlas's `ecdysis` loader did, every night, reloading every row at a 2.4 GB peak,
+while Stelis printed its report as "ingestion skipped" (st-as0, beeatlas-4uez).
 
 ## Where each surfaces
 

@@ -260,7 +260,7 @@ short-circuits an unchanged source writes `{unchanged, records, since}` there, a
 run-plan reads it back as a `source-report` on the trace, so `--explain`/`--why`
 name what the loader found (the loader-side probe is beeatlas-29j). It is the
 loader's CLAIM, so it is worded as one ("loader reports its source unchanged") and
-shown beside the observed output change, never instead of it: beeatlas's ecdysis
+shown beside the observed output change, never instead of it: beeatlas's `ecdysis` task
 reported "unchanged" and reloaded every row anyway, every night (st-as0).
 A task the project lists as incremental (`#:incremental-tasks`, ADR 0015) is handed
 `STELIS_CHANGED_INPUTS` — the inputs whose address moved, newline-separated — when
