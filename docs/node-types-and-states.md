@@ -126,14 +126,20 @@ receives and surfaces the report. It appears:
 
 - **Retrospectively** — `--explain --last` (the outcome glyph and decision prose,
   then the receipt):
-  `✓ ecdysis  boundary — ingestion; never content-skipped → reran; source unchanged — ingestion skipped, 0 new records since 2026-07-20`.
-  For an *unchanged* report it stands alone (outputs were untouched); for a
-  *changed* (re-ingested) report the output delta is kept alongside it.
+  `✓ ecdysis  boundary — ingestion; never content-skipped → reran; loader reports its source unchanged, 0 new records since 2026-07-20; outputs identical — early cutoff, downstream saw unchanged inputs`.
+  The observed output change is always shown beside the report, whatever the
+  report says.
 - **Prospectively, history-flavored** — the `--explain` / `--why` boundary line
   reads the task's last actual-run report
   (`history-last-source-report`, [`history.rkt`](../src/history.rkt)):
-  `▶ ecdysis  boundary — ingestion; never content-skipped; last run: source unchanged …`.
-- **Live** — a terse `↺ source unchanged — ingestion skipped` line during the build.
+  `▶ ecdysis  boundary — ingestion; never content-skipped; last run: loader reports its source unchanged …`.
+- **Live** — a terse `↺ loader reports its source unchanged` line during the build.
+
+The report is the loader's account of its source, not an observation of what the
+loader did next, so Stelis words it that way and never lets it stand in for the
+output change it observed. A loader can report "unchanged" and reload anyway:
+beeatlas's `ecdysis` loader did, every night, reloading every row at a 2.4 GB peak,
+while Stelis printed its report as "ingestion skipped" (st-as0, beeatlas-4uez).
 
 ## Where each surfaces
 

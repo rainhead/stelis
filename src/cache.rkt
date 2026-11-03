@@ -127,7 +127,11 @@
 ;; records since <date>" as a first-class build fact rather than the loader silently
 ;; reusing a cache behind Stelis's back. #f (no receipt) = the loader said nothing
 ;; (it re-ingested, or predates the probe) — indistinguishable from a plain run.
-;;   unchanged? : boolean — the source was unchanged; the loader skipped ingestion
+;; The report is the loader's CLAIM about its source, not an observation of what it
+;; then did: a loader may report "unchanged" and reload anyway (beeatlas's ecdysis
+;; did, every night, st-as0), so readers show it beside output-delta, never instead.
+;;   unchanged? : boolean — the loader reports its source unchanged (the contract
+;;                expects it then to skip ingestion; the engine cannot check that)
 ;;   records    : (or/c exact-nonnegative-integer #f) — records new since `since'
 ;;                (0 when unchanged), or #f when the loader didn't quantify it
 ;;   since      : (or/c string #f) — the watermark the probe compared against

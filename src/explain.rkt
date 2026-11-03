@@ -107,10 +107,15 @@ produced: ~a" (names))]
     ;; learned nothing about the source, only that it couldn't ask.
     [(source-report-error s)
      (format "source unreachable — kept the last good copy: ~a" (source-report-error s))]
+    ;; The two plain arms say what the LOADER REPORTED about its source, never what
+    ;; it then did: the engine cannot see whether a loader that found its source
+    ;; unchanged skipped its load. beeatlas's ecdysis loader reported "unchanged"
+    ;; every night and reloaded every row anyway (st-as0, beeatlas-4uez); the
+    ;; observed output change, shown beside this, is what tells.
     [(source-report-unchanged? s)
-     (string-append "source unchanged — ingestion skipped" suffix)]
+     (string-append "loader reports its source unchanged" suffix)]
     [else
-     (string-append "source changed — re-ingested" suffix)]))
+     (string-append "loader reports its source changed" suffix)]))
 
 ;; reason->string decorates the base reason prose. It now takes (task decision):
 ;; the impure delta adapter (delta-explain.rkt) needs the task to flavor a 'boundary

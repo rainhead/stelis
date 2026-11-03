@@ -74,7 +74,7 @@
 ;;           occurrence_places → 2 of 214 keys: +olympia ~seattle
 ;;   - for a 'boundary run — the task's last recorded source report (st-8bj), so the
 ;;     PROSPECTIVE plan is history-flavored, e.g.
-;;       boundary — ingestion; never content-skipped; last run: source unchanged …
+;;       boundary — ingestion; never content-skipped; last run: loader reports its source unchanged …
 ;; Closes over the env + state dir so the printers stay pure (task decision -> string).
 ;; It takes the TASK (not the decision alone) because a boundary decision carries no
 ;; name to look its history up by — unlike 'input-changed, whose details name inputs.

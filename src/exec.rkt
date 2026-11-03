@@ -613,17 +613,18 @@
            ;; a terse live headline, in the same register as the early-cutoff line
            ;; above; the quantified detail (records/since) rides the trace and shows
            ;; in --explain --last, so it is not re-derived here (no divergent prose).
+           ;; The plain arms say what the loader reported, not what it did (st-as0).
            (when boundary-report
-             (printf "  ~a source ~a\n"
+             (printf "  ~a ~a\n"
                      (if (source-report-error boundary-report) "⚠" "↺")
                      (cond
                        [(source-report-refused? boundary-report)
-                        "changed, but refused by the loader — kept the last good copy"]
+                        "source changed, but refused by the loader — kept the last good copy"]
                        [(source-report-error boundary-report)
-                        "unreachable — kept the last good copy"]
+                        "source unreachable — kept the last good copy"]
                        [(source-report-unchanged? boundary-report)
-                        "unchanged — ingestion skipped"]
-                       [else "changed — re-ingested"]))))
+                        "loader reports its source unchanged"]
+                       [else "loader reports its source changed"]))))
          (when (and ok? env)
            ;; retract removed keys from the merged 'dir(s) before observing, so the
            ;; recorded per-key map reflects the pruned set.
