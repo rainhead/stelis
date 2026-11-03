@@ -612,14 +612,12 @@
                      (string-join (map symbol->string (output-delta-details delta)) ", "))]))
         (define note
           (cond
-            ;; an UNCHANGED source short-circuits ingestion and leaves outputs
-            ;; untouched, so the delta can only echo "identical" — the report says
-            ;; it better and fuller; show it alone. An UNREACHABLE source leaves
-            ;; them untouched too (the last good copy), same treatment.
-            [(and sr (or (source-report-unchanged? sr) (source-report-error sr)))
-             (format " → reran; ~a" (source-report->string sr))]
-            ;; a CHANGED source means the loader re-ingested; keep the delta clause
-            ;; too, since whether the outputs actually moved is the informative bit.
+            ;; the source report is the LOADER's account of its source; the delta is
+            ;; the engine's observation of the outputs. Both are shown, whatever the
+            ;; report says: a loader that reports "unchanged" or "unreachable" is
+            ;; not thereby known to have left its outputs alone. This line once
+            ;; showed the report alone in those cases, and so hid beeatlas's ecdysis
+            ;; reloading every row on nights it reported "unchanged" (st-as0).
             [sr (format " → reran; ~a~a" (source-report->string sr)
                         (if delta-clause (format "; ~a" delta-clause) ""))]
             [delta-clause (format " → reran; ~a" delta-clause)]

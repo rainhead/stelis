@@ -129,12 +129,12 @@
 ;; --- rendering (pure) ----------------------------------------------------------
 
 (check-equal? (source-report->string (source-report #t 0 "2026-07-20"))
-              "source unchanged — ingestion skipped, 0 new records since 2026-07-20")
+              "loader reports its source unchanged, 0 new records since 2026-07-20")
 (check-equal? (source-report->string (source-report #t #f #f))
-              "source unchanged — ingestion skipped"
+              "loader reports its source unchanged"
               "records/since are shown only when the loader gave them")
 (check-equal? (source-report->string (source-report #f 12 #f))
-              "source changed — re-ingested, 12 new records")
+              "loader reports its source changed, 12 new records")
 (check-equal? (source-report->string (source-report #f #f #f "ECONNREFUSED 10.0.0.1:443"))
               "source unreachable — kept the last good copy: ECONNREFUSED 10.0.0.1:443"
               "an outage never reads as a quiet day")
@@ -153,7 +153,7 @@
 (define reason->string (make-reason->string g benv state))
 (define bdec (decision 'run 'boundary '()))
 
-(check-true (regexp-match? #rx"last run: source unchanged" (reason->string 'good bdec))
+(check-true (regexp-match? #rx"last run: loader reports its source unchanged" (reason->string 'good bdec))
             "the prospective boundary line reads the task's last recorded report")
 (check-false (regexp-match? #rx"last run" (reason->string 'silent bdec))
              "a boundary that never reported gets the plain line")
