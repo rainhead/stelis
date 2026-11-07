@@ -177,8 +177,8 @@ No build step — Racket compiles on demand.
   checkout lacks (beeatlas, DuckDB, a reference build, the linked collection) are
   gated through [`test-gate.rkt`](src/test-gate.rkt): they print `NOT CHECKED` and
   pass, unless `STELIS_REQUIRE_GATED=1`, which makes each one a failure (set by an
-  unattended gate such as beeatlas's nightly; two skips are exempt, with the reason
-  at their call sites). `STELIS_REFERENCE_DIR` names the reference build the
+  unattended gate such as beeatlas's nightly; one skip is exempt, with the reason
+  at its call site). `STELIS_REFERENCE_DIR` names the reference build the
   fan-out-key integration test reads (default: the scratch `stelis-out`). The
   edge-verify check is not in the suite: run `--verify-edges --export-dir DIR`
   after a build (st-cip).
