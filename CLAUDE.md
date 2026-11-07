@@ -180,7 +180,7 @@ No build step — Racket compiles on demand.
   unattended gate such as beeatlas's nightly; one skip is exempt, with the reason
   at its call site). `STELIS_REFERENCE_DIR` names the reference build the
   fan-out-key integration test reads (default: the scratch `stelis-out`). The
-  edge-verify check is not in the suite: run `--verify-edges --export-dir DIR`
+  edge-verify check is not in the suite: run `racket src/main.rkt --verify-edges --export-dir DIR`
   after a build (st-cip).
 
 Layout: [`model.rkt`](src/model.rkt) bipartite graph model + plain-Racket planner
