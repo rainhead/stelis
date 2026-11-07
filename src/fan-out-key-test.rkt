@@ -7,6 +7,7 @@
 ;; here over a hermetic one-file fixture (gated on the CLI, the duckdb-skip idiom),
 ;; and its use against a real build is covered by the integration test.
 
+(require "test-gate.rkt")
 (require rackunit
          racket/set
          racket/file
@@ -159,7 +160,7 @@
     (unless (eqv? 0 (subprocess-status sp)) (error 'fixture "duckdb failed: ~a" e)))
 
   (cond
-    [(not duckdb) (printf "fan-out-key-test: duckdb not on PATH — DuckDB cases skipped.\n")]
+    [(not duckdb) (skip-or-fail "fan-out-key-test (DuckDB cases)" "duckdb is not on PATH, so the parquet and manifest cases were not checked")]
     [else
      ;; --- the parquet key source (parquet-column-keys) ------------------------
      ;; Here a phantom only ADDS to the expected set, so the cost is a spurious

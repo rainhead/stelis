@@ -32,8 +32,8 @@
 ;; This is a harness, not a unit test (it shells into the real runtimes against a
 ;; reference build), mirroring determinism.rkt. The PURE classification core
 ;; (classify-outputs) is unit-tested in edge-verify-test.rkt; the integration
-;; driver (verify-edges) is run against the shipped terminals when a reference
-;; EXPORT_DIR is available.
+;; driver (verify-edges) is run by `main.rkt --verify-edges --export-dir DIR` after a
+;; build; it is no longer part of the test suite (st-cip).
 ;;
 ;; This harness checks a 'dir output only as one appeared basename ("the directory
 ;; exists"). Verifying the SET *inside* a keyed 'dir — its files ⊆ the keys of a

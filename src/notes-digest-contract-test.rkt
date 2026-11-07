@@ -28,6 +28,7 @@
 ;; bare checkout / CI lacking beeatlas, uv, or duckdb prints a skip note and passes,
 ;; keeping `raco test src/*-test.rkt` green. Locally it is a real regression guard.
 
+(require "test-gate.rkt")
 (require rackunit
          racket/file
          racket/port
@@ -87,10 +88,11 @@
 
 (cond
   [(not (and beeatlas-notes? uv duckdb))
-   (printf "notes-digest-contract-test: ~a absent — skipping.\n"
-           (cond [(not beeatlas-notes?) "beeatlas notes_store"]
-                 [(not uv) "uv"]
-                 [else "duckdb"]))]
+   (skip-or-fail "notes-digest-contract-test"
+                 "~a is absent, so the contract against the real notes store was not checked"
+                 (cond [(not beeatlas-notes?) "beeatlas notes_store"]
+                       [(not uv) "uv"]
+                       [else "duckdb"]))]
   [else
    (define tmp (make-temporary-file "stelis-notes-contract-~a" 'directory))
    (define summary (run-fixture tmp))

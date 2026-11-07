@@ -8,6 +8,7 @@
 ;; tiny SQLite store with the sqlite3 CLI and reads it with duckdb; if either CLI is
 ;; absent the suite no-ops (same gate as relation-digest-test).
 
+(require "test-gate.rkt")
 (require rackunit
          racket/file
          racket/system
@@ -19,8 +20,8 @@
 
 (cond
   [(not (and sqlite3 duckdb))
-   (printf "notes-digest-test: ~a not on PATH — skipping.\n"
-           (if sqlite3 "duckdb" "sqlite3"))]
+   (skip-or-fail "notes-digest-test" "~a is not on PATH, so nothing was checked"
+                 (if sqlite3 "duckdb" "sqlite3"))]
   [else
    (define tmp (make-temporary-file "stelis-notes-~a" 'directory))
    (define db (build-path tmp "notes.db"))

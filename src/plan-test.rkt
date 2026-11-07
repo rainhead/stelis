@@ -3,6 +3,7 @@
 ;; Validation for the occurrences.db plan (st-d44.1.1). Asserts properties that
 ;; hold for ANY valid topological order, not a hard-coded sequence.
 
+(require "test-gate.rkt")
 (require rackunit
          racket/set
          racket/list
@@ -105,7 +106,7 @@
 (if (andmap code-present? gen-sqlite-code)
     (check-true (snapshot? (input-snapshot beeatlas-graph 'generate-sqlite stub-resolve))
                 "generate-sqlite is cacheable (all inputs are files)")
-    (printf "plan-test: generate-sqlite recipe code absent (no beeatlas checkout) — skipping cacheable assertion.\n"))
+    (skip-or-fail "plan-test" "generate-sqlite's recipe code is absent (no beeatlas checkout), so the cacheable assertion was not checked"))
 (let ([d (input-snapshot beeatlas-graph 'dbt-build stub-resolve)])
   (check-equal? (decision-reason d) 'inputs-unresolvable
                 "dbt-build is uncacheable HERE — no relation resolver, no gate entries"))
@@ -316,7 +317,7 @@
         symbol<?))
 (cond
   [(null? code-artifact-names)
-   (printf "plan-test: no code artifacts (no beeatlas checkout) — skipping import-edge assertions.\n")]
+   (skip-or-fail "plan-test" "no code artifacts (no beeatlas checkout), so the import-edge assertions were not checked")]
   [else
    ;; the known drift case st-6ga fixed, now as graph structure: places_maps
    ;; imports species_maps DIRECTLY; config.py arrives only via the edge.
