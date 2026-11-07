@@ -5,14 +5,15 @@
 ;; The module here stands in for salishsea's graph living in salishsea-io: it is
 ;; written to a temporary directory outside this checkout and requires stelis/model
 ;; and stelis/project, never a relative path into src/. GATED on the collection
-;; being linked (scripts/link-collection.sh): a checkout without the link skips.
+;; being linked (scripts/link-collection.sh): without the link it is gated (test-gate.rkt).
 
 (require rackunit
          racket/file
          racket/port
          racket/string
          racket/system
-         racket/runtime-path)
+         racket/runtime-path
+         "test-gate.rkt")
 
 (define-runtime-path main-rkt "main.rkt")
 
@@ -30,7 +31,8 @@
 
 (cond
   [(not linked?)
-   (printf "project-module-test: the stelis collection is not linked (scripts/link-collection.sh) — skipping.\n")]
+   (skip-or-fail "project-module-test"
+                 "the stelis collection is not linked (run scripts/link-collection.sh), so loading a project from a path was not checked")]
   [else
    (define tmp (make-temporary-file "stelis-project-module-~a" 'directory))
    (define module-file (build-path tmp "tiny.rkt"))

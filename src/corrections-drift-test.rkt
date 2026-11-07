@@ -6,6 +6,7 @@
 ;; real CSVs — including the case the dbt side structurally cannot see, a
 ;; correction whose upstream row is gone entirely.
 
+(require "test-gate.rkt")
 (require rackunit
          racket/file
          racket/string
@@ -119,7 +120,7 @@
 
 (cond
   [(not (find-executable-path "duckdb"))
-   (printf "corrections-drift-test: reader SKIPPED — needs duckdb\n")]
+   (skip-or-fail "corrections-drift-test (reader)" "duckdb is not on PATH, so the CSV reader was not checked")]
   [else
    (define tmp (make-temporary-file "stelis-drift-~a" 'directory))
    (define upstream (build-path tmp "upstream.csv"))

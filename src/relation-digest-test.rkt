@@ -6,6 +6,7 @@
 ;; a temp dir via the duckdb CLI. If duckdb isn't on PATH the suite no-ops with a
 ;; note rather than failing (the mechanism is unexercisable without it).
 
+(require "test-gate.rkt")
 (require rackunit
          racket/system
          racket/port
@@ -20,7 +21,7 @@
 
 (cond
   [(not duckdb)
-   (printf "relation-digest-test: duckdb not on PATH — skipping.\n")]
+   (skip-or-fail "relation-digest-test" "duckdb is not on PATH, so nothing was checked")]
   [else
 
    ;; run a setup/DDL statement against `db'; error if the CLI fails.

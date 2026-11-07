@@ -23,6 +23,7 @@
 ;; freshly built mart and raises on a missing column, so a column beeatlas really
 ;; dropped still fails the nightly, at the build rather than at the gate.
 
+(require "test-gate.rkt")
 (require rackunit
          racket/system
          racket/list
@@ -65,10 +66,15 @@
 
 (cond
   [(not (usable?))
-   (printf "taxon-derive-integration-test: SKIPPED — needs a beeatlas checkout with built marts + duckdb\n")]
+   (skip-or-fail "taxon-derive-integration-test"
+                 "needs a beeatlas checkout with built marts and duckdb, and has neither, so nothing was checked")]
   [(pair? missing)
-   (printf "taxon-derive-integration-test: SKIPPED — the marts predate this code, missing ~a; the next build adds them\n"
-           (string-join missing ", "))]
+   ;; EXEMPT from STELIS_REQUIRE_GATED (st-bx1): the nightly runs this suite BEFORE
+   ;; its build, and a release that adds a mart column is satisfied only by that
+   ;; build. Failing here would block the build that fixes it.
+   (note-skip "taxon-derive-integration-test"
+              "the marts predate this code (missing ~a), so nothing was checked; the next build adds them"
+              (string-join missing ", "))]
   [else
    (define rows (read-lineages species-parquet))
    (define taxa (lineages->taxonomy rows))

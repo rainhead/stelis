@@ -19,6 +19,7 @@
 ;; whose graph is authored by scanning the beeatlas checkout (py-imports at
 ;; graph-authoring time), so a bare checkout / CI skips.
 
+(require "test-gate.rkt")
 (require rackunit
          racket/system
          racket/file
@@ -56,7 +57,8 @@
 
 (cond
   [(not (file-exists? beeatlas-db))
-   (printf "--moved-keys CLI contract: SKIPPED — no beeatlas database at ~a\n" beeatlas-db)]
+   (skip-or-fail "--moved-keys CLI contract"
+                 "no beeatlas database at ~a, so the CLI was not exercised" beeatlas-db)]
   [else
    ;; Two recorded builds: build 1 harvests two species; build 2 changes one, adds
    ;; one and drops one.

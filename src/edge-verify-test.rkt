@@ -2,7 +2,8 @@
 
 ;; Unit tests for the edge-verification harness's PURE core (st-qp7). The
 ;; integration driver (verify-edges) shells into the real runtimes against a
-;; reference build and is exercised separately (see edge-verify.rkt's header);
+;; reference build and is run after a build, not in this suite: `main.rkt --verify-edges
+;; --export-dir DIR` (st-cip);
 ;; here we test the filesystem-free classification and the EXPORT_DIR predicate,
 ;; which is where the harness's judgement actually lives.
 
