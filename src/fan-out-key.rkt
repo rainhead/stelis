@@ -198,7 +198,7 @@
 ;; DuckDB read here goes through it, because every one of them then applies the same
 ;; drop-rule — "a component that is the empty string keys no file" — and that rule
 ;; alone is not enough (st-ubo). The CLI's -list output renders SQL NULL as the
-;; literal text "NULL" (checked on 1.5.5), NOT as empty, so a NULL in a key column
+;; literal text "NULL" (checked on 1.5.5 and 2.0.0), NOT as empty, so a NULL in a key column
 ;; arrives as a phantom key named "NULL" that the drop-rule waves through.
 ;;
 ;; Coalescing in SQL makes absence the empty string the drop-rule already

@@ -74,7 +74,7 @@
 ;; Every species' lineage from the species mart parquet, via DuckDB.
 ;;
 ;; coalesce(…,'') is not decoration: the DuckDB CLI's -list output renders SQL
-;; NULL as the literal text "NULL" (checked on 1.5.5), so a subgenus-less species
+;; NULL as the literal text "NULL" (checked on 1.5.5 and 2.0.0), so a subgenus-less species
 ;; would arrive as a taxon NAMED "NULL" and every such species across the whole
 ;; family would be merged into one bogus subgenus. Coalescing in SQL makes absence
 ;; unambiguous — the empty string, which lineage->taxa already treats as a missing
