@@ -47,19 +47,22 @@ jobs:
       # third-party action to trust here — this is a plain fetch). And the version is
       # itself under test: comments in fan-out-key.rkt and taxon-derive.rkt assert how
       # THIS CLI renders SQL NULL and casts to VARCHAR in -list output ("checked on
-      # 1.5.5"). Pinning turns those from remarks into something a bump has to
-      # re-verify, rather than a silent drift under a floating `latest`.
+      # 1.5.5 and 2.0.0"). Pinning turns those from remarks into something a bump has
+      # to re-verify, rather than a silent drift under a floating `latest`. The
+      # version is the one beeatlas's fly/downloads.tsv pins, which is what the
+      # engine meets in production (beeatlas's nightly and Machine images).
       - name: Install DuckDB CLI
         env:
-          DUCKDB_VERSION: '1.5.5'
-          DUCKDB_SHA256: '08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05'
+          DUCKDB_VERSION: '2.0.0'
+          DUCKDB_SHA256: 'c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc'
         run: |
           set -euo pipefail
-          curl -fsSL -o duckdb.zip \
-            "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
-          echo "${DUCKDB_SHA256}  duckdb.zip" | sha256sum -c -
+          # From 2.0 the CLI ships as a .tar.gz, no longer a .zip.
+          curl -fsSL -o duckdb.tgz \
+            "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb-cli-linux-amd64.tar.gz"
+          echo "${DUCKDB_SHA256}  duckdb.tgz" | sha256sum -c -
           mkdir -p "$HOME/.local/bin"
-          unzip -q duckdb.zip -d "$HOME/.local/bin"   # one top-level `duckdb` binary
+          tar -xzf duckdb.tgz -C "$HOME/.local/bin" duckdb   # one top-level `duckdb` binary
           chmod +x "$HOME/.local/bin/duckdb"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/duckdb" --version
