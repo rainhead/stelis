@@ -2,7 +2,7 @@
 
 Start with **[`CLAUDE.md`](CLAUDE.md)** — it is the governing operating guide for
 this repo (orientation, guardrails, working mode) and covers the points below in
-context.
+context. Per-subsystem detail is in `docs/agents/`; `CLAUDE.md` says when to read each file.
 
 Work is tracked in **bd (beads)**. Run `bd prime` for the full command reference.
 
