@@ -151,6 +151,6 @@ plain-Racket implementations of the same questions.
 
 ## Layout and work tracking
 
-The module map is in [`CLAUDE.md`](CLAUDE.md); decisions in
+The module map is in [`docs/agents/`](docs/agents/) (start from the pointers in [`CLAUDE.md`](CLAUDE.md)); decisions in
 [`docs/adr/`](docs/adr/). Work items are tracked in beads (`bd ready`,
 `bd show <id>`), stored under `.beads/`.

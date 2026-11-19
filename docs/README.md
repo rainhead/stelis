@@ -15,6 +15,7 @@ files are `stelis-root`), so anything dropped here becomes searchable.
 
 Reference:
 
+- [`agents/`](agents/) — per-subsystem notes for agents (module map, CLI modes, projects, toolchain and image); [`CLAUDE.md`](../CLAUDE.md) says when to read each.
 - [`node-types-and-states.md`](node-types-and-states.md) — the task/artifact node
   kinds and the states a task is reported in (`--explain` / `--why` /
   `--explain --last` / `--history`).
