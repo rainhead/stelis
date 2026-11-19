@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Operating instructions for an agent working in this repo. This file is for not making predictable mistakes. The what and why live in `DESIGN.md` and `ROADMAP.md`; the detail of each subsystem lives in `docs/agents/`, and the pointers below say when to read each one.
+Operating instructions for an agent working in this repo. This file is for not making predictable mistakes. The what and why live in `DESIGN.md` and `ROADMAP.md`; the detail of each subsystem lives in `docs/agents/`, and the pointers below say when to read each one. `src/claude-md-size-test.rkt` holds this file under 16 KB: put new detail in `docs/agents/` behind a pointer, not here.
 
 ## Orient first
 
